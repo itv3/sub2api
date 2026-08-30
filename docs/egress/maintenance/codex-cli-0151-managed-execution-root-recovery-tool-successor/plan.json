@@ -1,0 +1,44 @@
+{
+  "schema_version": "codex-cli-0151-managed-execution-root-recovery-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_managed_execution_root_recovery_tool_successor",
+  "purpose": "修复 0.151 宿主 wrapper 向 capture-cli 传入未挂载工作树路径，并收紧受管执行副本属主门禁",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "172491ba7dec907be06ff5ccf28b91f7b5402494",
+    "failed_campaign": "c0151-formal-20260830t1744z-r2",
+    "failed_attempt": "20260830T174457Z-afaf56ac3ad1bf87",
+    "root_cause_id": "container-unmounted-managed-repo-path"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T17:49:00Z",
+    "deadline_at_utc": "2026-08-30T18:29:00Z",
+    "wall_clock_minutes": 40,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留两次失败 Campaign、attempt、网络收据、恢复报告、停止线事件和全部历史 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4_address": "172.25.0.3",
+    "capture_cli_ipv4_address": "172.30.0.10",
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "七个宿主 wrapper 默认使用 capture_root 下的受管执行副本",
+    "脚本目录回退 mutation 门禁",
+    "ARM64 受管执行树文件属主为 root 且无组写或其他用户写权限",
+    "ARM64 捕获工具全量测试、出站规格和容器内静态执行源门禁通过",
+    "全新 P0、preflight 与 Formal Campaign 通过后才允许解除停线"
+  ]
+}

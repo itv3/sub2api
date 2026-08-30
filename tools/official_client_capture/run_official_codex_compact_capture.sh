@@ -4,7 +4,7 @@ umask 077
 
 capture_container=${CAPTURE_CONTAINER:-capture-cli}
 capture_root=${CAPTURE_ROOT:-/root/oauth-capture}
-capture_tool_root=${CAPTURE_TOOL_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}
+capture_tool_root=${CAPTURE_TOOL_ROOT:-$capture_root/tools/official_client_capture}
 capture_runtime_root=${CAPTURE_RUNTIME_ROOT:-$capture_tool_root/runtime_scripts}
 codex_model=${CODEX_MODEL:-gpt-5.4}
 codex_version=${CODEX_VERSION:-0.145.0}

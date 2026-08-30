@@ -9,7 +9,7 @@ postgres_container=${POSTGRES_CONTAINER:-sub2apiplus-postgres}
 codex_account_id=${CODEX_ACCOUNT_ID:-90}
 api_key_id=${API_KEY_ID:-1}
 capture_root=${CAPTURE_ROOT:-/root/oauth-capture}
-capture_tool_root=${CAPTURE_TOOL_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}
+capture_tool_root=${CAPTURE_TOOL_ROOT:-$capture_root/tools/official_client_capture}
 capture_runtime_root=${CAPTURE_RUNTIME_ROOT:-$capture_tool_root/runtime_scripts}
 subjects=${SUBJECTS:-"codex-http codex-ws"}
 # 与 direct 矩阵保持同一四场景覆盖，避免 A02 只落三份 WS pcap。

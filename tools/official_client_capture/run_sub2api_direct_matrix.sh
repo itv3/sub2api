@@ -9,7 +9,7 @@ claude_account_id=${CLAUDE_ACCOUNT_ID:-50}
 codex_account_id=${CODEX_ACCOUNT_ID:-90}
 api_key_id=${API_KEY_ID:-1}
 capture_root=${CAPTURE_ROOT:-/root/oauth-capture}
-capture_tool_root=${CAPTURE_TOOL_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}
+capture_tool_root=${CAPTURE_TOOL_ROOT:-$capture_root/tools/official_client_capture}
 capture_runtime_root=${CAPTURE_RUNTIME_ROOT:-$capture_tool_root/runtime_scripts}
 subjects=${SUBJECTS:-"codex-http codex-ws"}
 # A02 的 TLS 扩展多样性需要四份独立 WS pcap；s3 不是可选样本。

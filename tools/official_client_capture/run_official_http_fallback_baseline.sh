@@ -17,7 +17,7 @@ umask 077
 
 capture_container=${CAPTURE_CONTAINER:-capture-cli}
 capture_root=${CAPTURE_ROOT:-/root/oauth-capture}
-capture_tool_root=${CAPTURE_TOOL_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}
+capture_tool_root=${CAPTURE_TOOL_ROOT:-$capture_root/tools/official_client_capture}
 run_id=${RUN_ID:?必须提供 RUN_ID}
 model=${MODEL:-gpt-5.6-luna}
 expect_connections=${EXPECT_CONNECTIONS:-3}

@@ -110,7 +110,13 @@ func validateCodex0151TimingProducerReplayToolSuccessor(receipt codex0151ToolRea
 			return errors.New("Codex CLI 0.151 计时生产者重放工具后继 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 计时生产者重放工具后继 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -122,7 +128,13 @@ func validateCodex0151TimingProducerReplayToolSuccessor(receipt codex0151ToolRea
 			return errors.New("Codex CLI 0.151 计时生产者重放工具后继 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedes(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 计时生产者重放工具后继 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -145,11 +157,20 @@ func codex0151TimingProducerReplayToolSuccessorSupersedes(path, priorDigest, cur
 	}
 	for _, transition := range receipt.Transitions {
 		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
+			(transition.ToSHA256 == currentDigest ||
+				codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedes(
+					path,
+					transition.ToSHA256,
+					currentDigest,
+				)) {
 			return true
 		}
 	}
-	return false
+	return codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedes(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151TimingProducerReplayToolSuccessorSourceTransitionIsFrozen(t *testing.T) {
@@ -193,6 +214,196 @@ func TestCodex0151TimingProducerReplayToolSuccessorSourceTransitionRejectsMutati
 			test.mutate(&mutated)
 			if err := validateCodex0151TimingProducerReplayToolSuccessor(mutated); err == nil {
 				t.Fatal("变异后的计时生产者重放工具后继 transition 被错误接受")
+			}
+		})
+	}
+}
+
+const codex0151ManagedExecutionRootRecoveryToolSuccessorPath = "docs/egress/maintenance/codex-cli-0151-managed-execution-root-recovery-tool-successor-source-transition.json"
+
+var (
+	codex0151ManagedExecutionRootRecoveryToolSuccessorOnce   sync.Once
+	codex0151ManagedExecutionRootRecoveryToolSuccessorCached codex0151ToolReadinessReceipt
+	codex0151ManagedExecutionRootRecoveryToolSuccessorErr    error
+)
+
+func loadCodex0151ManagedExecutionRootRecoveryToolSuccessor() (codex0151ToolReadinessReceipt, error) {
+	codex0151ManagedExecutionRootRecoveryToolSuccessorOnce.Do(func() {
+		codex0151ManagedExecutionRootRecoveryToolSuccessorCached, codex0151ManagedExecutionRootRecoveryToolSuccessorErr =
+			readCodex0151ManagedExecutionRootRecoveryToolSuccessor()
+	})
+	return codex0151ManagedExecutionRootRecoveryToolSuccessorCached,
+		codex0151ManagedExecutionRootRecoveryToolSuccessorErr
+}
+
+func readCodex0151ManagedExecutionRootRecoveryToolSuccessor() (codex0151ToolReadinessReceipt, error) {
+	var receipt codex0151ToolReadinessReceipt
+	raw, err := os.ReadFile(codex01491TerminalRepoPath(codex0151ManagedExecutionRootRecoveryToolSuccessorPath))
+	if err != nil {
+		return receipt, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return receipt, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return receipt, errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 尾部存在额外 JSON")
+	}
+	var identityDocument map[string]any
+	if err := json.Unmarshal(raw, &identityDocument); err != nil {
+		return receipt, err
+	}
+	delete(identityDocument, "identity_sha256")
+	canonical, err := json.Marshal(identityDocument)
+	if err != nil {
+		return receipt, err
+	}
+	canonical = append(canonical, '\n')
+	if upstreamMergeFrameworkDigest(canonical) != receipt.IdentitySHA256 {
+		return receipt, errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 自摘要不一致")
+	}
+	if err := validateCodex0151ManagedExecutionRootRecoveryToolSuccessor(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func validateCodex0151ManagedExecutionRootRecoveryToolSuccessor(receipt codex0151ToolReadinessReceipt) error {
+	if receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-managed-execution-root-recovery-tool-successor-source-transition/v1" ||
+		receipt.IssuedAtUTC != "2026-08-30T17:49:00Z" ||
+		receipt.BaseCommit != "172491ba7dec907be06ff5ccf28b91f7b5402494" ||
+		receipt.Scope != "codex-cli-0.151-managed-execution-root-recovery-tool-successor" ||
+		receipt.Result != "passed_codex_cli_0151_managed_execution_root_recovery_tool_successor" {
+		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 顶层事实非法")
+	}
+	if receipt.Predecessor.Kind != "codex_cli_0151_timing_producer_replay_tool_successor_source_transition" ||
+		receipt.Predecessor.Path != codex0151TimingProducerReplayToolSuccessorPath ||
+		receipt.Predecessor.SHA256 != "0897f6b11e02a86f072852b199cd0c8ed050233d322f116591cc6ee2d530567e" {
+		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 前序非法")
+	}
+	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
+	if err != nil || upstreamMergeFrameworkDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 前序摘要不一致")
+	}
+	expectedVerification := []string{
+		"python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+		"go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+		"make check-egress-spec",
+	}
+	if !slices.Equal(receipt.Verification, expectedVerification) {
+		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 验证集合非法")
+	}
+	if receipt.Safety.LiveAccountUsed || receipt.Safety.OnlineAcceptancePerformed ||
+		receipt.Safety.ProductionConfigChanged || receipt.Safety.OfficialEgressProfileChanged {
+		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 安全边界非法")
+	}
+	expectedFrom := map[string]string{
+		"backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go": "1156f91b30044ae9f80ba1abdca9d98d5ff3a21ae674ddaf545aa9564596e045",
+		"backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go":        "57661d60f18e8d7a0b80c9c7bb78a253da68f91d492c2b052c7b7892360acf0c",
+		"tools/official_client_capture/run_h1_wire_probe.sh":                                       "043e29d0bde9fcefea323b9db4028920b638308dc689e56dbca3135c12862957",
+		"tools/official_client_capture/run_images_wire_probe.sh":                                   "3fe235e1843ad50d561cda2a347ef01ba90b02b09800a91e5b7c1a3d3e938a13",
+		"tools/official_client_capture/run_official_codex_compact_capture.sh":                      "8e6eae6c46d0a0cb141bb5381474461709c906394b7b50d6da01ffa13e8a6591",
+		"tools/official_client_capture/run_official_http_fallback_baseline.sh":                     "ba2cb97a3e81956393947f942e93261bf8603a0291faad147154a040802cf10d",
+		"tools/official_client_capture/run_official_relay_scenario.sh":                             "fed7e44ccabb844c597b56be64788c0e4662bf86e5e0fa043b2f55396df6c57b",
+		"tools/official_client_capture/run_sub2api_direct_matrix.sh":                               "45b5d9cf24c6b7c92e2b8bc8a6b2ac9459b2696d265aaeeb45fff052c7214567",
+		"tools/official_client_capture/run_sub2api_openai_mitm_matrix.sh":                          "337f5d775ffbe6535acf279cb71ab72462013385248e9a03f81f974ebbc9ec8a",
+		"tools/official_client_capture/tests/test_codex_0151_container_paths.py":                   "9b762128b696d14b987be1fe2b512b452288d609aff420aa94ee9494621a9e33",
+	}
+	expectedAdditions := map[string]struct{}{
+		"docs/egress/maintenance/codex-cli-0151-managed-execution-root-recovery-tool-successor/plan.json": {},
+	}
+	transitionPaths := make([]string, 0, len(receipt.Transitions))
+	for _, transition := range receipt.Transitions {
+		if expectedFrom[transition.Path] != transition.FromSHA256 ||
+			!receiptSHA256(transition.ToSHA256) ||
+			transition.FromSHA256 == transition.ToSHA256 || strings.TrimSpace(transition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 条目非法")
+		}
+		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
+		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+			return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 当前摘要不一致：" + transition.Path)
+		}
+		transitionPaths = append(transitionPaths, transition.Path)
+	}
+	additionPaths := make([]string, 0, len(receipt.Additions))
+	for _, addition := range receipt.Additions {
+		if _, ok := expectedAdditions[addition.Path]; !ok ||
+			!receiptSHA256(addition.SHA256) || strings.TrimSpace(addition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 addition 条目非法")
+		}
+		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
+		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+			return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 addition 当前摘要不一致：" + addition.Path)
+		}
+		additionPaths = append(additionPaths, addition.Path)
+	}
+	if len(receipt.Transitions) != len(expectedFrom) || len(receipt.Additions) != len(expectedAdditions) ||
+		!slices.IsSorted(transitionPaths) ||
+		len(transitionPaths) != len(slices.Compact(append([]string(nil), transitionPaths...))) ||
+		!slices.IsSorted(additionPaths) ||
+		len(additionPaths) != len(slices.Compact(append([]string(nil), additionPaths...))) {
+		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继路径闭集非法")
+	}
+	return nil
+}
+
+// codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedes 只承接受管执行根恢复工具后继的精确摘要边。
+func codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	receipt, err := loadCodex0151ManagedExecutionRootRecoveryToolSuccessor()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			transition.ToSHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCodex0151ManagedExecutionRootRecoveryToolSuccessorSourceTransitionIsFrozen(t *testing.T) {
+	if _, err := loadCodex0151ManagedExecutionRootRecoveryToolSuccessor(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodex0151ManagedExecutionRootRecoveryToolSuccessorSourceTransitionRejectsMutation(t *testing.T) {
+	receipt, err := loadCodex0151ManagedExecutionRootRecoveryToolSuccessor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*codex0151ToolReadinessReceipt)
+	}{
+		{
+			name: "路径摘要漂移",
+			mutate: func(mutated *codex0151ToolReadinessReceipt) {
+				mutated.Transitions = append([]openAIReplayOOMRepairTransition(nil), mutated.Transitions...)
+				mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
+			},
+		},
+		{
+			name: "安全边界放宽",
+			mutate: func(mutated *codex0151ToolReadinessReceipt) {
+				mutated.Safety.LiveAccountUsed = true
+			},
+		},
+		{
+			name: "闭集缺项",
+			mutate: func(mutated *codex0151ToolReadinessReceipt) {
+				mutated.Transitions = append([]openAIReplayOOMRepairTransition(nil), mutated.Transitions[1:]...)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := receipt
+			test.mutate(&mutated)
+			if err := validateCodex0151ManagedExecutionRootRecoveryToolSuccessor(mutated); err == nil {
+				t.Fatal("变异后的受管执行根恢复工具后继 transition 被错误接受")
 			}
 		})
 	}
