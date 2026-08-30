@@ -8,13 +8,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from tools.official_client_capture import model_condition_receipts
+from tools.official_client_capture import relay_extract
 from tools.official_client_capture.model_condition_receipts import (
     ModelConditionReceiptError,
     build_receipt,
     validate_receipt,
 )
 from tools.official_client_capture.codex_upgrade import Job, run_job
+from tools.official_client_capture.relay_extract import (
+    ZstdDecompressionError,
+    _decompress_zstd_with_system_library,
+)
 
 
 def _h1_response(payload: dict[str, object]) -> bytes:
@@ -41,6 +48,36 @@ def _h1_request(model: str) -> bytes:
 
 
 class ModelConditionReceiptTest(unittest.TestCase):
+    def test_system_libzstd_fallback_is_bounded_and_deterministic(self) -> None:
+        compressed = bytes.fromhex("28b52ffd045829000068656c6c6fa36d9f88")
+        try:
+            self.assertEqual(
+                _decompress_zstd_with_system_library(compressed),
+                b"hello",
+            )
+        except ZstdDecompressionError as error:
+            self.skipTest(str(error))
+
+    def test_zstd_dependency_gap_uses_system_library(self) -> None:
+        with mock.patch.dict(
+            sys.modules,
+            {"zstandard": None, "compression": None},
+        ), mock.patch.object(
+            relay_extract,
+            "_decompress_zstd_with_system_library",
+            return_value=b"decoded",
+        ) as fallback:
+            self.assertEqual(relay_extract.decompress_zstd(b"frame"), b"decoded")
+        fallback.assert_called_once_with(b"frame")
+
+    def test_model_receipt_wraps_decompression_failure(self) -> None:
+        message = {
+            "headers": {"content-encoding": "zstd"},
+            "body": b"not-a-zstd-frame",
+        }
+        with self.assertRaisesRegex(ModelConditionReceiptError, "解压失败"):
+            model_condition_receipts._json_body(message)
+
     def _fixture(
         self,
         root: Path,

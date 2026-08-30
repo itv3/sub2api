@@ -1,0 +1,49 @@
+{
+  "schema_version": "codex-cli-0151-bwrap-zstd-readiness-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_bwrap_zstd_readiness_tool_successor",
+  "purpose": "修复 Codex 0.151 文件系统 helper 在 bubblewrap 内无法穿越 /root 的执行坐标，并为宿主模型条件收据补齐受限的系统 libzstd 回退",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "816e9482ddc4271bb1a734aa39805dead225b1c3",
+    "failed_campaign": "c0151-formal-20260830t1829z-r3",
+    "failed_attempt": "20260830T183252Z-b605430cc61bdce0",
+    "failed_attempt_sha256": "358edd90207a060763466561a556cfb9df3a6a28cb1baa3dad2a8ac70c29985b",
+    "root_cause_id": "codex0151-runtime-path-and-zstd-readiness",
+    "predecessor_transition": "docs/egress/maintenance/codex-cli-0151-managed-execution-root-recovery-tool-successor-source-transition.json"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T18:53:00Z",
+    "deadline_at_utc": "2026-08-30T19:38:00Z",
+    "wall_clock_minutes": 45,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留失败 Campaign、attempt、网络收据、恢复报告、停止线事件、原始证据和全部历史 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4_address": "172.25.0.3",
+    "sub2apiplus_gateway": "172.25.0.1",
+    "capture_cli_ipv4_address": "172.30.0.10",
+    "capture_cli_gateway": "172.30.0.1",
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "四个 Codex 与 code-mode-host 坐标默认解析到 /opt/codex-<target-version>/bin 并拒绝 /root",
+    "宿主和 capture-cli 在 live 请求前验证二进制及全部父目录可由无特权 bubblewrap 子进程读取与穿越",
+    "宿主缺少 Python zstandard 时使用固定 64 MiB 上限的系统 libzstd 回退，解压错误只使当前 job 失败",
+    "ARM64 /opt/codex-0.151.0 与 capture-cli 只读挂载完成，固定双容器网络和 DMIT 出口前后不变",
+    "本地与 ARM64 离线回归、bubblewrap 自执行和失败 attempt 模型条件收据重放全部通过",
+    "登记连续 source transition；随后从新的 VC-0、preflight 和 Formal Campaign 返回"
+  ]
+}

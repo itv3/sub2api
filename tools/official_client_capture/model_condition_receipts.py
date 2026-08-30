@@ -190,10 +190,15 @@ def _iter_messages(payload: bytes, *, response: bool) -> Iterator[dict[str, Any]
 def _json_body(message: dict[str, Any]) -> Any:
     raw = message["body"]
     encoding = message["headers"].get("content-encoding", "").lower()
-    if "zstd" in encoding and raw:
-        raw = decompress_zstd(raw)
-    elif "gzip" in encoding and raw:
-        raw = gzip.decompress(raw)
+    try:
+        if "zstd" in encoding and raw:
+            raw = decompress_zstd(raw)
+        elif "gzip" in encoding and raw:
+            raw = gzip.decompress(raw)
+    except Exception as error:  # noqa: BLE001
+        raise ModelConditionReceiptError(
+            f"模型条件 HTTP body 解压失败：{type(error).__name__}"
+        ) from error
     try:
         return json.loads(raw.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as error:

@@ -2438,15 +2438,25 @@ def _build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--keeper-container", default="sub2apiplus-keeper")
     plan.add_argument("--postgres-container", default="sub2apiplus-postgres")
     plan.add_argument("--redis-container", default="sub2apiplus-redis")
-    plan.add_argument("--capture-codex-bin", default="/usr/local/bin/codex-capture")
-    plan.add_argument("--relay-codex-bin", default="/root/.local/bin/codex")
+    plan.add_argument(
+        "--capture-codex-bin",
+        default="",
+        help="默认使用 /opt/codex-<target-version>/bin/codex。",
+    )
+    plan.add_argument(
+        "--relay-codex-bin",
+        default="",
+        help="默认使用 /opt/codex-<target-version>/bin/codex。",
+    )
     plan.add_argument(
         "--capture-code-mode-host-bin",
-        default="/usr/local/bin/codex-code-mode-host",
+        default="",
+        help="默认使用 /opt/codex-<target-version>/bin/codex-code-mode-host。",
     )
     plan.add_argument(
         "--relay-code-mode-host-bin",
-        default="/root/.local/bin/codex-code-mode-host",
+        default="",
+        help="默认使用 /opt/codex-<target-version>/bin/codex-code-mode-host。",
     )
     plan.add_argument("--codex-account-id", type=int, default=90)
     plan.add_argument("--api-key-id", type=int, default=1)
@@ -2767,6 +2777,15 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
         expected_binary_sha256=arguments.target_sha256,
         expected_code_mode_host_sha256=arguments.target_code_mode_host_sha256,
     )
+    runtime_bin = f"/opt/codex-{arguments.target_version}/bin"
+    for field, filename in (
+        ("capture_codex_bin", "codex"),
+        ("relay_codex_bin", "codex"),
+        ("capture_code_mode_host_bin", "codex-code-mode-host"),
+        ("relay_code_mode_host_bin", "codex-code-mode-host"),
+    ):
+        if not getattr(arguments, field, ""):
+            setattr(arguments, field, f"{runtime_bin}/{filename}")
     for field in (
         "capture_codex_bin",
         "relay_codex_bin",
@@ -2776,6 +2795,13 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
         value = str(getattr(arguments, field))
         if not SAFE_ABSOLUTE_PATH_RE.fullmatch(value):
             raise ConfigurationError(f"--{field.replace('_', '-')} 路径不安全。")
+        path = Path(value)
+        if path == Path("/root") or Path("/root") in path.parents:
+            raise ConfigurationError(
+                f"--{field.replace('_', '-')} 不得位于 /root；"
+                "Codex 文件系统 helper 会在 bubblewrap 内重新执行当前二进制，"
+                "必须使用可由沙箱子进程穿越的 /opt 受管路径。"
+            )
     campaign_dir = getattr(arguments, "campaign_dir", None) or getattr(
         arguments, "output", None
     )
@@ -6608,6 +6634,22 @@ def _validate_codex_identity(
     }
 
 
+def _is_world_traversable_executable(path: Path) -> bool:
+    """确认宿主执行副本及全部父目录可被无特权 bubblewrap 子进程读取。"""
+
+    if path.is_symlink() or not path.is_file():
+        return False
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & (stat.S_IROTH | stat.S_IXOTH) != (stat.S_IROTH | stat.S_IXOTH):
+        return False
+    return all(
+        not parent.is_symlink()
+        and parent.is_dir()
+        and stat.S_IMODE(parent.stat().st_mode) & stat.S_IXOTH
+        for parent in path.parents
+    )
+
+
 def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
     """在任何真实官方请求前验证所有可能执行的 Codex 二进制。"""
 
@@ -6621,11 +6663,17 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
         runtime_image_reference,
     )
     container_probe = (
-        "import hashlib,json,pathlib,subprocess,sys;"
+        "import hashlib,json,pathlib,stat,subprocess,sys;"
         "p=pathlib.Path(sys.argv[1]);"
+        "m=stat.S_IMODE(p.stat().st_mode);"
+        "parents=list(p.parents);"
         "h=hashlib.sha256(p.read_bytes()).hexdigest();"
         "r=subprocess.run([str(p),'--version'],capture_output=True,text=True,timeout=30);"
-        "print(json.dumps({'sha256':h,'version':(r.stdout or r.stderr).strip(),'return_code':r.returncode}))"
+        "print(json.dumps({'sha256':h,'version':(r.stdout or r.stderr).strip(),"
+        "'return_code':r.returncode,'world_readable_executable':"
+        "(m & (stat.S_IROTH|stat.S_IXOTH)) == (stat.S_IROTH|stat.S_IXOTH),"
+        "'parents_world_traversable':all((not x.is_symlink()) and x.is_dir() and "
+        "(stat.S_IMODE(x.stat().st_mode) & stat.S_IXOTH) for x in parents)}))"
     )
     identities: list[dict[str, str]] = []
     for name in ("capture_codex_bin", "relay_codex_bin"):
@@ -6642,8 +6690,15 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
             payload = json.loads(result.stdout)
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
             raise ConfigurationError(f"无法验证容器内 {name}：{error}") from error
-        if not isinstance(payload, dict) or payload.get("return_code") != 0:
-            raise ConfigurationError(f"容器内 {name} 无法执行 --version。")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("return_code") != 0
+            or payload.get("world_readable_executable") is not True
+            or payload.get("parents_world_traversable") is not True
+        ):
+            raise ConfigurationError(
+                f"容器内 {name} 无法由无特权 bubblewrap 子进程安全执行。"
+            )
         identities.append(
             _validate_codex_identity(
                 path=binary,
@@ -6657,11 +6712,12 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
 
     host_relay = Path(configuration["relay_codex_bin"])
     if (
-        host_relay.is_symlink()
-        or not host_relay.is_file()
+        not _is_world_traversable_executable(host_relay)
         or not os.access(host_relay, os.X_OK)
     ):
-        raise ConfigurationError("宿主机 relay_codex_bin 不存在、不可信或不可执行。")
+        raise ConfigurationError(
+            "宿主机 relay_codex_bin 不存在、不可信，或无法由无特权 bubblewrap 子进程执行。"
+        )
     try:
         host_version = subprocess.run(
             [str(host_relay), "--version"],
@@ -6690,11 +6746,17 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
         package_identity.get("code_mode_host_sha256", "")
     )
     helper_probe = (
-        "import hashlib,json,os,pathlib,sys;"
+        "import hashlib,json,os,pathlib,stat,sys;"
         "p=pathlib.Path(sys.argv[1]);"
+        "m=stat.S_IMODE(p.stat().st_mode) if p.is_file() else 0;"
+        "parents=list(p.parents);"
         "print(json.dumps({'is_file':p.is_file(),'is_symlink':p.is_symlink(),"
         "'executable':os.access(p,os.X_OK),'sha256':"
-        "hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else ''}))"
+        "hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else '',"
+        "'world_readable_executable':"
+        "(m & (stat.S_IROTH|stat.S_IXOTH)) == (stat.S_IROTH|stat.S_IXOTH),"
+        "'parents_world_traversable':all((not x.is_symlink()) and x.is_dir() and "
+        "(stat.S_IMODE(x.stat().st_mode) & stat.S_IXOTH) for x in parents)}))"
     )
     helpers: list[dict[str, str]] = []
     for name in ("capture_code_mode_host_bin", "relay_code_mode_host_bin"):
@@ -6724,6 +6786,8 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
             or payload.get("is_file") is not True
             or payload.get("is_symlink") is not False
             or payload.get("executable") is not True
+            or payload.get("world_readable_executable") is not True
+            or payload.get("parents_world_traversable") is not True
             or payload.get("sha256") != expected_helper_sha256
         ):
             raise ConfigurationError(f"容器内 {name} 与官方 package 不一致。")
@@ -6737,8 +6801,7 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
 
     host_helper = Path(configuration["relay_code_mode_host_bin"])
     if (
-        host_helper.is_symlink()
-        or not host_helper.is_file()
+        not _is_world_traversable_executable(host_helper)
         or not os.access(host_helper, os.X_OK)
         or file_sha256(host_helper) != expected_helper_sha256
     ):

@@ -1,0 +1,81 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-bwrap-zstd-readiness-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-30T19:04:00Z",
+  "base_commit": "816e9482ddc4271bb1a734aa39805dead225b1c3",
+  "scope": "codex-cli-0.151-bwrap-zstd-readiness-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_managed_execution_root_recovery_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-managed-execution-root-recovery-tool-successor-source-transition.json",
+    "sha256": "134598773ebb343593f272dd39945cdf8a2ddeb6813d42333628fc4e65e7a081"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "72709e18c8ddc7015bb56ba38fff30ec3f2d82ec444c74f0de46b113690fa350",
+      "to_sha256": "40945c2e36d42603c101bfec29879218f0ccd5a149cb3a472a796a1d5e443880",
+      "reason": "在 officialegress 包登记 bubblewrap 与 zstd 就绪工具后继，并让前序受管执行根摘要边连续承接当前源码。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "4a47ffc141b4653ad1122a17338d0f877419ededbb9abe252994690bc00ed161",
+      "to_sha256": "115ad29ed834426e749ca23e1c8520ae5ce3beef90f4657da21b3f6fb1ef8904",
+      "reason": "在 service 包独立重放同一后继摘要闭集与 mutation 门禁。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "93fdecaec04ba6e92fb1b55008faa55b263f739413c38defa5a9e248d1c08bb2",
+      "to_sha256": "085e06e89aa9e9885974c84d278c81f6e4e0b2a2992c9a1c9b2e3c2e15d54fbe",
+      "reason": "将四个目标二进制坐标绑定到版本化 /opt 路径，拒绝 /root，并在 live 请求前验证无特权沙箱可读、可执行和可穿越。"
+    },
+    {
+      "path": "tools/official_client_capture/model_condition_receipts.py",
+      "from_sha256": "61f0610f35229e4b2d4269e72eb4533b5e65b3a3a05bc24ad0207170660f95f1",
+      "to_sha256": "18345f6aeba33137e2e31a4e546bf8d4c7f6d19edd836938bec02426bdd57c80",
+      "reason": "把 zstd 与 gzip 解压异常收敛为当前模型条件 job 的受管错误，避免终止整个 attempt。"
+    },
+    {
+      "path": "tools/official_client_capture/relay_extract.py",
+      "from_sha256": "d9dd06bc1183865e9f9c1ebd891d6d1068c294eca8d5a19abb4c7413c60d2de0",
+      "to_sha256": "d555f9ae6273fede00956bfa7882e17f723a3c8798e7ad702684def1f4098f30",
+      "reason": "在缺少 Python zstandard 时使用系统 libzstd，并对全部实现保持 64 MiB 解压上限和一致错误边界。"
+    },
+    {
+      "path": "tools/official_client_capture/runtime_image/README.md",
+      "from_sha256": "2762b9fb89e2df3d24c49f54e4b2559e0acb517c0971891d6112dd8fd634ab9a",
+      "to_sha256": "9edfee543099263c339ab74e010dda36cfc4abe4d324663dc0e84a02b8d01f09",
+      "reason": "冻结版本化 /opt 只读挂载及父目录穿越权限，明确禁止放宽 /root 下 OAuth 与证据目录权限。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "07e83941855530c71fc548a93662a73e99bb2745113338e5d284b08ab7803606",
+      "to_sha256": "5d7f299b7019f154b68d65c1dd36e7c4e708848b68d6b71aaebdfd1b89ed03e3",
+      "reason": "覆盖版本化 /opt 默认坐标、/root 拒绝和父目录或文件权限 mutation。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_model_condition_receipt.py",
+      "from_sha256": "ab8024e23a59af9aee25215a3d65893f699d5ac2a078192fdbca14bf47f737df",
+      "to_sha256": "c7dd48359b67f6637e01f849bae45c11e99375f4a2d52a7076367b2013743d45",
+      "reason": "覆盖真实系统 libzstd、Python 依赖缺口回退和解压失败包装。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-bwrap-zstd-readiness-tool-successor/plan.json",
+      "sha256": "e599eb9a67cf5eff3b41d79f4151cbb088f17913f5a66bca961e685bb27d59b2",
+      "reason": "冻结独立停线修复的零 live 请求、ARM64 固定网络、资源预算和唯一恢复路径。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_bwrap_zstd_readiness_tool_successor",
+  "identity_sha256": "c1102fffb8149cc8825c0a84e03798f316fb414c3c427335cb80660a24362209"
+}

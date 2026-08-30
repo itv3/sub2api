@@ -73,6 +73,69 @@ class CodexUpgradeTest(unittest.TestCase):
         self.assertIsNone(actions["model"].default)
         self.assertIsNone(actions["lite_model"].default)
 
+    def test_plan_defaults_to_opt_runtime_and_rejects_root_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments = self._campaign_arguments(root / "defaults")
+            for field in (
+                "capture_codex_bin",
+                "relay_codex_bin",
+                "capture_code_mode_host_bin",
+                "relay_code_mode_host_bin",
+            ):
+                setattr(arguments, field, "")
+            manifest = codex_upgrade.create_campaign(arguments)
+            runtime_bin = "/opt/codex-0.147.0/bin"
+            self.assertEqual(
+                manifest["configuration"]["capture_codex_bin"],
+                f"{runtime_bin}/codex",
+            )
+            self.assertEqual(
+                manifest["configuration"]["relay_code_mode_host_bin"],
+                f"{runtime_bin}/codex-code-mode-host",
+            )
+
+            for field in (
+                "capture_codex_bin",
+                "relay_codex_bin",
+                "capture_code_mode_host_bin",
+                "relay_code_mode_host_bin",
+            ):
+                with self.subTest(field=field):
+                    rejected = self._campaign_arguments(root / f"rejected-{field}")
+                    setattr(rejected, field, f"/root/runtime/{field}")
+                    with self.assertRaisesRegex(
+                        codex_upgrade.ConfigurationError,
+                        "不得位于 /root",
+                    ):
+                        codex_upgrade.create_campaign(rejected)
+
+    def test_official_runtime_requires_world_traversal_and_execution(self) -> None:
+        tests_root = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory(dir=tests_root) as directory:
+            root = Path(directory).resolve()
+            runtime = root / "opt" / "codex-0.151.0" / "bin"
+            runtime.mkdir(parents=True)
+            for path in (root, root / "opt", runtime.parent, runtime):
+                path.chmod(0o755)
+            binary = runtime / "codex"
+            binary.write_bytes(b"codex")
+            binary.chmod(0o755)
+
+            self.assertTrue(
+                codex_upgrade._is_world_traversable_executable(binary)
+            )
+
+            runtime.parent.chmod(0o700)
+            self.assertFalse(
+                codex_upgrade._is_world_traversable_executable(binary)
+            )
+            runtime.parent.chmod(0o755)
+            binary.chmod(0o750)
+            self.assertFalse(
+                codex_upgrade._is_world_traversable_executable(binary)
+            )
+
     def test_plan_rejects_missing_or_invalid_mode_and_purpose(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1095,10 +1158,14 @@ class CodexUpgradeTest(unittest.TestCase):
             keeper_container="sub2apiplus-keeper",
             postgres_container="sub2apiplus-postgres",
             redis_container="sub2apiplus-redis",
-            capture_codex_bin="/usr/local/bin/codex-capture",
-            relay_codex_bin="/root/.local/bin/codex",
-            capture_code_mode_host_bin="/usr/local/bin/codex-code-mode-host",
-            relay_code_mode_host_bin="/root/.local/bin/codex-code-mode-host",
+            capture_codex_bin="/opt/codex-0.147.0/bin/codex",
+            relay_codex_bin="/opt/codex-0.147.0/bin/codex",
+            capture_code_mode_host_bin=(
+                "/opt/codex-0.147.0/bin/codex-code-mode-host"
+            ),
+            relay_code_mode_host_bin=(
+                "/opt/codex-0.147.0/bin/codex-code-mode-host"
+            ),
             codex_account_id=90,
             api_key_id=1,
             candidate_id=None,
@@ -1660,9 +1727,9 @@ class CodexUpgradeTest(unittest.TestCase):
                         "sha256": campaign_manifest["target_sha256"],
                     }
                     for label, path in (
-                        ("container:capture_codex_bin", "/usr/local/bin/codex-capture"),
-                        ("container:relay_codex_bin", "/root/.local/bin/codex"),
-                        ("host:relay_codex_bin", "/root/.local/bin/codex"),
+                        ("container:capture_codex_bin", "/opt/codex-0.147.0/bin/codex"),
+                        ("container:relay_codex_bin", "/opt/codex-0.147.0/bin/codex"),
+                        ("host:relay_codex_bin", "/opt/codex-0.147.0/bin/codex"),
                     )
                 ],
                 "package": package_identity,
@@ -1675,15 +1742,15 @@ class CodexUpgradeTest(unittest.TestCase):
                     for label, path in (
                         (
                             "container:capture_code_mode_host_bin",
-                            "/usr/local/bin/codex-code-mode-host",
+                            "/opt/codex-0.147.0/bin/codex-code-mode-host",
                         ),
                         (
                             "container:relay_code_mode_host_bin",
-                            "/root/.local/bin/codex-code-mode-host",
+                            "/opt/codex-0.147.0/bin/codex-code-mode-host",
                         ),
                         (
                             "host:relay_code_mode_host_bin",
-                            "/root/.local/bin/codex-code-mode-host",
+                            "/opt/codex-0.147.0/bin/codex-code-mode-host",
                         ),
                     )
                 ],

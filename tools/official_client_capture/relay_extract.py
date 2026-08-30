@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import glob
 import json
 import os
@@ -63,27 +65,64 @@ SAFE_QUERY_PARAMS = {
 MAX_DECOMPRESSED_BODY = 64 * 1024 * 1024
 
 
+class ZstdDecompressionError(ValueError):
+    """zstd 依赖不可用、帧非法或解压结果越过受管上限。"""
+
+
+def _decompress_zstd_with_system_library(raw: bytes) -> bytes:
+    """用系统 libzstd 在固定目标缓冲区内解压，避免宿主 Python 依赖漂移。"""
+
+    library_path = ctypes.util.find_library("zstd")
+    if not library_path:
+        raise ZstdDecompressionError("系统 libzstd 不可用")
+    try:
+        library = ctypes.CDLL(library_path)
+        library.ZSTD_decompress.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        )
+        library.ZSTD_decompress.restype = ctypes.c_size_t
+        library.ZSTD_isError.argtypes = (ctypes.c_size_t,)
+        library.ZSTD_isError.restype = ctypes.c_uint
+        library.ZSTD_getErrorName.argtypes = (ctypes.c_size_t,)
+        library.ZSTD_getErrorName.restype = ctypes.c_char_p
+        source = ctypes.create_string_buffer(raw)
+        output = ctypes.create_string_buffer(MAX_DECOMPRESSED_BODY + 1)
+        size = library.ZSTD_decompress(output, len(output), source, len(raw))
+        if library.ZSTD_isError(size):
+            detail = library.ZSTD_getErrorName(size)
+            message = detail.decode("utf-8", "replace") if detail else "未知错误"
+            raise ZstdDecompressionError(f"libzstd 解压失败：{message}")
+        if size > MAX_DECOMPRESSED_BODY:
+            raise ZstdDecompressionError("zstd 解压结果超过 64 MiB")
+        return output.raw[:size]
+    except (AttributeError, OSError) as error:
+        raise ZstdDecompressionError(f"系统 libzstd 无法调用：{error}") from error
+
+
 def decompress_zstd(raw: bytes) -> bytes:
-    """优先使用第三方 zstandard；Python 3.14 起可回退到标准库实现。"""
+    """按受管优先级解压 zstd，并在所有实现中保持 64 MiB 上限。"""
     try:
         import zstandard
     except ModuleNotFoundError:
         try:
             from compression import zstd
-        except ModuleNotFoundError as exc:
-            raise SystemExit(
-                "缺少 zstd 解压器：请使用 Python 3.14+，或安装 "
-                "python3 -m pip install zstandard"
-            ) from exc
+        except ModuleNotFoundError:
+            return _decompress_zstd_with_system_library(raw)
         decompressor = zstd.ZstdDecompressor()
         output = decompressor.decompress(raw, max_length=MAX_DECOMPRESSED_BODY + 1)
         if len(output) > MAX_DECOMPRESSED_BODY or not decompressor.eof:
-            raise ValueError("zstd 解压结果超过 64 MiB 或帧不完整")
+            raise ZstdDecompressionError("zstd 解压结果超过 64 MiB 或帧不完整")
         return output
-    return zstandard.ZstdDecompressor().decompress(
-        raw,
-        max_output_size=MAX_DECOMPRESSED_BODY,
-    )
+    try:
+        return zstandard.ZstdDecompressor().decompress(
+            raw,
+            max_output_size=MAX_DECOMPRESSED_BODY,
+        )
+    except Exception as error:  # noqa: BLE001
+        raise ZstdDecompressionError(f"python-zstandard 解压失败：{error}") from error
 
 
 def redact_query(target: str) -> str:
