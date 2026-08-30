@@ -255,10 +255,10 @@ class CodexUpgradeTest(unittest.TestCase):
         ):
             codex_upgrade._validate_scenario_manifest_shape(mutated)
 
-    def test_01491_scenario_manifests_are_additive_and_model_parameterized(self) -> None:
+    def test_current_scenario_manifests_are_additive_and_model_parameterized(self) -> None:
         tool_root = Path(__file__).resolve().parents[1]
         repo_root = tool_root.parents[1]
-        for version in ("0.147.0", "0.149.1"):
+        for version in ("0.147.0", "0.149.1", "0.151.0"):
             suffix = version.replace(".", "_")
             scenario_path = tool_root / f"codex_upgrade_scenarios_{suffix}.json"
             scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
@@ -306,7 +306,7 @@ class CodexUpgradeTest(unittest.TestCase):
             self.assertEqual(
                 core["steps"][0]["environment"]["LITE_MODEL"], "{lite_model}"
             )
-            if version == "0.149.1":
+            if version in {"0.149.1", "0.151.0"}:
                 auxiliary = next(
                     job
                     for job in scenario["capture_jobs"]
@@ -335,6 +335,50 @@ class CodexUpgradeTest(unittest.TestCase):
                     ],
                     "1",
                 )
+
+            if version == "0.151.0":
+                jobs = {job["id"]: job for job in scenario["capture_jobs"]}
+                negative = jobs["official-relay-file-upload-c2pa-negative"]
+                positive = jobs["official-relay-file-upload-c2pa-positive"]
+                auxiliary = jobs["candidate-frozen-aux"]
+                self.assertNotEqual(
+                    negative["evidence_roots"], positive["evidence_roots"]
+                )
+                self.assertNotEqual(
+                    negative["steps"][0]["environment"]["RUN_ID"],
+                    positive["steps"][0]["environment"]["RUN_ID"],
+                )
+                self.assertEqual(
+                    negative["steps"][0]["environment"][
+                        "A14_C2PA_EXPECTATION"
+                    ],
+                    "negative",
+                )
+                self.assertEqual(
+                    positive["steps"][0]["environment"][
+                        "A14_C2PA_EXPECTATION"
+                    ],
+                    "positive",
+                )
+                self.assertEqual(
+                    auxiliary["steps"][0]["environment"][
+                        "CANDIDATE_A14_C2PA_SEQUENCE"
+                    ],
+                    "negative,positive",
+                )
+                self.assertEqual(
+                    negative["required_scenario_receipts"], ["A14"]
+                )
+                self.assertEqual(
+                    positive["required_scenario_receipts"], ["A14"]
+                )
+
+                evidence_owners: dict[tuple[str, str], str] = {}
+                for job in scenario["capture_jobs"]:
+                    for evidence_root in job["evidence_roots"]:
+                        owner = (job["phase"], evidence_root)
+                        self.assertNotIn(owner, evidence_owners)
+                        evidence_owners[owner] = job["id"]
 
     def test_01491_plan_jobs_execute_target_scenario_instead_of_baseline(self) -> None:
         """目标 CLI 的 official jobs 必须来自 0.149.1 清单。"""
@@ -384,6 +428,56 @@ class CodexUpgradeTest(unittest.TestCase):
             self.assertEqual(auxiliary_job.model_id, "gpt-5.6-terra")
             self.assertTrue(auxiliary_job.expected_use_responses_lite)
             self.assertFalse(auxiliary_job.required_model_receipt)
+
+    def test_0151_plan_jobs_bind_both_c2pa_branches(self) -> None:
+        """0.151 目标清单必须独立执行 A14 正负官方分支。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            arguments = self._campaign_arguments(Path(directory))
+            tool_root = Path(__file__).resolve().parents[1]
+            arguments.baseline_version = "0.149.1"
+            arguments.target_version = "0.151.0"
+            arguments.rule_manifest = (
+                tool_root / "codex_upgrade_rules_0_149_1.json"
+            )
+            arguments.scenario_manifest = (
+                tool_root / "codex_upgrade_scenarios_0_149_1.json"
+            )
+            arguments.target_scenario_manifest = (
+                tool_root / "codex_upgrade_scenarios_0_151_0.json"
+            )
+            arguments.output = arguments.campaign_dir
+            rules = load_rule_manifest(arguments.rule_manifest, "0.149.1")
+
+            jobs, baseline_path, target_path = codex_upgrade._load_plan_jobs(
+                arguments, rules
+            )
+
+            self.assertEqual(baseline_path, arguments.scenario_manifest)
+            self.assertEqual(target_path, arguments.target_scenario_manifest)
+            by_id = {job.job_id: job for job in jobs}
+            negative = by_id["official-relay-file-upload-c2pa-negative"]
+            positive = by_id["official-relay-file-upload-c2pa-positive"]
+            auxiliary = by_id["candidate-frozen-aux"]
+            self.assertNotEqual(negative.evidence_roots, positive.evidence_roots)
+            self.assertNotEqual(
+                negative.steps[0]["environment"]["RUN_ID"],
+                positive.steps[0]["environment"]["RUN_ID"],
+            )
+            self.assertEqual(
+                negative.steps[0]["environment"]["A14_C2PA_EXPECTATION"],
+                "negative",
+            )
+            self.assertEqual(
+                positive.steps[0]["environment"]["A14_C2PA_EXPECTATION"],
+                "positive",
+            )
+            self.assertEqual(
+                auxiliary.steps[0]["environment"][
+                    "CANDIDATE_A14_C2PA_SEQUENCE"
+                ],
+                "negative,positive",
+            )
 
     def test_historical_baseline_uses_frozen_profile_and_target_uses_current_spec(
         self,
