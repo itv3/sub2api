@@ -1,0 +1,79 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-model-policy-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-30T16:24:00Z",
+  "base_commit": "0c8cac7189746436bc11aadb8eae6e70d31675eb",
+  "scope": "codex-cli-0.151-model-policy-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_c2pa_capture_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-c2pa-capture-tool-successor-source-transition.json",
+    "sha256": "b53217ae5decf79064337e7111b153f75f27b0b5d533ccb6931a7422f3a74dde"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_c2pa_capture_tool_successor_test.go",
+      "from_sha256": "e1d155184fd9bffb5b98660d7469f3e045675fef564f3167c0cf3f0385f7e1ad",
+      "to_sha256": "7faa11ace2ba11bff23509fb88ff7b9b583855db3763cecfd82194dada723b98",
+      "reason": "让 C2PA 工具后继在 officialegress 包通过精确摘要继续承接模型政策工具后继。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_c2pa_capture_tool_successor_test.go",
+      "from_sha256": "0b1842a1ba57a91b16523484dd25d377aeb4e25844c594eccfd37de377934d7a",
+      "to_sha256": "092df47f142096c59a7bdc8d543a1f6a72109377eda96cec43a08bc482077049",
+      "reason": "让 C2PA 工具后继在 service 包独立重放同一模型政策后继摘要链。"
+    },
+    {
+      "path": "tools/official_client_capture/capturelib/model.py",
+      "from_sha256": "3eb5ba89ab9f7047a02b8201f58c6e29facf1ef57097c2be1d67e373425d51cd",
+      "to_sha256": "5d39188e12b0d88c45156e74fda30fcdafe8f928e0b24fa12e89fc9c8a7cf79d",
+      "reason": "登记 ARM64 在线目录实测的 0.151 Main 和 Lite 模型轨道政策。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "da84e04034b0583bd48ae3f5dafbbb29e3f2cc5f8d12b922a7a7eeec5cc1ad67",
+      "to_sha256": "93fdecaec04ba6e92fb1b55008faa55b263f739413c38defa5a9e248d1c08bb2",
+      "reason": "登记 0.149.1→0.151.0 升级对，并让全部未知升级对显式失败关闭。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "c15862fc4d709bc2fc732abc70346bf3674ef5765ca2feaa686e9ec336ff3b24",
+      "to_sha256": "07e83941855530c71fc548a93662a73e99bb2745113338e5d284b08ab7803606",
+      "reason": "覆盖 0.151 正确值、空值、错误值和未知升级对 mutation，并迁移通用测试夹具。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_main_track_models.py",
+      "from_sha256": "1c01dd26e947c8a05551de25a425be6c75e3d22aa2c81d423be53291b86b4c55",
+      "to_sha256": "05d83b5b6a198cea9101bfb95cac7024af736a7f7118f54efbeca194471b9757",
+      "reason": "锁定 0.151 版本化 Main／Lite 模型坐标及现有探针并集一致性。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_model_policy_tool_successor_test.go",
+      "sha256": "c1f9ea41f1d9d2a320929d485e4f2e0ea79a554bc118de104973d17667e99440",
+      "reason": "在 officialegress 包重放模型政策工具后继的完整摘要闭集与 mutation。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_model_policy_tool_successor_test.go",
+      "sha256": "84057e4904cbcbea1aedfb734ce8ac844e076ddac100627d41850f5b79aacc0e",
+      "reason": "在 service 包独立重放同一模型政策工具后继闭集与 mutation。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-model-policy-tool-successor/plan.json",
+      "sha256": "6767a523209f993cd7cb7d3e55676545954896fb9505fccec9f0287603ea81d1",
+      "reason": "冻结独立工具修复的预算、两次模型目录请求和固定 ARM64 网络不变量。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": true,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_model_policy_tool_successor",
+  "identity_sha256": "93b5aef1e849999b37a7551c4f8c2e631ac3940545ae79028a341d69689d8f08"
+}

@@ -2642,6 +2642,43 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+SUPPORTED_UPGRADE_PAIRS = frozenset(
+    {
+        ("0.145.0", "0.147.0"),
+        ("0.147.0", "0.149.1"),
+        ("0.149.1", "0.151.0"),
+    }
+)
+
+
+def _validate_upgrade_pair_models(
+    *,
+    baseline_version: str,
+    target_version: str,
+    model: str,
+    lite_model: str,
+) -> None:
+    """校验受管升级对及其双轨模型坐标，未知组合一律失败关闭。"""
+
+    upgrade_pair = (baseline_version, target_version)
+    if upgrade_pair not in SUPPORTED_UPGRADE_PAIRS:
+        raise ConfigurationError(
+            f"不支持的 Codex 升级对：{baseline_version}→{target_version}。"
+        )
+    main_models = track_models_for_version(target_version, "main")
+    lite_models = track_models_for_version(target_version, "lite")
+    if model not in main_models:
+        raise ConfigurationError(
+            f"{baseline_version}→{target_version} 主升级线"
+            f"只能使用 {'／'.join(main_models)}。"
+        )
+    if lite_model not in lite_models:
+        raise ConfigurationError(
+            f"{baseline_version}→{target_version} Lite 专项"
+            f"只能使用 {'／'.join(lite_models)}。"
+        )
+
+
 def _validate_arguments(arguments: argparse.Namespace) -> None:
     if getattr(arguments, "campaign_mode", None) not in CAMPAIGN_MODES:
         raise ConfigurationError(
@@ -2660,24 +2697,12 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
     ):
         if not VERSION_RE.fullmatch(value):
             raise ConfigurationError(f"{field} 必须是三段版本号。")
-    supported_upgrade_pairs = {
-        ("0.145.0", "0.147.0"),
-        ("0.147.0", "0.149.1"),
-    }
-    upgrade_pair = (arguments.baseline_version, arguments.target_version)
-    if upgrade_pair in supported_upgrade_pairs:
-        main_models = track_models_for_version(arguments.target_version, "main")
-        lite_models = track_models_for_version(arguments.target_version, "lite")
-        if arguments.model not in main_models:
-            raise ConfigurationError(
-                f"{arguments.baseline_version}→{arguments.target_version} 主升级线"
-                f"只能使用 {'／'.join(main_models)}。"
-            )
-        if arguments.lite_model not in lite_models:
-            raise ConfigurationError(
-                f"{arguments.baseline_version}→{arguments.target_version} Lite 专项"
-                f"只能使用 {'／'.join(lite_models)}。"
-            )
+    _validate_upgrade_pair_models(
+        baseline_version=arguments.baseline_version,
+        target_version=arguments.target_version,
+        model=arguments.model,
+        lite_model=arguments.lite_model,
+    )
     if not SHA256_RE.fullmatch(arguments.target_sha256):
         raise ConfigurationError("--target-sha256 必须是 64 位小写 SHA-256。")
     if not SHA256_RE.fullmatch(arguments.target_package_sha256):

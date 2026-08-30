@@ -30,7 +30,8 @@ SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # 全部主线样本的语义翻转，而不是少采一条。两个集合都实测自官方 /models 原文，
 # 0.147.0 的官方证据：gpt-5.4／gpt-5.5 为 false，gpt-5.6-luna 为 true；
 # 0.149.1 的官方证据：gpt-5.5／gpt-5.4-mini 为 false，
-# gpt-5.6-terra／gpt-5.6-luna 为 true。
+# gpt-5.6-terra／gpt-5.6-luna 为 true；0.151.0 在 ARM64 的 initialize-only
+# 在线目录证据确认 gpt-5.5 为 false、gpt-5.6-terra 为 true。
 #
 # 主线只收录已在本升级中实际采过或即将采的两个，而不是所有 non-lite 模型——没被
 # 实测过的模型不进白名单，保持 fail-closed。改这些集合必须同步 h1_wire_probe 的
@@ -44,6 +45,10 @@ TRACK_MODELS_BY_CODEX_VERSION = {
     "0.149.1": {
         "main": ("gpt-5.5", "gpt-5.4-mini"),
         "lite": ("gpt-5.6-terra", "gpt-5.6-luna"),
+    },
+    "0.151.0": {
+        "main": ("gpt-5.5",),
+        "lite": ("gpt-5.6-terra",),
     },
 }
 

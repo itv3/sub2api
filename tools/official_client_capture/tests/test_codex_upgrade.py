@@ -248,7 +248,7 @@ class CodexUpgradeTest(unittest.TestCase):
         candidate = next(
             job for job in mutated["capture_jobs"] if job["phase"] == "candidate"
         )
-        candidate["steps"][0]["environment"]["CODEX_VERSION"] = "0.146.0"
+        candidate["steps"][0]["environment"]["CODEX_VERSION"] = "0.147.0"
         with self.assertRaisesRegex(
             codex_upgrade.ConfigurationError,
             "Campaign target_version",
@@ -565,9 +565,9 @@ class CodexUpgradeTest(unittest.TestCase):
             )
             frozen = json.loads(json.dumps(current, ensure_ascii=False))
             frozen["source_spec"]["sha256"] = "0" * 64
-            frozen["profile_id"] = "codex-0.146.0-historical"
+            frozen["profile_id"] = "codex-0.147.0-historical"
             approved = json.loads(json.dumps(current, ensure_ascii=False))
-            approved["profile_id"] = "codex-0.146.0-approved"
+            approved["profile_id"] = "codex-0.147.0-approved"
 
             staging = root / "staging"
             frozen_path = staging / "inputs/target-discovery-scenarios.json"
@@ -575,7 +575,7 @@ class CodexUpgradeTest(unittest.TestCase):
             self._write_json(frozen_path, frozen)
             self._write_json(approved_path, approved)
             manifest = {
-                "target_version": "0.146.0",
+                "target_version": "0.147.0",
                 "inputs": {
                     "target_discovery_scenarios": {
                         "path": frozen_path.relative_to(staging).as_posix(),
@@ -653,7 +653,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 json.loads(frozen_target.read_text(encoding="utf-8"))[
                     "codex_version"
                 ],
-                "0.146.0",
+                "0.147.0",
             )
             jobs = codex_upgrade._campaign_jobs(
                 root / "campaign", manifest, "official"
@@ -842,8 +842,8 @@ class CodexUpgradeTest(unittest.TestCase):
                 "schema_version": codex_upgrade.SCENARIO_SCHEMA,
                 "codex_version": version,
                 "profile_id": (
-                    "codex-0.146.0-test-v1"
-                    if version == "0.146.0"
+                    "codex-0.147.0-test-v1"
+                    if version == "0.147.0"
                     else "codex-0.145.0-upgrade-v1"
                 ),
                 "source_spec": {
@@ -1004,7 +1004,7 @@ class CodexUpgradeTest(unittest.TestCase):
             target_rule_manifest,
             {
                 "schema_version": codex_upgrade.RULE_SCHEMA,
-                "codex_version": "0.146.0",
+                "codex_version": "0.147.0",
                 "required_rules": required_rules,
             },
         )
@@ -1012,7 +1012,7 @@ class CodexUpgradeTest(unittest.TestCase):
             root,
             target_rule_manifest,
             tuple(required_rules),
-            version="0.146.0",
+            version="0.147.0",
             name="target-scenarios.json",
         )
         package_path = root / "codex-package-x86_64-unknown-linux-musl.tar.gz"
@@ -1021,7 +1021,7 @@ class CodexUpgradeTest(unittest.TestCase):
         package_metadata = json.dumps(
             {
                 "layoutVersion": 1,
-                "version": "0.146.0",
+                "version": "0.147.0",
                 "target": "x86_64-unknown-linux-musl",
                 "variant": "codex",
                 "entrypoint": "bin/codex",
@@ -1046,7 +1046,7 @@ class CodexUpgradeTest(unittest.TestCase):
             timing_root,
             upgrade_id=campaign_id,
             baseline_version="0.145.0",
-            target_version="0.146.0",
+            target_version="0.147.0",
             campaign_purpose=campaign_purpose,
         )
         arm_root = root / "control" / "arm64-p0"
@@ -1064,7 +1064,7 @@ class CodexUpgradeTest(unittest.TestCase):
             execute=False,
             acknowledge_live_requests=False,
             baseline_version="0.145.0",
-            target_version="0.146.0",
+            target_version="0.147.0",
             campaign_mode=campaign_mode,
             campaign_purpose=campaign_purpose,
             timing_ledger_dir=timing_root,
@@ -1087,7 +1087,7 @@ class CodexUpgradeTest(unittest.TestCase):
             extra_jobs=None,
             suite="full",
             campaign_id=campaign_id,
-            model="gpt-5.6-luna",
+            model="gpt-5.4",
             lite_model="gpt-5.6-luna",
             capture_root=Path("/root/oauth-capture"),
             capture_container="capture-cli",
@@ -1185,7 +1185,7 @@ class CodexUpgradeTest(unittest.TestCase):
                     "path": "/backend-api/codex/responses",
                     "http_version": "HTTP/1.1",
                     "headers": [
-                        ["version", "0.146.0"],
+                        ["version", "0.147.0"],
                         ["host", "chatgpt.com"],
                     ],
                     "json_shape": {"model": "<string>", "input": []},
@@ -1245,7 +1245,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 "schema_version": (
                     "codex-candidate-capture-manifest/v1"
                 ),
-                "codex_version": "0.146.0",
+                "codex_version": "0.147.0",
                 "capture_id": f"{phase}-{candidate_id or 'official'}",
                 "status": "complete",
                 "artifacts": [
@@ -1285,7 +1285,7 @@ class CodexUpgradeTest(unittest.TestCase):
                     "attempt_id": attempt_id,
                     "run_nonce": run_nonce,
                     "candidate_id": candidate_id,
-                    "target_version": "0.146.0",
+                    "target_version": "0.147.0",
                     "profile_id": identity["profile_id"],
                     "profile_digest": identity["profile_digest"],
                     "image_id": identity["image_id"],
@@ -1366,7 +1366,7 @@ class CodexUpgradeTest(unittest.TestCase):
                         "entrypoint": entrypoint,
                         "model": "gpt-5.6-luna",
                         "candidate_id": candidate_id,
-                        "target_version": "0.146.0",
+                        "target_version": "0.147.0",
                         "received_at_utc": timestamp(20),
                     },
                 )
@@ -1390,7 +1390,7 @@ class CodexUpgradeTest(unittest.TestCase):
                         "entrypoint": entrypoint,
                         "model": "gpt-5.6-luna",
                         "candidate_id": candidate_id,
-                        "target_version": "0.146.0",
+                        "target_version": "0.147.0",
                         "profile_id": identity["profile_id"],
                         "profile_digest": identity["profile_digest"],
                         "image_id": identity["image_id"],
@@ -1456,7 +1456,7 @@ class CodexUpgradeTest(unittest.TestCase):
                         client_checkpoint_at_utc=client_checkpoint_at_utc,
                         client_id=client,
                         candidate_id=candidate_id,
-                        target_version="0.146.0",
+                        target_version="0.147.0",
                         profile_id=identity["profile_id"],
                         profile_digest=identity["profile_digest"],
                         candidate_image_id=identity["image_id"],
@@ -1484,7 +1484,7 @@ class CodexUpgradeTest(unittest.TestCase):
                     attempt_started_at_utc=attempt_started_at_utc,
                     client_checkpoint_at_utc=client_checkpoint_at_utc,
                     candidate_id=candidate_id,
-                    target_version="0.146.0",
+                    target_version="0.147.0",
                     profile_id=identity["profile_id"],
                     profile_digest=identity["profile_digest"],
                     image_id=identity["image_id"],
@@ -1566,7 +1566,7 @@ class CodexUpgradeTest(unittest.TestCase):
                     attempt_started_at_utc=attempt_started_at_utc,
                     client_checkpoint_at_utc=client_checkpoint_at_utc,
                     candidate_id=str(candidate_id),
-                    target_version="0.146.0",
+                    target_version="0.147.0",
                     expected_profile_id=str(identity["profile_id"]),
                     expected_profile_digest=str(identity["profile_digest"]),
                     image_id=str(identity["image_id"]),
@@ -1585,7 +1585,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 attempt_started_at_utc=attempt_started_at_utc,
                 client_checkpoint_at_utc=client_checkpoint_at_utc,
                 candidate_id=str(candidate_id),
-                target_version="0.146.0",
+                target_version="0.147.0",
                 model="gpt-5.6-luna",
                 identity=identity,
             )
@@ -1636,7 +1636,7 @@ class CodexUpgradeTest(unittest.TestCase):
             "scenario_receipts": [],
             "scenario_receipt_failures": [],
             "track": "main",
-            "model_id": "gpt-5.6-luna",
+            "model_id": "gpt-5.4",
             "expected_use_responses_lite": False,
             "required_model_receipt": False,
             "model_condition_receipt": None,
@@ -1647,7 +1647,7 @@ class CodexUpgradeTest(unittest.TestCase):
             package_identity = campaign_manifest["official_identity"]["package"]
             binary_verification = {
                 "passed": True,
-                "expected_version": "0.146.0",
+                "expected_version": "0.147.0",
                 "expected_sha256": campaign_manifest["target_sha256"],
                 "runtime_image_reference": f"capture-runtime@sha256:{'b' * 64}",
                 "runtime_image_id": f"sha256:{'c' * 64}",
@@ -1655,8 +1655,8 @@ class CodexUpgradeTest(unittest.TestCase):
                     {
                         "label": label,
                         "path": path,
-                        "version": "0.146.0",
-                        "version_output": "codex-cli 0.146.0",
+                        "version": "0.147.0",
+                        "version_output": "codex-cli 0.147.0",
                         "sha256": campaign_manifest["target_sha256"],
                     }
                     for label, path in (
@@ -1844,7 +1844,7 @@ class CodexUpgradeTest(unittest.TestCase):
             target_manifest,
             {
                 "schema_version": codex_upgrade.RULE_SCHEMA,
-                "codex_version": "0.146.0",
+                "codex_version": "0.147.0",
                 "required_rules": list(rules),
             },
         )
@@ -1867,7 +1867,7 @@ class CodexUpgradeTest(unittest.TestCase):
             {
                 "schema_version": codex_upgrade.MIGRATION_SCHEMA,
                 "baseline_version": "0.145.0",
-                "target_version": "0.146.0",
+                "target_version": "0.147.0",
                 "status": "approved",
                 "entries": entries,
                 "discovery_classifications": [],
@@ -1877,7 +1877,7 @@ class CodexUpgradeTest(unittest.TestCase):
             root,
             target_manifest,
             rules,
-            version="0.146.0",
+            version="0.147.0",
             name=scenario_manifest.name,
         )
         profile_payload = {
@@ -1888,8 +1888,8 @@ class CodexUpgradeTest(unittest.TestCase):
             profile_manifest,
             {
                 "schema_version": codex_upgrade.PROFILE_SCHEMA,
-                "codex_version": "0.146.0",
-                "profile_id": "codex-0.146.0-test-v1",
+                "codex_version": "0.147.0",
+                "profile_id": "codex-0.147.0-test-v1",
                 "profile_digest": "c" * 64,
                 "profile_payload": profile_payload,
                 "profile_payload_sha256": codex_upgrade._fingerprint(
@@ -1901,7 +1901,7 @@ class CodexUpgradeTest(unittest.TestCase):
         self._write_assertion_profile(
             assertion_profile_manifest,
             rules,
-            version="0.146.0",
+            version="0.147.0",
         )
         return (
             target_manifest,
@@ -2039,7 +2039,7 @@ class CodexUpgradeTest(unittest.TestCase):
             "image_id": f"sha256:{'e' * 64}",
             "build_id": "build-0146-test",
             "deployed_version": "0.1.999-test",
-            "profile_id": "codex-0.146.0-test-v1",
+            "profile_id": "codex-0.147.0-test-v1",
             "profile_digest": profile_digest,
             "candidate_purpose": codex_upgrade.load_campaign_manifest(
                 campaign_dir
@@ -2256,7 +2256,7 @@ class CodexUpgradeTest(unittest.TestCase):
                     evidence_root=context["evidence_root"],
                     profile=str(approved_profile),
                     rule_manifest=str(approved_rules),
-                    expected_codex_version="0.146.0",
+                    expected_codex_version="0.147.0",
                     expected_profile_sha256=profile_reference["sha256"],
                     side=side,
                     output=str(machine_path.resolve()),
@@ -2329,7 +2329,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 "schema_version": codex_upgrade.RESULTS_SCHEMA_V2,
                 "document_kind": "results",
                 "candidate_id": candidate_id,
-                "target_version": "0.146.0",
+                "target_version": "0.147.0",
                 "profile_id": identity["profile_id"],
                 "profile_digest": profile_digest or identity["profile_digest"],
                 "official_package_digest": official["package_digest"],
@@ -3108,9 +3108,9 @@ class CodexUpgradeTest(unittest.TestCase):
                     "--campaign-id",
                     arguments.campaign_id,
                     "--model",
-                    "gpt-5.5",
+                    "gpt-5.4",
                     "--lite-model",
-                    "gpt-5.6-terra",
+                    "gpt-5.6-luna",
                 ]
             )
             self.assertEqual(plan_code, 0, plan_stderr)
@@ -3120,6 +3120,38 @@ class CodexUpgradeTest(unittest.TestCase):
             )
             self.assertEqual(status_code, 0, status_stderr)
             self.assertEqual(json.loads(status_stdout)["status"], "planned")
+
+    def test_0151_upgrade_pair_model_policy_mutations_fail_closed(self) -> None:
+        codex_upgrade._validate_upgrade_pair_models(
+            baseline_version="0.149.1",
+            target_version="0.151.0",
+            model="gpt-5.5",
+            lite_model="gpt-5.6-terra",
+        )
+
+        mutations = (
+            ({"baseline_version": ""}, "不支持的 Codex 升级对"),
+            ({"target_version": ""}, "不支持的 Codex 升级对"),
+            ({"target_version": "0.152.0"}, "不支持的 Codex 升级对"),
+            ({"model": ""}, "主升级线只能使用 gpt-5.5"),
+            ({"model": "gpt-5.6-terra"}, "主升级线只能使用 gpt-5.5"),
+            ({"lite_model": ""}, "Lite 专项只能使用 gpt-5.6-terra"),
+            ({"lite_model": "gpt-5.5"}, "Lite 专项只能使用 gpt-5.6-terra"),
+        )
+        baseline = {
+            "baseline_version": "0.149.1",
+            "target_version": "0.151.0",
+            "model": "gpt-5.5",
+            "lite_model": "gpt-5.6-terra",
+        }
+        for mutation, message in mutations:
+            with self.subTest(mutation=mutation):
+                values = {**baseline, **mutation}
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    message,
+                ):
+                    codex_upgrade._validate_upgrade_pair_models(**values)
 
     def test_plan_rejects_package_helper_digest_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3292,7 +3324,7 @@ class CodexUpgradeTest(unittest.TestCase):
             self.assertEqual(receipt["status"], "draft")
             replacement = receipt["assertion_version_replacements"]
             self.assertEqual(replacement["baseline_version"], "0.145.0")
-            self.assertEqual(replacement["target_version"], "0.146.0")
+            self.assertEqual(replacement["target_version"], "0.147.0")
             self.assertEqual(replacement["count"], 11)
             self.assertEqual(len(replacement["paths"]), 11)
 
@@ -3309,7 +3341,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 assertion_profile
             )
             self.assertTrue(coordinates)
-            self.assertEqual({version for _, version in coordinates}, {"0.146.0"})
+            self.assertEqual({version for _, version in coordinates}, {"0.147.0"})
 
     def test_0147_没有期望覆盖时画像逐字不变(self) -> None:
         """R9 复核后撤销了唯一一条 override，0.147 现在不应有任何期望变更。
@@ -3511,7 +3543,7 @@ class CodexUpgradeTest(unittest.TestCase):
             profile = {
                 "schema_version": codex_upgrade.PROFILE_SCHEMA,
                 "codex_version": manifest["target_version"],
-                "profile_id": "codex-0.146.0-prepared",
+                "profile_id": "codex-0.147.0-prepared",
                 "profile_digest": "d" * 64,
                 "profile_payload": {"prepared": True},
                 "profile_payload_sha256": codex_upgrade._fingerprint(
@@ -3642,7 +3674,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 target,
                 {
                     "schema_version": codex_upgrade.RULE_SCHEMA,
-                    "codex_version": "0.146.0",
+                    "codex_version": "0.147.0",
                     "required_rules": target_rules,
                 },
             )
@@ -3678,7 +3710,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 {
                     "schema_version": codex_upgrade.MIGRATION_SCHEMA,
                     "baseline_version": "0.145.0",
-                    "target_version": "0.146.0",
+                    "target_version": "0.147.0",
                     "status": "approved",
                     "entries": entries,
                     "discovery_classifications": [],
@@ -3692,8 +3724,8 @@ class CodexUpgradeTest(unittest.TestCase):
                 profile,
                 {
                     "schema_version": codex_upgrade.PROFILE_SCHEMA,
-                    "codex_version": "0.146.0",
-                    "profile_id": "codex-0.146.0-test-v1",
+                    "codex_version": "0.147.0",
+                    "profile_id": "codex-0.147.0-test-v1",
                     "profile_digest": "c" * 64,
                     "profile_payload": profile_payload,
                     "profile_payload_sha256": codex_upgrade._fingerprint(
@@ -3706,13 +3738,13 @@ class CodexUpgradeTest(unittest.TestCase):
                 root,
                 target,
                 tuple(target_rules),
-                version="0.146.0",
+                version="0.147.0",
                 name="scenarios-mixed.json",
             )
             self._write_assertion_profile(
                 assertion_profile,
                 tuple(target_rules),
-                version="0.146.0",
+                version="0.147.0",
             )
             return_code, _, stderr = self._approve_classification(
                 campaign_dir,
@@ -4306,7 +4338,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 encoding="utf-8",
             )
             baseline_inventory = scan_source_tree(baseline, "0.145.0")
-            target_inventory = scan_source_tree(target, "0.146.0")
+            target_inventory = scan_source_tree(target, "0.147.0")
             difference = compare_inventory(
                 baseline_inventory, target_inventory
             )

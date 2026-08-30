@@ -1,0 +1,51 @@
+{
+  "schema_version": "codex-cli-0151-model-policy-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_model_policy_tool_successor",
+  "purpose": "在正式 P0 前以只追加后继收据封存 0.151 双轨模型政策和升级对失败关闭修复",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "0c8cac7189746436bc11aadb8eae6e70d31675eb",
+    "tree": "35347a384a30758be1d82641195b63324c1b6ae1"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T16:13:00Z",
+    "deadline_at_utc": "2026-08-30T16:50:10Z",
+    "wall_clock_minutes": 37,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 2,
+    "cleanup_policy": "本变更集不清理历史证据、镜像、容器、运行目录或旧 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "0.151 Main／Lite initialize-only 在线目录证据与恢复后 ARM64 环境收据",
+    "0.151 版本化双轨模型政策",
+    "0.149.1→0.151.0 受管升级对及未知升级对失败关闭",
+    "正确值、空值和错误值 mutation 测试",
+    "C2PA 工具后继到本后继的逐摘要重放",
+    "ARM64 工具全量测试与出站规格门禁通过"
+  ]
+}
