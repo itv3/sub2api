@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools.official_client_capture import codex_upgrade_gate_receipt as receipt
 
@@ -21,9 +24,30 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
         self.source_tree = "3" * 64
         self.image_id = f"sha256:{'4' * 64}"
         self.image_reference = f"registry/sub2api@{self.image_id}"
+        self.continuity_by_attempt: dict[str, str] = {}
+        self.environment_patcher = mock.patch.object(
+            receipt.codex_upgrade_arm64_environment_receipt,
+            "replay",
+            side_effect=self._replay_environment,
+        )
+        self.environment_patcher.start()
 
     def tearDown(self) -> None:
+        self.environment_patcher.stop()
         self.temporary.cleanup()
+
+    def _replay_environment(self, root: Path, relative: str) -> dict[str, object]:
+        del root
+        name = Path(relative).stem
+        attempt_id, role = name.rsplit("-", 1)
+        return {
+            "status": "passed",
+            "phase": "gate_before" if role == "before" else "gate_after",
+            "subject_id": attempt_id,
+            "continuity_identity_sha256": self.continuity_by_attempt.get(
+                attempt_id, "8" * 64
+            ),
+        }
 
     def _write(self, relative: str, value: object) -> Path:
         path = self.root / relative
@@ -98,7 +122,27 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
             )
         return gates
 
-    def _facts(self, phase: str) -> dict[str, object]:
+    def _environment(self, attempt_id: str) -> dict[str, dict[str, str]]:
+        values: dict[str, dict[str, str]] = {}
+        for role in ("before", "after"):
+            path = self._write(
+                f"environment/{attempt_id}-{role}.json",
+                {"attempt_id": attempt_id, "role": role},
+            )
+            values[role] = {
+                "path": path.relative_to(self.root).as_posix(),
+                "sha256": self._digest(path),
+            }
+        return values
+
+    def _facts(
+        self,
+        phase: str,
+        *,
+        attempt_id: str = "gate-attempt-001",
+        root_cause_id: str | None = None,
+        previous_receipt: str | None = None,
+    ) -> dict[str, object]:
         subject = self._subject(phase)
         inputs: list[dict[str, str]] = []
         if phase == receipt.POST_PROMOTION_PHASE:
@@ -146,8 +190,21 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
         return {
             "schema_version": receipt.FACTS_SCHEMA,
             "phase": phase,
+            "attempt": {
+                "attempt_id": attempt_id,
+                "root_cause_id": root_cause_id,
+                "previous_receipt": (
+                    {
+                        "path": previous_receipt,
+                        "sha256": self._digest(self.root / previous_receipt),
+                    }
+                    if previous_receipt is not None
+                    else None
+                ),
+            },
             "subject": subject,
             "inputs": inputs,
+            "environment": self._environment(attempt_id),
             "gates": self._gates(phase),
         }
 
@@ -159,6 +216,7 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
         replayed = receipt.replay(self.root, "candidate-receipt.json")
         self.assertEqual(finalized, replayed)
         self.assertEqual(finalized["phase"], receipt.CANDIDATE_PHASE)
+        self.assertEqual(finalized["status"], "passed")
 
     def test_post_promotion_binds_acceptance_and_promotion(self) -> None:
         self._write("post-facts.json", self._facts(receipt.POST_PROMOTION_PHASE))
@@ -170,7 +228,7 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
         facts = self._facts(receipt.CANDIDATE_PHASE)
         facts["gates"].pop()
         self._write("missing.json", facts)
-        with self.assertRaisesRegex(receipt.GateReceiptError, "唯一且完整覆盖"):
+        with self.assertRaisesRegex(receipt.GateReceiptError, "补跑集合非法"):
             receipt.build_receipt(self.root, "missing.json")
 
     def test_nonzero_or_skipped_gate_fails_closed(self) -> None:
@@ -205,6 +263,124 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.GateReceiptError, "禁止覆盖"):
             receipt.finalize(self.root, "facts.json", "receipt.json")
 
+    def test_retry_carries_passed_gates_and_only_executes_failed_gate(self) -> None:
+        first = self._facts(
+            receipt.CANDIDATE_PHASE,
+            root_cause_id="root-cause-a",
+        )
+        first["gates"][1].update(
+            {"status": "failed", "exit_code": 1, "failed_count": 1}
+        )
+        failed_id = first["gates"][1]["gate_id"]
+        self._write("attempt-1-facts.json", first)
+        failed = receipt.finalize(
+            self.root, "attempt-1-facts.json", "attempt-1-receipt.json"
+        )
+        self.assertEqual(failed["status"], "failed")
+
+        second = self._facts(
+            receipt.CANDIDATE_PHASE,
+            attempt_id="gate-attempt-002",
+            root_cause_id="root-cause-a",
+            previous_receipt="attempt-1-receipt.json",
+        )
+        second["gates"] = [
+            item for item in second["gates"] if item["gate_id"] == failed_id
+        ]
+        self._write("attempt-2-facts.json", second)
+        completed = receipt.finalize(
+            self.root, "attempt-2-facts.json", "attempt-2-receipt.json"
+        )
+        self.assertEqual(completed["status"], "passed")
+        self.assertEqual(completed["executed_gate_ids"], [failed_id])
+        self.assertNotIn(failed_id, completed["carried_gate_ids"])
+        self.assertEqual(
+            sorted(completed["passed_gate_ids"]),
+            sorted(receipt.CANDIDATE_COMMANDS),
+        )
+
+    def test_retry_rejects_rerunning_an_already_passed_gate(self) -> None:
+        first = self._facts(
+            receipt.CANDIDATE_PHASE,
+            root_cause_id="root-cause-a",
+        )
+        first["gates"][0].update(
+            {"status": "failed", "exit_code": 1, "failed_count": 1}
+        )
+        self._write("first-facts.json", first)
+        receipt.finalize(self.root, "first-facts.json", "first-receipt.json")
+        second = self._facts(
+            receipt.CANDIDATE_PHASE,
+            attempt_id="gate-attempt-002",
+            root_cause_id="root-cause-a",
+            previous_receipt="first-receipt.json",
+        )
+        self._write("illegal-rerun.json", second)
+        with self.assertRaisesRegex(receipt.GateReceiptError, "禁止重跑已通过项"):
+            receipt.build_receipt(self.root, "illegal-rerun.json")
+
+    def test_third_same_root_cause_attempt_is_rejected(self) -> None:
+        previous: str | None = None
+        failed_id = sorted(receipt.CANDIDATE_COMMANDS)[0]
+        for index in (1, 2):
+            facts = self._facts(
+                receipt.CANDIDATE_PHASE,
+                attempt_id=f"gate-attempt-00{index}",
+                root_cause_id="root-cause-a",
+                previous_receipt=previous,
+            )
+            facts["gates"] = [
+                item for item in facts["gates"] if item["gate_id"] == failed_id
+            ] if previous else facts["gates"]
+            failed_gate = next(
+                item for item in facts["gates"] if item["gate_id"] == failed_id
+            )
+            failed_gate.update(
+                {"status": "failed", "exit_code": 1, "failed_count": 1}
+            )
+            facts_name = f"attempt-{index}-facts.json"
+            receipt_name = f"attempt-{index}-receipt.json"
+            self._write(facts_name, facts)
+            receipt.finalize(self.root, facts_name, receipt_name)
+            previous = receipt_name
+        third = self._facts(
+            receipt.CANDIDATE_PHASE,
+            attempt_id="gate-attempt-003",
+            root_cause_id="root-cause-a",
+            previous_receipt=previous,
+        )
+        third["gates"] = [
+            item for item in third["gates"] if item["gate_id"] == failed_id
+        ]
+        self._write("attempt-3-facts.json", third)
+        with self.assertRaisesRegex(receipt.GateReceiptError, "禁止第三次"):
+            receipt.build_receipt(self.root, "attempt-3-facts.json")
+
+    def test_retry_rejects_environment_continuity_drift(self) -> None:
+        first = self._facts(
+            receipt.CANDIDATE_PHASE,
+            root_cause_id="root-cause-a",
+        )
+        first["gates"][0].update(
+            {"status": "failed", "exit_code": 1, "failed_count": 1}
+        )
+        failed_id = first["gates"][0]["gate_id"]
+        self._write("first-facts.json", first)
+        receipt.finalize(self.root, "first-facts.json", "first-receipt.json")
+        self.continuity_by_attempt["gate-attempt-002"] = "9" * 64
+        second = self._facts(
+            receipt.CANDIDATE_PHASE,
+            attempt_id="gate-attempt-002",
+            root_cause_id="root-cause-a",
+            previous_receipt="first-receipt.json",
+        )
+        second["gates"] = [
+            item for item in second["gates"] if item["gate_id"] == failed_id
+        ]
+        self._write("drift.json", second)
+        with self.assertRaisesRegex(receipt.GateReceiptError, "连续性无法证明"):
+            receipt.build_receipt(self.root, "drift.json")
+
     def test_schema_matches_runtime_version(self) -> None:
         schema_path = Path(receipt.__file__).with_name(
             "codex_upgrade_gate_receipt.schema.json"
@@ -214,6 +390,19 @@ class CodexUpgradeGateReceiptTests(unittest.TestCase):
             schema["properties"]["schema_version"]["const"],
             receipt.RECEIPT_SCHEMA,
         )
+
+    def test_direct_script_help_uses_repository_import_root(self) -> None:
+        script = Path(receipt.__file__).resolve()
+        completed = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=script.parents[2],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("finalize", completed.stdout)
 
 
 if __name__ == "__main__":

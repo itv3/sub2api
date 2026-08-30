@@ -1386,14 +1386,27 @@ candidate 必须由最新有效激活收据、运行容器 digest 和 activation
 | Catalog promotion 与 promotion receipt | 已实现 | `egresscatalogpromote` 只生成确定性 Catalog／contract／receipt，不部署服务 |
 | post-promotion gate receipt | 已实现 | 同一工具生成并独立重放 `post_promotion` 收据，绑定 acceptance、promotion、production tree 和目标架构；六项固定门禁均须零失败、零跳过 |
 | production activation receipt | 已实现 | `production_activation_receipt.py` v2 强制消费 promotion、post-promotion gate、acceptance、production tree 和四阶段原始事实，生成不可覆盖收据并独立重放；历史 v1／K80 收据只证明当时事实 |
-| 新增收敛门禁 | 未受管实现 | 时间台账／6 小时停线、门禁承接及 ARM64 网络／磁盘收据尚缺受管生成和重放；下个版本 Formal 前必须补齐 |
+| 时间、ARM64 环境与门禁承接 | 已实现 | `codex_upgrade_timing_ledger.py`、`codex_upgrade_arm64_environment_receipt.py` 和 `codex_upgrade_gate_receipt.py` v3 分别生成并独立重放墙钟、固定双容器网络／磁盘及失败门禁 attempt 链；同根因连续失败两次后拒绝第三次 attempt |
 | 第三方客户端绑定 | 当前固定为 Kilo 双入口 | 工具和 Schema 明确要求 `kilo-compatible`、`kilo-responses`，文档不得单独泛化 |
 
-后继版本创建正式 Campaign 前，必须对两阶段门禁生成并重放受管收据；缺少收据、摘要漂移、失败、
-跳过、命令集合变化或身份不一致均使 P0／对应阶段失败关闭。Campaign 建立后再修改这些工具会触发
-§4.0.2 的工具漂移边界。人工“已经运行”结论、终端截图或未绑定原始事实的静态 JSON 不能替代受管
-收据。若未来要把 Kilo 泛化为可配置第三方客户端集合，也应先修改工具、Schema 和验收测试，再调整
-本流程。
+Campaign v3 的 `plan` 必须显式提供 `--timing-ledger-dir`、`--timing-receipt`、
+`--arm64-environment-root` 和 `--arm64-environment-receipt`。时间 checkpoint 必须仍为 active，且
+upgrade ID、基线、目标版本和用途与计划一致；ARM64 收据必须为 `status=passed`、`phase=p0`，并以
+同一 upgrade ID 为主体。Campaign manifest 绑定两份收据的相对路径、摘要、字节数、合同摘要和环境
+连续性身份；后续受管阶段每次执行前重新检查时间台账，超出阶段或总墙钟预算立即停线。官方／candidate
+抓包 attempt 还必须在真实请求前后自动生成、重放并绑定 `attempt_before／attempt_after` 环境收据，
+前后连续性不成立时不得封存证据。
+
+`candidate_external` 与 `post_promotion` 门禁均使用 v3 attempt 收据。首次 attempt 执行冻结合同的全部
+门禁；失败时登记 `root_cause_id` 并保留失败收据。补跑必须引用唯一前序失败收据，逐项重放同一阶段、
+主体、输入和 ARM64 环境连续性，只执行前序 `failed_gate_ids`；已通过项从前序收据承接，禁止再次执行。
+前序已通过、根因变化、收据链循环、输入或环境漂移、补跑集合扩大，以及同根因第三次 attempt 均失败
+关闭。生产激活只接受最终 `status=passed` 且 `failed_gate_ids=[]` 的 v3 `post_promotion` 收据。
+
+缺少收据、摘要漂移、失败、跳过、命令集合变化或身份不一致均使 P0／对应阶段失败关闭。Campaign 建立
+后再修改这些工具会触发 §4.0.2 的工具漂移边界。人工“已经运行”结论、终端截图或未绑定原始事实的
+静态 JSON 不能替代受管收据。若未来要把 Kilo 泛化为可配置第三方客户端集合，也应先修改工具、Schema
+和验收测试，再调整本流程。
 
 ### 4.0.5 ARM64 执行、时间与资源硬门禁
 
@@ -1734,8 +1747,10 @@ package digest、capture manifest、证据根和逻辑路径前缀。
 
 ### 4.5.3 accept 前置与正式验收
 
-在同一 candidate 源码树执行 `make check-egress-spec`、`make test` 和目标平台测试，把命令、工作目录、
-主机、架构、时间、退出码、通过／失败／跳过计数及输出证据写入权限为 `0600` 的
+在同一 candidate 源码树执行 `make check-egress-spec`、`make test` 和目标平台测试。首次 attempt 必须
+执行全部三项；每次 attempt 均在首项门禁前和末项门禁后生成 `gate_before／gate_after` ARM64 环境
+收据，并以 attempt ID 为主体。把 attempt ID、可空的根因、前序失败收据引用、两份环境收据、命令、
+工作目录、主机、架构、时间、退出码、通过／失败／跳过计数及输出证据写入权限为 `0600` 的
 `candidate-gates.facts.json`。证据根必须是绝对路径、非符号链接且权限为 `0700`。随后生成并独立重放
 `candidate_external` 收据：
 
@@ -1750,12 +1765,15 @@ python3 tools/official_client_capture/codex_upgrade_gate_receipt.py replay \
   --receipt candidate-gates.receipt.json
 ~~~
 
-finalizer 固定检查三项门禁均为退出码 0、失败 0、跳过 0，并绑定 formal 模式、Campaign／candidate
-用途、目标版本／架构、Profile、candidate package、源码树和镜像。缺项、替换命令、用途漂移、证据摘要漂移或身份不一致时不得执行
-`accept`。
+finalizer 固定检查首次 attempt 完整覆盖三项门禁，并绑定 formal 模式、Campaign／candidate 用途、
+目标版本／架构、Profile、candidate package、源码树和镜像。门禁失败时生成 `status=failed` 的只读
+收据并登记 `root_cause_id`；只有最终有效集合全部退出码 0、失败 0、跳过 0 的 `status=passed` 收据才
+能进入 `accept`。缺项、替换命令、用途漂移、证据摘要漂移或身份不一致时不得执行 `accept`。
 
 门禁补跑遵守 Framework §5.3.5：以唯一前序收据和 environment continuity 证明承接，只重跑失败项；
-身份变化时只重跑受影响闭集。无法证明承接的工具计为 P0 阻断，禁止复制 JSON 或反复全量执行。
+已通过项只从前序收据承接，禁止再次执行；每个补跑使用新的 facts／receipt 路径。同根因第二次仍失败
+即停线，禁止第三次 attempt。身份变化时只重跑受影响闭集。无法证明承接的工具计为 P0 阻断，禁止
+复制 JSON 或反复全量执行。
 
 ~~~bash
 python3 tools/official_client_capture/codex_upgrade.py accept \
@@ -1854,8 +1872,9 @@ python3 tools/check_version_leak.py
 acceptance、promotion receipt、inventory、门禁结果、构建输入、image ID 和 registry manifest
 digest；构建不得携带 `candidatecapture` 等候选取证专用标签。任一摘要不一致时禁止构建或部署。
 
-六项结果必须写入 `post-promotion-gates.facts.json`，并在 canary 前生成、重放
-`post_promotion` 收据：
+首次 attempt 的六项结果必须完整写入 `post-promotion-gates.facts.json`；每次 attempt 同样绑定以
+attempt ID 为主体的 `gate_before／gate_after` ARM64 环境收据、根因和可空的前序失败收据，并在
+canary 前生成、重放 `post_promotion` 收据：
 
 ~~~bash
 python3 tools/official_client_capture/codex_upgrade_gate_receipt.py finalize \
@@ -1869,8 +1888,9 @@ python3 tools/official_client_capture/codex_upgrade_gate_receipt.py replay \
 ~~~
 
 该阶段收据额外绑定 AcceptanceFact、promotion receipt 和 production tree；candidate 身份、目标架构、
-Profile、package、源码树和镜像必须与验收阶段完全一致。任一门禁失败或跳过、两份输入摘要漂移、
-production tree 不一致，均禁止构建正式镜像或开始 canary。
+Profile、package、源码树和镜像必须与验收阶段完全一致。失败 attempt 只读保留并按 v3 合同仅补跑
+`failed_gate_ids`；最终收据不是 `status=passed`、仍有失败或跳过、两份输入摘要漂移、production tree
+不一致，均禁止构建正式镜像或开始 canary。
 
 post-promotion 门禁同样遵守 Framework §5.3.5。promotion 前必须具备 candidate／active 双模式夹具并
 证明 Go／Python 后继图一致；失败时保留旧 Active 或完整回滚。

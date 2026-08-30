@@ -244,6 +244,12 @@
                   },
                   "restoration_report": {
                     "$ref": "#/$defs/fileBindingWithBytes"
+                  },
+                  "arm64_before_receipt": {
+                    "$ref": "#/$defs/fileBindingWithBytes"
+                  },
+                  "arm64_after_receipt": {
+                    "$ref": "#/$defs/fileBindingWithBytes"
                   }
                 }
               }
@@ -381,7 +387,9 @@
         "evidence_root",
         "before_probe",
         "after_probe",
-        "restoration_report"
+        "restoration_report",
+        "arm64_before_receipt",
+        "arm64_after_receipt"
       ],
       "properties": {
         "evidence_root": {
@@ -394,6 +402,12 @@
           "$ref": "#/$defs/nullableFileBindingWithBytes"
         },
         "restoration_report": {
+          "$ref": "#/$defs/nullableFileBindingWithBytes"
+        },
+        "arm64_before_receipt": {
+          "$ref": "#/$defs/nullableFileBindingWithBytes"
+        },
+        "arm64_after_receipt": {
           "$ref": "#/$defs/nullableFileBindingWithBytes"
         }
       }

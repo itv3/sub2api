@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-timing-ledger-receipt-v1.json",
+  "title": "Codex 升级 UpgradeTimingLedger checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observed_at_utc",
+    "ledger_plan",
+    "event_head",
+    "summary",
+    "producer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "codex-upgrade-timing-ledger-receipt/v1"
+    },
+    "observed_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ledger_plan": {
+      "$ref": "#/$defs/binding"
+    },
+    "event_head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "sha256"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "upgrade_id",
+        "baseline_version",
+        "target_version",
+        "campaign_purpose",
+        "evidence_decision",
+        "active_phase",
+        "head_sequence",
+        "head_sha256",
+        "total_elapsed_seconds",
+        "stage_elapsed_seconds",
+        "total_deadline_at_utc",
+        "stage_deadline_at_utc",
+        "total_live_request_count",
+        "same_root_cause_failures",
+        "last_successful_receipt",
+        "last_event_id",
+        "next_action"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "active",
+            "stop_required",
+            "stopped",
+            "complete"
+          ]
+        },
+        "upgrade_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "baseline_version": {
+          "$ref": "#/$defs/version"
+        },
+        "target_version": {
+          "$ref": "#/$defs/version"
+        },
+        "campaign_purpose": {
+          "enum": [
+            "validation_only",
+            "production_replacement"
+          ]
+        },
+        "evidence_decision": {
+          "enum": [
+            "reuse",
+            "recapture"
+          ]
+        },
+        "active_phase": {
+          "oneOf": [
+            {
+              "enum": [
+                "VC-0",
+                "VC-1",
+                "VC-2",
+                "VC-3",
+                "VC-4",
+                "VC-5",
+                "VC-6"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "total_elapsed_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stage_elapsed_seconds": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_deadline_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "stage_deadline_at_utc": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_live_request_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "same_root_cause_failures": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "last_successful_receipt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/roleBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_event_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "next_action": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tool",
+        "tool_sha256",
+        "version"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-timing-ledger-producer/v1"
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "version": {
+          "const": "1"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "roleBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/safeId"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": "codex-cli-0151-tool-readiness-plan/v1",
+  "change_set": "codex_cli_0151_tool_readiness",
+  "purpose": "在正式 0.151 Campaign 前补齐时间、ARM64 网络与资源、门禁承接的受管生成和重放能力",
+  "source": {
+    "branch": "codex/codex-0151-tool-readiness",
+    "commit": "1f6711a4d8fd5f9627f09cdbee202b507b892c15",
+    "tree": "0a1cf01307f12dd3a21b75e51b456a5e55ea2a57"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T11:51:01Z",
+    "deadline_at_utc": "2026-08-30T13:51:01Z",
+    "wall_clock_minutes": 120,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "本变更集不清理历史证据、镜像、容器或运行目录"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "可独立重放的 UpgradeTimingLedger",
+    "可独立重放的 ARM64 网络与磁盘收据",
+    "可独立重放的门禁承接收据",
+    "覆盖摘要漂移、网络错误、资源水位和非法补跑的失败关闭测试",
+    "ARM64 上的工具测试与出站规格门禁结果"
+  ]
+}

@@ -77,6 +77,8 @@ from tools.official_client_capture.codex_upgrade_environment_probe import (
     STATE_FILES as ENVIRONMENT_STATE_FILES,
     run_probe as run_environment_probe,
 )
+from tools.official_client_capture import codex_upgrade_arm64_environment_receipt
+from tools.official_client_capture import codex_upgrade_timing_ledger
 from tools.official_client_capture import codex_upgrade_gate_receipt as external_gate_receipt
 from tools.official_client_capture.codex_upgrade_receipt_finalizer import (
     CLIENT_BINDING_SCHEMA as FINALIZED_CLIENT_BINDING_SCHEMA,
@@ -118,7 +120,7 @@ REPORT_SCHEMA = "codex-upgrade-report/v1"
 SURFACE_SCHEMA = "codex-egress-surface/v1"
 SOURCE_SCHEMA = "codex-egress-source-inventory/v1"
 EXTRA_JOB_SCHEMA = "codex-upgrade-extra-jobs/v1"
-CAMPAIGN_SCHEMA = "codex-upgrade-campaign/v2"
+CAMPAIGN_SCHEMA = "codex-upgrade-campaign/v3"
 MIGRATION_SCHEMA = "codex-upgrade-rule-migration/v1"
 ASSERTION_TEMPLATE_SCHEMA = "codex-egress-rule-assertion-template/v1"
 ASSERTION_PROFILE_SCHEMA = "codex-candidate-rule-expectations/v1"
@@ -2349,6 +2351,30 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="冻结本 Campaign 的升级用途，后续 candidate 不得改变。",
     )
+    plan.add_argument(
+        "--timing-ledger-dir",
+        type=Path,
+        required=True,
+        help="已从 DOC-PRE 首项开始计时的 UpgradeTimingLedger 绝对目录。",
+    )
+    plan.add_argument(
+        "--timing-receipt",
+        type=Path,
+        required=True,
+        help="位于 timing ledger 内、可独立重放的 active checkpoint。",
+    )
+    plan.add_argument(
+        "--arm64-environment-root",
+        type=Path,
+        required=True,
+        help="P0 ARM64 网络与磁盘收据所在的 0700 绝对目录。",
+    )
+    plan.add_argument(
+        "--arm64-environment-receipt",
+        type=Path,
+        required=True,
+        help="P0 生成并重放通过的 ARM64 环境收据。",
+    )
     plan.add_argument("--baseline-source", type=Path, required=True)
     plan.add_argument("--target-source", type=Path, required=True)
     plan.add_argument("--baseline-evidence", type=Path, required=True)
@@ -3460,10 +3486,221 @@ def _load_plan_jobs(
     return target_jobs, scenario_manifest, target_scenario_manifest
 
 
+def _control_receipt_relative(root: Path, value: Path, label: str) -> str:
+    """把控制收据规范化为其受管根内的 POSIX 相对路径。"""
+
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+        raise ConfigurationError(f"{label} 的 evidence root 必须是现有非符号链接绝对目录。")
+    resolved_root = root.resolve(strict=True)
+    candidate = value if value.is_absolute() else resolved_root / value
+    try:
+        resolved = candidate.resolve(strict=True)
+        relative = resolved.relative_to(resolved_root).as_posix()
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ConfigurationError(f"{label} 必须位于其受管根内。") from error
+    if candidate.is_symlink() or not resolved.is_file():
+        raise ConfigurationError(f"{label} 必须是非符号链接普通文件。")
+    return relative
+
+
+def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
+    """在创建 Campaign 前重放并绑定时间与 ARM64 P0 硬门禁。"""
+
+    timing_root = getattr(arguments, "timing_ledger_dir", None)
+    timing_receipt_path = getattr(arguments, "timing_receipt", None)
+    arm_root = getattr(arguments, "arm64_environment_root", None)
+    arm_receipt_path = getattr(arguments, "arm64_environment_receipt", None)
+    if not all(
+        isinstance(value, Path)
+        for value in (timing_root, timing_receipt_path, arm_root, arm_receipt_path)
+    ):
+        raise ConfigurationError(
+            "plan 必须显式提供 UpgradeTimingLedger 与 ARM64 P0 环境收据。"
+        )
+    assert isinstance(timing_root, Path)
+    assert isinstance(timing_receipt_path, Path)
+    assert isinstance(arm_root, Path)
+    assert isinstance(arm_receipt_path, Path)
+    timing_relative = _control_receipt_relative(
+        timing_root, timing_receipt_path, "UpgradeTimingLedger checkpoint"
+    )
+    arm_relative = _control_receipt_relative(
+        arm_root, arm_receipt_path, "ARM64 P0 环境收据"
+    )
+    try:
+        timing_checkpoint = codex_upgrade_timing_ledger.replay(
+            timing_root, timing_relative
+        )
+        timing_summary = codex_upgrade_timing_ledger.assert_usable(
+            timing_root,
+            timing_relative,
+            baseline_version=arguments.baseline_version,
+            target_version=arguments.target_version,
+            campaign_purpose=arguments.campaign_purpose,
+            required_phase="VC-0",
+        )
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"UpgradeTimingLedger 未通过：{error}") from error
+    try:
+        arm_receipt = codex_upgrade_arm64_environment_receipt.replay(
+            arm_root, arm_relative
+        )
+    except (
+        OSError,
+        codex_upgrade_arm64_environment_receipt.Arm64EnvironmentReceiptError,
+    ) as error:
+        raise ConfigurationError(f"ARM64 P0 环境收据未通过：{error}") from error
+    if (
+        arm_receipt.get("status") != "passed"
+        or arm_receipt.get("phase") != "p0"
+        or arm_receipt.get("subject_id") != timing_summary["upgrade_id"]
+    ):
+        raise ConfigurationError("ARM64 P0 环境收据与 UpgradeTimingLedger 身份不一致。")
+    resolved_timing = timing_root.resolve(strict=True)
+    resolved_arm = arm_root.resolve(strict=True)
+    timing_file = resolved_timing / timing_relative
+    arm_file = resolved_arm / arm_relative
+    return {
+        "upgrade_timing": {
+            "ledger_dir": str(resolved_timing),
+            "ledger_plan_sha256": file_sha256(resolved_timing / "ledger.json"),
+            "receipt": {
+                "path": timing_relative,
+                "sha256": file_sha256(timing_file),
+                "bytes": timing_file.stat().st_size,
+            },
+            "upgrade_id": timing_summary["upgrade_id"],
+            "evidence_decision": timing_summary["evidence_decision"],
+            "checkpoint_head_sha256": timing_checkpoint["summary"]["head_sha256"],
+        },
+        "arm64_environment": {
+            "evidence_root": str(resolved_arm),
+            "receipt": {
+                "path": arm_relative,
+                "sha256": file_sha256(arm_file),
+                "bytes": arm_file.stat().st_size,
+            },
+            "subject_id": arm_receipt["subject_id"],
+            "contract_sha256": arm_receipt["contract_sha256"],
+            "continuity_identity_sha256": arm_receipt[
+                "continuity_identity_sha256"
+            ],
+        },
+    }
+
+
+def _verify_control_receipts(
+    manifest: Mapping[str, Any], *, require_active: bool
+) -> None:
+    """重放 Campaign 冻结控制收据；执行前额外检查实时墙钟。"""
+
+    controls = manifest.get("control_receipts")
+    if not isinstance(controls, dict) or set(controls) != {
+        "upgrade_timing",
+        "arm64_environment",
+    }:
+        raise ConfigurationError("Campaign 缺少完整控制收据绑定。")
+    timing = controls.get("upgrade_timing")
+    arm = controls.get("arm64_environment")
+    if not isinstance(timing, dict) or not isinstance(arm, dict):
+        raise ConfigurationError("Campaign 控制收据结构非法。")
+
+    def validate_binding(value: Any, label: str) -> tuple[str, str, int]:
+        if not isinstance(value, dict) or set(value) != {"path", "sha256", "bytes"}:
+            raise ConfigurationError(f"{label}绑定字段不闭合。")
+        relative = value.get("path")
+        digest = value.get("sha256")
+        size = value.get("bytes")
+        if (
+            not isinstance(relative, str)
+            or not SHA256_RE.fullmatch(str(digest))
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size <= 0
+        ):
+            raise ConfigurationError(f"{label}绑定非法。")
+        return relative, str(digest), size
+
+    try:
+        timing_root = Path(str(timing["ledger_dir"]))
+        timing_relative, timing_sha, timing_bytes = validate_binding(
+            timing.get("receipt"), "UpgradeTimingLedger checkpoint"
+        )
+        timing_path = timing_root / timing_relative
+        if (
+            file_sha256(timing_root / "ledger.json")
+            != timing.get("ledger_plan_sha256")
+            or file_sha256(timing_path) != timing_sha
+            or timing_path.stat().st_size != timing_bytes
+        ):
+            raise ConfigurationError("UpgradeTimingLedger 绑定摘要漂移。")
+        timing_checkpoint = codex_upgrade_timing_ledger.replay(
+            timing_root, timing_relative
+        )
+        if (
+            timing_checkpoint["summary"].get("upgrade_id")
+            != timing.get("upgrade_id")
+            or timing_checkpoint["summary"].get("evidence_decision")
+            != timing.get("evidence_decision")
+            or timing_checkpoint["summary"].get("head_sha256")
+            != timing.get("checkpoint_head_sha256")
+        ):
+            raise ConfigurationError("UpgradeTimingLedger checkpoint 身份漂移。")
+        if require_active:
+            codex_upgrade_timing_ledger.assert_usable(
+                timing_root,
+                timing_relative,
+                baseline_version=str(manifest["baseline_version"]),
+                target_version=str(manifest["target_version"]),
+                campaign_purpose=str(manifest["campaign_purpose"]),
+            )
+    except (
+        KeyError,
+        OSError,
+        ValueError,
+        codex_upgrade_timing_ledger.TimingLedgerError,
+    ) as error:
+        if isinstance(error, ConfigurationError):
+            raise
+        raise ConfigurationError(f"UpgradeTimingLedger 无法重放：{error}") from error
+
+    try:
+        arm_root = Path(str(arm["evidence_root"]))
+        arm_relative, arm_sha, arm_bytes = validate_binding(
+            arm.get("receipt"), "ARM64 P0 环境收据"
+        )
+        arm_path = arm_root / arm_relative
+        if file_sha256(arm_path) != arm_sha or arm_path.stat().st_size != arm_bytes:
+            raise ConfigurationError("ARM64 P0 环境收据绑定摘要漂移。")
+        arm_receipt = codex_upgrade_arm64_environment_receipt.replay(
+            arm_root, arm_relative
+        )
+        if (
+            arm_receipt.get("status") != "passed"
+            or arm_receipt.get("phase") != "p0"
+            or arm_receipt.get("subject_id") != arm.get("subject_id")
+            or arm_receipt.get("contract_sha256") != arm.get("contract_sha256")
+            or arm_receipt.get("continuity_identity_sha256")
+            != arm.get("continuity_identity_sha256")
+            or arm.get("subject_id") != timing.get("upgrade_id")
+        ):
+            raise ConfigurationError("ARM64 P0 环境收据身份漂移。")
+    except (
+        KeyError,
+        OSError,
+        ValueError,
+        codex_upgrade_arm64_environment_receipt.Arm64EnvironmentReceiptError,
+    ) as error:
+        if isinstance(error, ConfigurationError):
+            raise
+        raise ConfigurationError(f"ARM64 P0 环境收据无法重放：{error}") from error
+
+
 def create_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
     """创建只写一次的 Campaign 核心清单和计划期分析产物。"""
 
     _validate_arguments(arguments)
+    control_receipts = _plan_control_receipts(arguments)
     rules = load_rule_manifest(arguments.rule_manifest, arguments.baseline_version)
     jobs, scenario_manifest, target_scenario_manifest = _load_plan_jobs(
         arguments, rules
@@ -3546,6 +3783,7 @@ def create_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         "official_identity": official_identity,
         "baseline_identity": baseline_identity,
         "tool_identity": _tool_identity(),
+        "control_receipts": control_receipts,
         "inputs": {
             "baseline_rules": {
                 "path": "inputs/baseline-rules.json",
@@ -4262,6 +4500,7 @@ def load_campaign_manifest(path: Path) -> dict[str, Any]:
     if manifest.get("schema_version") != CAMPAIGN_SCHEMA:
         raise ConfigurationError("Campaign schema_version 不受支持。")
     _campaign_coordinates(manifest)
+    _verify_control_receipts(manifest, require_active=False)
     predecessor = manifest.get("predecessor")
     if predecessor is not None:
         if (
@@ -6113,6 +6352,7 @@ def _campaign_jobs(
 
 
 def _verify_plan_identity(campaign_dir: Path, manifest: dict[str, Any]) -> None:
+    _verify_control_receipts(manifest, require_active=True)
     target_source = Path(manifest["configuration"]["target_source"])
     expected = manifest["official_identity"]
     cargo_lock = target_source / "Cargo.lock"
@@ -7682,6 +7922,34 @@ def _probe_capture_environment(
     )
 
 
+def _capture_arm64_environment_receipt(
+    output_root: Path,
+    *,
+    phase: str,
+    subject_id: str,
+) -> tuple[Path, dict[str, Any]]:
+    """只读采集并立即重放一次 ARM64 固定网络与磁盘收据。"""
+
+    ensure_private_directory(output_root)
+    codex_upgrade_arm64_environment_receipt.collect(
+        output_root,
+        "facts.json",
+        phase=phase,
+        subject_id=subject_id,
+    )
+    receipt = codex_upgrade_arm64_environment_receipt.finalize(
+        output_root,
+        "facts.json",
+        "receipt.json",
+    )
+    replayed = codex_upgrade_arm64_environment_receipt.replay(
+        output_root, "receipt.json"
+    )
+    if replayed != receipt:
+        raise ConfigurationError("ARM64 环境收据 finalize／replay 结果不一致。")
+    return output_root / "receipt.json", receipt
+
+
 def _finalize_attempt_restoration(
     evidence_root: Path,
     *,
@@ -8030,8 +8298,19 @@ def _run_capture_attempt(
     after_manifest: dict[str, Any] | None = None
     restoration_path: Path | None = None
     restoration_receipt: dict[str, Any] | None = None
+    arm64_before_path: Path | None = None
+    arm64_before_receipt: dict[str, Any] | None = None
+    arm64_after_path: Path | None = None
+    arm64_after_receipt: dict[str, Any] | None = None
     continuity: dict[str, Any] | None = None
     try:
+        arm64_before_path, arm64_before_receipt = (
+            _capture_arm64_environment_receipt(
+                environment_root / "arm64-before",
+                phase="attempt_before",
+                subject_id=attempt_root.name,
+            )
+        )
         before_manifest = _probe_capture_environment(
             manifest, environment_root / "before", "before"
         )
@@ -8079,6 +8358,23 @@ def _run_capture_attempt(
                 )
             except BaseException as error:
                 restoration_error = error
+            try:
+                arm64_after_path, arm64_after_receipt = (
+                    _capture_arm64_environment_receipt(
+                        environment_root / "arm64-after",
+                        phase="attempt_after",
+                        subject_id=attempt_root.name,
+                    )
+                )
+                if (
+                    arm64_before_receipt is None
+                    or arm64_before_receipt.get("continuity_identity_sha256")
+                    != arm64_after_receipt.get("continuity_identity_sha256")
+                ):
+                    raise ConfigurationError("attempt 前后 ARM64 网络或运行身份漂移。")
+            except BaseException as error:
+                if restoration_error is None:
+                    restoration_error = error
 
     result_by_id = {
         result.get("id"): result
@@ -8120,6 +8416,8 @@ def _run_capture_attempt(
         "before_probe": None,
         "after_probe": None,
         "restoration_report": None,
+        "arm64_before_receipt": None,
+        "arm64_after_receipt": None,
     }
     before_probe_path = environment_root / "before" / "probe-manifest.json"
     after_probe_path = environment_root / "after" / "probe-manifest.json"
@@ -8134,6 +8432,14 @@ def _run_capture_attempt(
     if restoration_path is not None and restoration_receipt is not None:
         environment["restoration_report"] = _attempt_evidence_binding(
             evidence_root, restoration_path
+        )
+    if arm64_before_path is not None and arm64_before_receipt is not None:
+        environment["arm64_before_receipt"] = _attempt_evidence_binding(
+            evidence_root, arm64_before_path
+        )
+    if arm64_after_path is not None and arm64_after_receipt is not None:
+        environment["arm64_after_receipt"] = _attempt_evidence_binding(
+            evidence_root, arm64_after_path
         )
 
     contamination: dict[str, Any] | None = None
@@ -8339,6 +8645,51 @@ def _seal_capture_attempt(
         or attempt_evidence_root.resolve(strict=True) not in roots
     ):
         raise ConfigurationError("抓包 attempt 的环境证据根未纳入 seal。")
+    arm64_receipts: dict[str, dict[str, Any]] = {}
+    for role, expected_phase in (
+        ("arm64_before_receipt", "attempt_before"),
+        ("arm64_after_receipt", "attempt_after"),
+    ):
+        reference = environment.get(role)
+        if not isinstance(reference, dict) or set(reference) != {
+            "path",
+            "sha256",
+            "bytes",
+        }:
+            raise ConfigurationError(f"抓包 attempt 缺少 {role} 绑定。")
+        receipt_path = attempt_evidence_root / str(reference.get("path", ""))
+        if (
+            receipt_path.is_symlink()
+            or not receipt_path.is_file()
+            or receipt_path.stat().st_size != reference.get("bytes")
+            or file_sha256(receipt_path) != reference.get("sha256")
+        ):
+            raise ConfigurationError(f"抓包 attempt 的 {role} 摘要漂移。")
+        try:
+            replayed = codex_upgrade_arm64_environment_receipt.replay(
+                receipt_path.parent, receipt_path.name
+            )
+        except (
+            OSError,
+            codex_upgrade_arm64_environment_receipt.Arm64EnvironmentReceiptError,
+        ) as error:
+            raise ConfigurationError(f"抓包 attempt 的 {role} 无法重放：{error}") from error
+        if (
+            replayed.get("status") != "passed"
+            or replayed.get("phase") != expected_phase
+            or replayed.get("subject_id") != attempt_id
+        ):
+            raise ConfigurationError(f"抓包 attempt 的 {role} 身份不一致。")
+        arm64_receipts[role] = replayed
+    if (
+        arm64_receipts["arm64_before_receipt"].get(
+            "continuity_identity_sha256"
+        )
+        != arm64_receipts["arm64_after_receipt"].get(
+            "continuity_identity_sha256"
+        )
+    ):
+        raise ConfigurationError("抓包 attempt 前后 ARM64 环境身份不连续。")
     restoration_reference = environment.get("restoration_report")
     if (
         not isinstance(restoration_reference, dict)
@@ -10813,8 +11164,11 @@ def _candidate_external_gate_binding(
         "candidate_image_id": identity.get("image_id"),
         "candidate_image_reference": identity.get("image_reference"),
     }
-    if payload.get("phase") != external_gate_receipt.CANDIDATE_PHASE or any(
-        subject.get(key) != value for key, value in expected.items()
+    if (
+        payload.get("phase") != external_gate_receipt.CANDIDATE_PHASE
+        or payload.get("status") != "passed"
+        or payload.get("failed_gate_ids") != []
+        or any(subject.get(key) != value for key, value in expected.items())
     ):
         raise ConfigurationError("candidate 外部门禁收据与 Campaign／候选身份不一致。")
     binding = {

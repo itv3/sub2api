@@ -27,6 +27,10 @@ from tools.official_client_capture.codex_upgrade import (
     scan_source_tree,
 )
 from tools.official_client_capture.codex_upgrade import Job
+from tools.official_client_capture.tests.control_receipt_fixtures import (
+    create_arm_receipt,
+    create_timing_checkpoint,
+)
 
 
 class CodexUpgradeTest(unittest.TestCase):
@@ -62,6 +66,10 @@ class CodexUpgradeTest(unittest.TestCase):
         self.assertTrue(actions["lite_model"].required)
         self.assertTrue(actions["campaign_mode"].required)
         self.assertTrue(actions["campaign_purpose"].required)
+        self.assertTrue(actions["timing_ledger_dir"].required)
+        self.assertTrue(actions["timing_receipt"].required)
+        self.assertTrue(actions["arm64_environment_root"].required)
+        self.assertTrue(actions["arm64_environment_receipt"].required)
         self.assertIsNone(actions["model"].default)
         self.assertIsNone(actions["lite_model"].default)
 
@@ -939,6 +947,21 @@ class CodexUpgradeTest(unittest.TestCase):
                 member.mode = mode
                 member.mtime = 0
                 archive.addfile(member, io.BytesIO(content))
+        timing_root = root / "control" / "UpgradeTimingLedger"
+        timing_receipt = create_timing_checkpoint(
+            timing_root,
+            upgrade_id=campaign_id,
+            baseline_version="0.145.0",
+            target_version="0.146.0",
+            campaign_purpose=campaign_purpose,
+        )
+        arm_root = root / "control" / "arm64-p0"
+        arm_receipt = create_arm_receipt(
+            arm_root,
+            phase="p0",
+            subject_id=campaign_id,
+            prefix="p0",
+        )
         return argparse.Namespace(
             command="plan",
             campaign_dir=root / "campaign",
@@ -950,6 +973,10 @@ class CodexUpgradeTest(unittest.TestCase):
             target_version="0.146.0",
             campaign_mode=campaign_mode,
             campaign_purpose=campaign_purpose,
+            timing_ledger_dir=timing_root,
+            timing_receipt=timing_receipt,
+            arm64_environment_root=arm_root,
+            arm64_environment_receipt=arm_receipt,
             baseline_source=baseline_source,
             target_source=target_source,
             baseline_evidence=baseline_evidence,
@@ -1987,6 +2014,11 @@ class CodexUpgradeTest(unittest.TestCase):
         facts = {
             "schema_version": codex_upgrade_gate_receipt.FACTS_SCHEMA,
             "phase": codex_upgrade_gate_receipt.CANDIDATE_PHASE,
+            "attempt": {
+                "attempt_id": "candidate-gate-attempt",
+                "root_cause_id": None,
+                "previous_receipt": None,
+            },
             "subject": {
                 "campaign_id": manifest["campaign_id"],
                 "campaign_mode": manifest["campaign_mode"],
@@ -2006,8 +2038,23 @@ class CodexUpgradeTest(unittest.TestCase):
                 "promotion_receipt_sha256": None,
             },
             "inputs": [],
+            "environment": {},
             "gates": gates,
         }
+        for role, environment_phase in (
+            ("before", "gate_before"),
+            ("after", "gate_after"),
+        ):
+            environment_receipt = create_arm_receipt(
+                gate_root,
+                phase=environment_phase,
+                subject_id="candidate-gate-attempt",
+                prefix=f"gate-{role}",
+            )
+            facts["environment"][role] = {
+                "path": environment_receipt.relative_to(gate_root).as_posix(),
+                "sha256": codex_upgrade.file_sha256(environment_receipt),
+            }
         facts_path = gate_root / "facts.json"
         self._write_json(facts_path, facts)
         facts_path.chmod(0o600)
@@ -2934,6 +2981,14 @@ class CodexUpgradeTest(unittest.TestCase):
                     arguments.campaign_mode,
                     "--campaign-purpose",
                     arguments.campaign_purpose,
+                    "--timing-ledger-dir",
+                    str(arguments.timing_ledger_dir),
+                    "--timing-receipt",
+                    str(arguments.timing_receipt),
+                    "--arm64-environment-root",
+                    str(arguments.arm64_environment_root),
+                    "--arm64-environment-receipt",
+                    str(arguments.arm64_environment_receipt),
                     "--baseline-source",
                     str(arguments.baseline_source),
                     "--target-source",

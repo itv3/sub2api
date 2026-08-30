@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools.official_client_capture import codex_upgrade_gate_receipt as gate_receipt
 from tools.official_client_capture import production_activation_receipt as receipt
@@ -22,6 +23,12 @@ class ProductionActivationReceiptTests(unittest.TestCase):
         self.candidate_source_tree = "8" * 64
         self.candidate_image = f"sha256:{'9' * 64}"
         self.candidate_image_reference = f"registry/candidate@{self.candidate_image}"
+        self.environment_patcher = mock.patch.object(
+            gate_receipt.codex_upgrade_arm64_environment_receipt,
+            "replay",
+            side_effect=self._replay_environment,
+        )
+        self.environment_patcher.start()
         self.acceptance = self._write(
             "inputs/acceptance.json",
             {
@@ -50,7 +57,18 @@ class ProductionActivationReceiptTests(unittest.TestCase):
         self._write("facts.json", self.facts)
 
     def tearDown(self) -> None:
+        self.environment_patcher.stop()
         self.temporary.cleanup()
+
+    @staticmethod
+    def _replay_environment(root: Path, relative: str) -> dict[str, object]:
+        del root
+        return {
+            "status": "passed",
+            "phase": "gate_before" if "before" in relative else "gate_after",
+            "subject_id": "post-gate-attempt",
+            "continuity_identity_sha256": "c" * 64,
+        }
 
     def _write(self, relative: str, payload: object) -> Path:
         path = self.root / relative
@@ -101,6 +119,11 @@ class ProductionActivationReceiptTests(unittest.TestCase):
         gate_facts = {
             "schema_version": gate_receipt.FACTS_SCHEMA,
             "phase": gate_receipt.POST_PROMOTION_PHASE,
+            "attempt": {
+                "attempt_id": "post-gate-attempt",
+                "root_cause_id": None,
+                "previous_receipt": None,
+            },
             "subject": {
                 "campaign_id": "codex-0_147_0-campaign",
                 "campaign_mode": "formal",
@@ -131,8 +154,18 @@ class ProductionActivationReceiptTests(unittest.TestCase):
                     "sha256": self._digest(promotion),
                 },
             ],
+            "environment": {},
             "gates": [],
         }
+        for role in ("before", "after"):
+            environment = self._write(
+                f"inputs/post-gate-{role}.json",
+                {"role": role, "attempt_id": "post-gate-attempt"},
+            )
+            gate_facts["environment"][role] = {
+                "path": environment.relative_to(self.root).as_posix(),
+                "sha256": self._digest(environment),
+            }
         for index, gate_id in enumerate(sorted(gate_receipt.POST_PROMOTION_COMMANDS)):
             cwd, command = gate_receipt.POST_PROMOTION_COMMANDS[gate_id]
             evidence = self._write(

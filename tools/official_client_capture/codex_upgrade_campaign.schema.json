@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-campaign-v2.json",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-campaign-v3.json",
   "title": "Codex 出站版本升级 Campaign 不可变核心清单",
   "description": "Campaign 创建时只写一次，并由 campaign.sha256 封存。后续状态、候选身份、比较结果和验收门禁只能写入独立阶段收据，禁止回写本清单。",
   "type": "object",
@@ -18,6 +18,7 @@
     "official_identity",
     "baseline_identity",
     "tool_identity",
+    "control_receipts",
     "inputs",
     "analysis",
     "configuration",
@@ -31,7 +32,7 @@
       "minLength": 1
     },
     "schema_version": {
-      "const": "codex-upgrade-campaign/v2"
+      "const": "codex-upgrade-campaign/v3"
     },
     "campaign_id": {
       "$ref": "#/$defs/safeId"
@@ -71,6 +72,9 @@
     },
     "tool_identity": {
       "$ref": "#/$defs/toolIdentity"
+    },
+    "control_receipts": {
+      "$ref": "#/$defs/controlReceipts"
     },
     "predecessor": {
       "$ref": "#/$defs/predecessor"
@@ -190,6 +194,100 @@
           "type": "null"
         }
       ]
+    },
+    "fileBindingWithBytes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "controlReceipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upgrade_timing",
+        "arm64_environment"
+      ],
+      "properties": {
+        "upgrade_timing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ledger_dir",
+            "ledger_plan_sha256",
+            "receipt",
+            "upgrade_id",
+            "evidence_decision",
+            "checkpoint_head_sha256"
+          ],
+          "properties": {
+            "ledger_dir": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "ledger_plan_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "receipt": {
+              "$ref": "#/$defs/fileBindingWithBytes"
+            },
+            "upgrade_id": {
+              "$ref": "#/$defs/safeId"
+            },
+            "evidence_decision": {
+              "enum": [
+                "reuse",
+                "recapture"
+              ]
+            },
+            "checkpoint_head_sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "arm64_environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "evidence_root",
+            "receipt",
+            "subject_id",
+            "contract_sha256",
+            "continuity_identity_sha256"
+          ],
+          "properties": {
+            "evidence_root": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "receipt": {
+              "$ref": "#/$defs/fileBindingWithBytes"
+            },
+            "subject_id": {
+              "$ref": "#/$defs/safeId"
+            },
+            "contract_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "continuity_identity_sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
     },
     "predecessor": {
       "type": "object",

@@ -358,6 +358,8 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
         or
         gate_payload.get("phase")
         != codex_upgrade_gate_receipt.POST_PROMOTION_PHASE
+        or gate_payload.get("status") != "passed"
+        or gate_payload.get("failed_gate_ids") != []
         or any(
             gate_subject.get(key) != value
             for key, value in expected_gate_subject.items()

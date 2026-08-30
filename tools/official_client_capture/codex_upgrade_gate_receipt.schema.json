@@ -1,27 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-external-gate-receipt-v2.json",
-  "title": "Codex 升级外部门禁收据",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-external-gate-receipt-v3.json",
+  "title": "Codex 升级外部门禁 attempt 链收据",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "phase",
+    "status",
+    "attempt",
     "subject",
     "inputs",
-    "gates",
+    "environment",
+    "executed_gate_ids",
+    "carried_gate_ids",
+    "passed_gate_ids",
+    "failed_gate_ids",
+    "effective_gates",
     "completed_at_utc",
     "producer"
   ],
   "properties": {
     "schema_version": {
-      "const": "codex-upgrade-external-gate-receipt/v2"
+      "const": "codex-upgrade-external-gate-receipt/v3"
     },
     "phase": {
       "enum": [
         "candidate_external",
         "post_promotion"
       ]
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "attempt": {
+      "$ref": "#/$defs/attempt"
     },
     "subject": {
       "$ref": "#/$defs/subject"
@@ -32,11 +48,43 @@
         "$ref": "#/$defs/inputBinding"
       }
     },
-    "gates": {
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before",
+        "after",
+        "continuity_identity_sha256"
+      ],
+      "properties": {
+        "before": {
+          "$ref": "#/$defs/binding"
+        },
+        "after": {
+          "$ref": "#/$defs/binding"
+        },
+        "continuity_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "executed_gate_ids": {
+      "$ref": "#/$defs/gateIds"
+    },
+    "carried_gate_ids": {
+      "$ref": "#/$defs/gateIds"
+    },
+    "passed_gate_ids": {
+      "$ref": "#/$defs/gateIds"
+    },
+    "failed_gate_ids": {
+      "$ref": "#/$defs/gateIds"
+    },
+    "effective_gates": {
       "type": "array",
       "minItems": 3,
       "items": {
-        "$ref": "#/$defs/gate"
+        "$ref": "#/$defs/effectiveGate"
       }
     },
     "completed_at_utc": {
@@ -47,77 +95,27 @@
       "$ref": "#/$defs/producer"
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "phase": {
-            "const": "candidate_external"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "inputs": {
-            "maxItems": 0
-          },
-          "subject": {
-            "properties": {
-              "production_tree_sha256": {
-                "type": "null"
-              },
-              "acceptance_sha256": {
-                "type": "null"
-              },
-              "promotion_receipt_sha256": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "inputs": {
-            "minItems": 2,
-            "maxItems": 2
-          },
-          "subject": {
-            "properties": {
-              "production_tree_sha256": {
-                "$ref": "#/$defs/sha256"
-              },
-              "acceptance_sha256": {
-                "$ref": "#/$defs/sha256"
-              },
-              "promotion_receipt_sha256": {
-                "$ref": "#/$defs/sha256"
-              },
-              "campaign_mode": {
-                "const": "formal"
-              },
-              "campaign_purpose": {
-                "const": "production_replacement"
-              },
-              "candidate_purpose": {
-                "const": "production_replacement"
-              }
-            }
-          }
-        }
-      }
-    }
-  ],
   "$defs": {
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
     },
     "candidatePurpose": {
       "enum": [
         "validation_only",
         "production_replacement"
       ]
+    },
+    "gateIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safeId"
+      }
     },
     "binding": {
       "type": "object",
@@ -140,6 +138,16 @@
           "minimum": 1
         }
       }
+    },
+    "nullableBinding": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/binding"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "inputBinding": {
       "type": "object",
@@ -170,6 +178,39 @@
         }
       }
     },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "root_cause_id",
+        "same_root_cause_failure_count",
+        "previous_receipt"
+      ],
+      "properties": {
+        "attempt_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "root_cause_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/safeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "same_root_cause_failure_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "previous_receipt": {
+          "$ref": "#/$defs/nullableBinding"
+        }
+      }
+    },
     "subject": {
       "type": "object",
       "additionalProperties": false,
@@ -193,8 +234,7 @@
       ],
       "properties": {
         "campaign_id": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/safeId"
         },
         "campaign_mode": {
           "const": "formal"
@@ -203,8 +243,7 @@
           "$ref": "#/$defs/candidatePurpose"
         },
         "candidate_id": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/safeId"
         },
         "candidate_purpose": {
           "$ref": "#/$defs/candidatePurpose"
@@ -218,8 +257,7 @@
           "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
         },
         "profile_id": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/safeId"
         },
         "profile_digest": {
           "$ref": "#/$defs/sha256"
@@ -239,38 +277,27 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}$"
         },
         "production_tree_sha256": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/sha256"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/nullableSha256"
         },
         "acceptance_sha256": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/sha256"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/nullableSha256"
         },
         "promotion_receipt_sha256": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/sha256"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/nullableSha256"
         }
       }
     },
-    "gate": {
+    "nullableSha256": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "effectiveGate": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -288,12 +315,13 @@
         "skipped_count",
         "stdout_sha256",
         "stderr_sha256",
-        "evidence"
+        "evidence",
+        "disposition",
+        "carried_from_attempt"
       ],
       "properties": {
         "gate_id": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/safeId"
         },
         "command": {
           "type": "array",
@@ -310,8 +338,7 @@
           ]
         },
         "host": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/safeId"
         },
         "architecture": {
           "type": "string",
@@ -326,17 +353,21 @@
           "format": "date-time"
         },
         "exit_code": {
-          "const": 0
+          "type": "integer"
         },
         "status": {
-          "const": "passed"
+          "enum": [
+            "passed",
+            "failed"
+          ]
         },
         "passed_count": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
         },
         "failed_count": {
-          "const": 0
+          "type": "integer",
+          "minimum": 0
         },
         "skipped_count": {
           "const": 0
@@ -353,6 +384,22 @@
           "items": {
             "$ref": "#/$defs/binding"
           }
+        },
+        "disposition": {
+          "enum": [
+            "executed",
+            "carried"
+          ]
+        },
+        "carried_from_attempt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/safeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -367,7 +414,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "codex-upgrade-external-gate-producer/v2"
+          "const": "codex-upgrade-external-gate-producer/v3"
         },
         "tool": {
           "type": "string",

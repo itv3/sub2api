@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-arm64-environment-receipt-v1.json",
+  "title": "Codex 升级 ARM64 网络与磁盘硬门禁收据",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "phase",
+    "subject_id",
+    "observed_at_utc",
+    "contract_sha256",
+    "continuity_identity_sha256",
+    "resource_gate",
+    "facts",
+    "producer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "codex-upgrade-arm64-environment-receipt/v1"
+    },
+    "status": {
+      "const": "passed"
+    },
+    "phase": {
+      "enum": [
+        "p0",
+        "attempt_before",
+        "attempt_after",
+        "kilo_before",
+        "kilo_after",
+        "gate_before",
+        "gate_after",
+        "canary_before",
+        "canary_after",
+        "deployment_before",
+        "deployment_after"
+      ]
+    },
+    "subject_id": {
+      "$ref": "#/$defs/safeId"
+    },
+    "observed_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "contract_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "continuity_identity_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "resource_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "used_percent",
+        "available_bytes",
+        "passed"
+      ],
+      "properties": {
+        "used_percent": {
+          "type": "integer",
+          "maximum": 69
+        },
+        "available_bytes": {
+          "type": "integer",
+          "minimum": 32212254720
+        },
+        "passed": {
+          "const": true
+        }
+      }
+    },
+    "facts": {
+      "$ref": "#/$defs/binding"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tool",
+        "tool_sha256",
+        "version"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-arm64-environment-producer/v1"
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "version": {
+          "const": "1"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

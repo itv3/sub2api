@@ -15,10 +15,16 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-FACTS_SCHEMA = "codex-upgrade-external-gate-facts/v2"
-RECEIPT_SCHEMA = "codex-upgrade-external-gate-receipt/v2"
-PRODUCER_SCHEMA = "codex-upgrade-external-gate-producer/v2"
+from tools.official_client_capture import codex_upgrade_arm64_environment_receipt
+
+
+FACTS_SCHEMA = "codex-upgrade-external-gate-facts/v3"
+RECEIPT_SCHEMA = "codex-upgrade-external-gate-receipt/v3"
+PRODUCER_SCHEMA = "codex-upgrade-external-gate-producer/v3"
+SAME_ROOT_CAUSE_RETRY_LIMIT = 2
 CANDIDATE_PHASE = "candidate_external"
 POST_PROMOTION_PHASE = "post_promotion"
 PHASES = frozenset({CANDIDATE_PHASE, POST_PROMOTION_PHASE})
@@ -389,14 +395,18 @@ def _validate_gates(
     values: Any,
     phase: str,
     architecture: str,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str, list[str], list[str]]:
     if not isinstance(values, list) or not values:
         raise GateReceiptError("gates 不能为空")
     contracts = CANDIDATE_COMMANDS if phase == CANDIDATE_PHASE else POST_PROMOTION_COMMANDS
     ids = [item.get("gate_id") for item in values if isinstance(item, dict)]
-    if ids != sorted(contracts):
-        raise GateReceiptError(f"{phase} gates 必须唯一且完整覆盖 {sorted(contracts)}")
+    if ids != sorted(ids) or len(set(ids)) != len(ids) or any(
+        gate_id not in contracts for gate_id in ids
+    ):
+        raise GateReceiptError(f"{phase} 本次执行 gates 必须唯一、排序且属于冻结合同")
     normalized: list[dict[str, Any]] = []
+    passed_ids: list[str] = []
+    failed_ids: list[str] = []
     latest: datetime | None = None
     latest_raw = ""
     for item in values:
@@ -434,16 +444,27 @@ def _validate_gates(
         completed = _rfc3339(gate.get("completed_at_utc"), f"{gate_id}.completed_at_utc")
         if started > completed:
             raise GateReceiptError(f"门禁 {gate_id} 时间顺序非法")
-        if (
-            gate.get("exit_code") != 0
-            or gate.get("status") != "passed"
-            or not isinstance(gate.get("passed_count"), int)
-            or isinstance(gate.get("passed_count"), bool)
-            or gate.get("passed_count") <= 0
-            or gate.get("failed_count") != 0
-            or gate.get("skipped_count") != 0
-        ):
-            raise GateReceiptError(f"门禁 {gate_id} 未通过、存在失败或非预期跳过")
+        for count_name in ("passed_count", "failed_count", "skipped_count"):
+            count = gate.get(count_name)
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise GateReceiptError(f"门禁 {gate_id} 的 {count_name} 非法")
+        if gate.get("skipped_count") != 0:
+            raise GateReceiptError(f"门禁 {gate_id} 存在非预期跳过")
+        status_value = gate.get("status")
+        if status_value == "passed":
+            if (
+                gate.get("exit_code") != 0
+                or gate.get("passed_count") <= 0
+                or gate.get("failed_count") != 0
+            ):
+                raise GateReceiptError(f"门禁 {gate_id} passed 计数或退出码矛盾")
+            passed_ids.append(gate_id)
+        elif status_value == "failed":
+            if gate.get("exit_code") == 0 and gate.get("failed_count") == 0:
+                raise GateReceiptError(f"门禁 {gate_id} failed 缺少失败事实")
+            failed_ids.append(gate_id)
+        else:
+            raise GateReceiptError(f"门禁 {gate_id} status 只能为 passed 或 failed")
         evidence = gate.get("evidence")
         if not isinstance(evidence, list) or not evidence:
             raise GateReceiptError(f"门禁 {gate_id} 缺少证据")
@@ -471,34 +492,206 @@ def _validate_gates(
         if latest is None or completed > latest:
             latest = completed
             latest_raw = gate["completed_at_utc"]
-    return normalized, latest_raw
+    return normalized, latest_raw, passed_ids, failed_ids
 
 
-def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
+def _validate_environment(
+    root: Path,
+    value: Any,
+    attempt_id: str,
+) -> dict[str, Any]:
+    environment = _expect(value, {"before", "after"}, "environment")
+    normalized: dict[str, Any] = {}
+    receipts: dict[str, dict[str, Any]] = {}
+    for role, expected_phase in (("before", "gate_before"), ("after", "gate_after")):
+        binding, _ = _binding(root, environment.get(role), f"environment.{role}")
+        try:
+            receipt = codex_upgrade_arm64_environment_receipt.replay(
+                root, str(binding["path"])
+            )
+        except (
+            OSError,
+            codex_upgrade_arm64_environment_receipt.Arm64EnvironmentReceiptError,
+        ) as error:
+            raise GateReceiptError(f"environment.{role} 无法独立重放：{error}") from error
+        if (
+            receipt.get("status") != "passed"
+            or receipt.get("phase") != expected_phase
+            or receipt.get("subject_id") != attempt_id
+        ):
+            raise GateReceiptError(
+                f"environment.{role} 与 gate attempt 身份或阶段不一致"
+            )
+        normalized[role] = binding
+        receipts[role] = receipt
+    if (
+        receipts["before"].get("continuity_identity_sha256")
+        != receipts["after"].get("continuity_identity_sha256")
+    ):
+        raise GateReceiptError("gate attempt 前后 ARM64 环境身份漂移")
+    normalized["continuity_identity_sha256"] = receipts["after"][
+        "continuity_identity_sha256"
+    ]
+    return normalized
+
+
+def _validate_attempt(value: Any) -> dict[str, Any]:
+    attempt = _expect(
+        value,
+        {"attempt_id", "root_cause_id", "previous_receipt"},
+        "attempt",
+    )
+    attempt_id = _safe_id(attempt.get("attempt_id"), "attempt.attempt_id")
+    root_cause_id = attempt.get("root_cause_id")
+    if root_cause_id is not None:
+        root_cause_id = _safe_id(root_cause_id, "attempt.root_cause_id")
+    previous = attempt.get("previous_receipt")
+    if previous is not None:
+        _expect(previous, {"path", "sha256"}, "attempt.previous_receipt")
+    return {
+        "attempt_id": attempt_id,
+        "root_cause_id": root_cause_id,
+        "previous_receipt": previous,
+    }
+
+
+def _same_inputs(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
+    return [
+        {key: item[key] for key in ("role", "sha256", "bytes")}
+        for item in left
+    ] == [
+        {key: item[key] for key in ("role", "sha256", "bytes")}
+        for item in right
+    ]
+
+
+def build_receipt(
+    root: Path,
+    facts_relative: str,
+    *,
+    _seen_receipts: set[str] | None = None,
+) -> dict[str, Any]:
     root = _private_root(root)
     facts_path = _relative(root, facts_relative, "facts")
     facts, facts_raw = _load_json(facts_path, "facts")
-    _expect(facts, {"schema_version", "phase", "subject", "inputs", "gates"}, "facts")
+    _expect(
+        facts,
+        {
+            "schema_version",
+            "phase",
+            "attempt",
+            "subject",
+            "inputs",
+            "environment",
+            "gates",
+        },
+        "facts",
+    )
     if facts.get("schema_version") != FACTS_SCHEMA:
         raise GateReceiptError("facts.schema_version 不匹配")
     phase = facts.get("phase")
     if phase not in PHASES:
         raise GateReceiptError("facts.phase 非法")
+    attempt = _validate_attempt(facts.get("attempt"))
     subject = _validate_subject(facts.get("subject"), phase)
     inputs = _validate_inputs(root, facts.get("inputs"), phase, subject)
-    gates, completed_at = _validate_gates(
+    environment = _validate_environment(root, facts.get("environment"), attempt["attempt_id"])
+    contracts = CANDIDATE_COMMANDS if phase == CANDIDATE_PHASE else POST_PROMOTION_COMMANDS
+
+    previous_binding: dict[str, Any] | None = None
+    previous: dict[str, Any] | None = None
+    previous_reference = attempt["previous_receipt"]
+    expected_executed_ids = sorted(contracts)
+    carried: list[dict[str, Any]] = []
+    prior_failure_count = 0
+    if previous_reference is not None:
+        previous_binding, _ = _binding(
+            root, previous_reference, "attempt.previous_receipt"
+        )
+        previous_relative = str(previous_binding["path"])
+        seen = set(_seen_receipts or set())
+        if previous_relative in seen:
+            raise GateReceiptError("门禁 attempt 前序收据形成循环")
+        previous = replay(root, previous_relative, _seen_receipts=seen)
+        if previous.get("status") != "failed" or not previous.get("failed_gate_ids"):
+            raise GateReceiptError("只有失败的前序门禁 attempt 可以补跑")
+        if (
+            previous.get("phase") != phase
+            or previous.get("subject") != subject
+            or not _same_inputs(previous.get("inputs", []), inputs)
+        ):
+            raise GateReceiptError("前序门禁 attempt 身份或输入不连续")
+        previous_attempt = previous.get("attempt")
+        if not isinstance(previous_attempt, dict):
+            raise GateReceiptError("前序门禁 attempt 身份缺失")
+        if (
+            attempt["root_cause_id"] is None
+            or attempt["root_cause_id"] != previous_attempt.get("root_cause_id")
+        ):
+            raise GateReceiptError("补跑必须承接前序失败的同一 root_cause_id")
+        prior_failure_count = int(previous_attempt.get("same_root_cause_failure_count", 0))
+        if prior_failure_count >= SAME_ROOT_CAUSE_RETRY_LIMIT:
+            raise GateReceiptError("同一根因已连续失败两次，禁止第三次门禁 attempt")
+        previous_environment = previous.get("environment")
+        if (
+            not isinstance(previous_environment, dict)
+            or previous_environment.get("continuity_identity_sha256")
+            != environment["continuity_identity_sha256"]
+        ):
+            raise GateReceiptError("前序 after 与本次 before 的 ARM64 环境连续性无法证明")
+        expected_executed_ids = list(previous["failed_gate_ids"])
+        carried = [
+            {**item, "disposition": "carried", "carried_from_attempt": previous_attempt["attempt_id"]}
+            for item in previous.get("effective_gates", [])
+            if item.get("status") == "passed"
+        ]
+
+    gates, completed_at, passed_ids, failed_ids = _validate_gates(
         root,
         facts.get("gates"),
         phase,
         subject["target_architecture"],
     )
+    executed_ids = [item["gate_id"] for item in gates]
+    if executed_ids != expected_executed_ids:
+        raise GateReceiptError(
+            "门禁补跑集合非法：只能执行前序失败项，禁止重跑已通过项"
+        )
+    if failed_ids and attempt["root_cause_id"] is None:
+        raise GateReceiptError("失败门禁 attempt 必须登记 root_cause_id")
+    effective_by_id = {item["gate_id"]: item for item in carried}
+    for gate in gates:
+        effective_by_id[gate["gate_id"]] = {
+            **gate,
+            "disposition": "executed",
+            "carried_from_attempt": None,
+        }
+    if sorted(effective_by_id) != sorted(contracts):
+        raise GateReceiptError("有效门禁集合未完整覆盖冻结合同")
+    effective = [effective_by_id[gate_id] for gate_id in sorted(effective_by_id)]
+    effective_failed = [item["gate_id"] for item in effective if item["status"] == "failed"]
+    effective_passed = [item["gate_id"] for item in effective if item["status"] == "passed"]
+    status_value = "failed" if effective_failed else "passed"
+    failure_count = prior_failure_count + 1 if status_value == "failed" else prior_failure_count
     tool_path = Path(__file__).resolve()
     return {
         "schema_version": RECEIPT_SCHEMA,
         "phase": phase,
+        "status": status_value,
+        "attempt": {
+            "attempt_id": attempt["attempt_id"],
+            "root_cause_id": attempt["root_cause_id"],
+            "same_root_cause_failure_count": failure_count,
+            "previous_receipt": previous_binding,
+        },
         "subject": subject,
         "inputs": inputs,
-        "gates": gates,
+        "environment": environment,
+        "executed_gate_ids": executed_ids,
+        "carried_gate_ids": sorted(item["gate_id"] for item in carried),
+        "passed_gate_ids": effective_passed,
+        "failed_gate_ids": effective_failed,
+        "effective_gates": effective,
         "completed_at_utc": completed_at,
         "producer": {
             "schema_version": PRODUCER_SCHEMA,
@@ -543,8 +736,17 @@ def finalize(root: Path, facts_relative: str, output_relative: str) -> dict[str,
     return receipt
 
 
-def replay(root: Path, receipt_relative: str) -> dict[str, Any]:
+def replay(
+    root: Path,
+    receipt_relative: str,
+    *,
+    _seen_receipts: set[str] | None = None,
+) -> dict[str, Any]:
     root = _private_root(root)
+    seen = set(_seen_receipts or set())
+    if receipt_relative in seen:
+        raise GateReceiptError("门禁 attempt 收据链形成循环")
+    seen.add(receipt_relative)
     receipt_path = _relative(root, receipt_relative, "receipt")
     receipt, raw = _load_json(receipt_path, "receipt")
     if receipt.get("schema_version") != RECEIPT_SCHEMA:
@@ -555,7 +757,7 @@ def replay(root: Path, receipt_relative: str) -> dict[str, Any]:
     facts = producer.get("facts")
     if not isinstance(facts, dict) or not isinstance(facts.get("path"), str):
         raise GateReceiptError("receipt.producer.facts 缺失")
-    expected = build_receipt(root, facts["path"])
+    expected = build_receipt(root, facts["path"], _seen_receipts=seen)
     if _canonical(expected) != raw:
         raise GateReceiptError("门禁收据重放结果不一致")
     return receipt
@@ -587,9 +789,10 @@ def main(argv: list[str] | None = None) -> int:
     print(
         json.dumps(
             {
-                "status": "complete",
+                "status": result["status"],
                 "phase": result["phase"],
                 "candidate_id": result["subject"]["candidate_id"],
+                "attempt_id": result["attempt"]["attempt_id"],
                 "receipt_sha256": _sha256_bytes(_canonical(result)),
             },
             ensure_ascii=False,

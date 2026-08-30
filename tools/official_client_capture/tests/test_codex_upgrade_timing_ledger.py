@@ -1,0 +1,155 @@
+"""Codex 官方客户端升级 UpgradeTimingLedger 测试。"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from tools.official_client_capture import codex_upgrade_timing_ledger as ledger
+
+
+class TimingLedgerTests(unittest.TestCase):
+    START = "2026-08-30T00:00:00+00:00"
+
+    def _create(self, root: Path) -> None:
+        ledger.create_ledger(
+            root,
+            upgrade_id="codex-0151",
+            baseline_version="0.149.1",
+            target_version="0.151.0",
+            campaign_purpose="production_replacement",
+            evidence_decision="recapture",
+            started_at_utc=self.START,
+        )
+
+    @staticmethod
+    def _at(minutes: int, seconds: int = 0) -> str:
+        started = datetime(2026, 8, 30, tzinfo=timezone.utc)
+        return (started + timedelta(minutes=minutes, seconds=seconds)).isoformat()
+
+    def test_checkpoint_replays_after_later_events_are_appended(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            original = ledger.build_checkpoint(root, observed_at_utc=self._at(1))
+            ledger._write_once(root / "receipts" / "p0.json", original)
+            ledger.append_event(
+                root,
+                event_id="p0-receipt-passed",
+                phase="VC-0",
+                event_type="receipt_passed",
+                recorded_at_utc=self._at(2),
+            )
+            replayed = ledger.replay(root, "receipts/p0.json")
+            self.assertEqual(replayed, original)
+            self.assertEqual(replayed["summary"]["head_sequence"], 1)
+
+    def test_stage_deadline_requires_stop_the_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            status = ledger.inspect_ledger(root, now=self._at(45))
+            self.assertEqual(status["status"], "stop_required")
+            with self.assertRaisesRegex(ledger.TimingLedgerError, "要求停线"):
+                ledger.append_event(
+                    root,
+                    event_id="illegal-work",
+                    phase="VC-0",
+                    event_type="receipt_passed",
+                    recorded_at_utc=self._at(46),
+                )
+            stopped = ledger.append_event(
+                root,
+                event_id="vc0-timeout-stop",
+                phase="VC-0",
+                event_type="stop_the_line",
+                next_action="拆分工具修复并重新执行干净 P0",
+                recorded_at_utc=self._at(46),
+            )
+            self.assertEqual(stopped["status"], "stopped")
+
+    def test_third_same_root_cause_attempt_is_forbidden(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            ledger.append_event(
+                root,
+                event_id="attempt-1-start",
+                phase="VC-0",
+                event_type="attempt_started",
+                attempt_id="attempt-1",
+                recorded_at_utc=self._at(1),
+            )
+            ledger.append_event(
+                root,
+                event_id="attempt-1-fail",
+                phase="VC-0",
+                event_type="attempt_failed",
+                attempt_id="attempt-1",
+                root_cause_id="same-cause",
+                recorded_at_utc=self._at(2),
+            )
+            ledger.append_event(
+                root,
+                event_id="attempt-2-start",
+                phase="VC-0",
+                event_type="attempt_started",
+                attempt_id="attempt-2",
+                root_cause_id="same-cause",
+                recorded_at_utc=self._at(3),
+            )
+            second = ledger.append_event(
+                root,
+                event_id="attempt-2-fail",
+                phase="VC-0",
+                event_type="attempt_failed",
+                attempt_id="attempt-2",
+                root_cause_id="same-cause",
+                recorded_at_utc=self._at(4),
+            )
+            self.assertEqual(second["status"], "stop_required")
+            with self.assertRaisesRegex(ledger.TimingLedgerError, "停线|第三次"):
+                ledger.append_event(
+                    root,
+                    event_id="attempt-3-start",
+                    phase="VC-0",
+                    event_type="attempt_started",
+                    attempt_id="attempt-3",
+                    root_cause_id="same-cause",
+                    recorded_at_utc=self._at(5),
+                )
+
+    def test_checkpoint_replay_rejects_event_tamper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            receipt = ledger.build_checkpoint(root, observed_at_utc=self._at(1))
+            ledger._write_once(root / "receipts" / "p0.json", receipt)
+            event_path = root / "events" / "000001.json"
+            event = json.loads(event_path.read_text(encoding="utf-8"))
+            event["next_action"] = "被篡改"
+            event_path.write_text(
+                json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            event_path.chmod(0o600)
+            with self.assertRaises(ledger.TimingLedgerError):
+                ledger.replay(root, "receipts/p0.json")
+
+    def test_schema_matches_runtime_version(self) -> None:
+        schema = json.loads(
+            Path(ledger.__file__)
+            .with_name("codex_upgrade_timing_ledger.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["properties"]["schema_version"]["const"],
+            ledger.RECEIPT_SCHEMA,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -165,6 +165,26 @@ class CaptureLifecycleTest(unittest.TestCase):
 
         return run
 
+    @staticmethod
+    def _arm64_receipt(
+        output_root: Path,
+        *,
+        phase: str,
+        subject_id: str,
+    ) -> tuple[Path, dict[str, object]]:
+        output_root.mkdir(parents=True, mode=0o700)
+        output_root.chmod(0o700)
+        path = output_root / "receipt.json"
+        payload = {
+            "phase": phase,
+            "subject_id": subject_id,
+            "status": "passed",
+            "continuity_identity_sha256": "a" * 64,
+        }
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+        return path, payload
+
     def _patch_runtime(
         self,
         manifest: dict[str, object],
@@ -203,6 +223,13 @@ class CaptureLifecycleTest(unittest.TestCase):
                 codex_upgrade,
                 "_probe_capture_environment",
                 side_effect=self._probe(order, fail_after=fail_after),
+            )
+        )
+        stack.enter_context(
+            mock.patch.object(
+                codex_upgrade,
+                "_capture_arm64_environment_receipt",
+                side_effect=self._arm64_receipt,
             )
         )
         stack.enter_context(
@@ -1094,6 +1121,12 @@ class CaptureLifecycleTest(unittest.TestCase):
             restoration_path = evidence_root / "restoration.json"
             restoration_path.write_text("{}\n", encoding="utf-8")
             restoration_path.chmod(0o600)
+            arm_paths = {}
+            for role in ("before", "after"):
+                arm_path = evidence_root / f"arm-{role}.json"
+                arm_path.write_text("{}\n", encoding="utf-8")
+                arm_path.chmod(0o600)
+                arm_paths[role] = arm_path
             identity = {
                 "profile_id": "profile-a",
                 "profile_digest": "1" * 64,
@@ -1128,6 +1161,16 @@ class CaptureLifecycleTest(unittest.TestCase):
                         "path": restoration_path.name,
                         "sha256": codex_upgrade.file_sha256(restoration_path),
                         "bytes": restoration_path.stat().st_size,
+                    },
+                    "arm64_before_receipt": {
+                        "path": arm_paths["before"].name,
+                        "sha256": codex_upgrade.file_sha256(arm_paths["before"]),
+                        "bytes": arm_paths["before"].stat().st_size,
+                    },
+                    "arm64_after_receipt": {
+                        "path": arm_paths["after"].name,
+                        "sha256": codex_upgrade.file_sha256(arm_paths["after"]),
+                        "bytes": arm_paths["after"].stat().st_size,
                     },
                 },
             }
@@ -1182,6 +1225,18 @@ class CaptureLifecycleTest(unittest.TestCase):
                 ),
                 mock.patch.object(codex_upgrade, "_campaign_jobs", return_value=[]),
                 mock.patch.object(codex_upgrade, "_validate_capture_job_results"),
+                mock.patch.object(
+                    codex_upgrade.codex_upgrade_arm64_environment_receipt,
+                    "replay",
+                    side_effect=lambda receipt_root, relative: {
+                        "status": "passed",
+                        "phase": (
+                            "attempt_before" if "before" in relative else "attempt_after"
+                        ),
+                        "subject_id": attempt_root.name,
+                        "continuity_identity_sha256": "a" * 64,
+                    },
+                ),
                 mock.patch.object(
                     codex_upgrade,
                     "_campaign_lock",
