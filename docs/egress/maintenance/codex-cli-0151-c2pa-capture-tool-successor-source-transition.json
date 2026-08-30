@@ -1,0 +1,125 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-c2pa-capture-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-30T15:49:59Z",
+  "base_commit": "ee04bf411c514bcb0fea6d5c66de976a6ac3e8ca",
+  "scope": "codex-cli-0.151-c2pa-capture-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_tool_readiness_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+    "sha256": "6571d18697e789da234476740b537f6301c918bd245a71b5573bed3765a49d69"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
+      "from_sha256": "79bd57af20de63eb6b45cdda6509e8843ae5b9dd5d416465af05b57310af60d3",
+      "to_sha256": "997e4fab24374ab80c46d4f0e91e5f7f580f02cf4f02f1f089174162196d9278",
+      "reason": "让旧工具就绪收据通过精确后继摘要承接 C2PA 抓包与清单工具变更。"
+    },
+    {
+      "path": "backend/internal/service/codex_01491_terminal_state_test.go",
+      "from_sha256": "8bcca0b49d4ccf90c0db38b54549864891a3f9272310b5428d49d0c26148b7aa",
+      "to_sha256": "d5f16d2aa0a9a5adb76deb6c1c0671921148fc33cf9ccbaca1653f22586c20df",
+      "reason": "在 service 包独立重放同一后继摘要链，避免跨包隐式承接。"
+    },
+    {
+      "path": "tools/official_client_capture/build_scenario_facts.py",
+      "from_sha256": "411d22144b07ef26c1aa208452fe966692b6e3ef87fe500865f99bae4aaf3c3d",
+      "to_sha256": "9f00e1d463c9faeab626b03c0f2be8b38fedbf5bda194ca5b554315cc57972cf",
+      "reason": "封存 A14 C2PA 正反条件、create 原响应与 uploaded Body 事实生成。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenario_receipt.schema.json",
+      "from_sha256": "046db28b8d86222b6613ff8692ee73e240fb91ea675fe4b3ee708ec5138410f2",
+      "to_sha256": "5618a4259ccbd03cbc87fba64679295efe010043c04c66b6864c4865aa19f52a",
+      "reason": "冻结 A14 正反条件和 create／uploaded JSON 绑定的收据合同。"
+    },
+    {
+      "path": "tools/official_client_capture/run_candidate_aux_capture.sh",
+      "from_sha256": "3af73b725243de71109ab51910d8b5d4e919dd53112c7a42622761d191944fae",
+      "to_sha256": "97e7cfd21b108533525055f9e1525294102c54bd1eb09f6ab0c3c16608bbce4b",
+      "reason": "让 0.151 候选辅助链固定执行 negative,positive 两次三跳对拍。"
+    },
+    {
+      "path": "tools/official_client_capture/run_official_relay_scenario.sh",
+      "from_sha256": "f7fbe312381cc373332f0809ba23eeeecb4cbed6c63baaf33ac23333c1ed3e8c",
+      "to_sha256": "fed7e44ccabb844c597b56be64788c0e4662bf86e5e0fa043b2f55396df6c57b",
+      "reason": "让官方 A14 job 分别冻结 C2PA negative／positive 条件并签发独立收据。"
+    },
+    {
+      "path": "tools/official_client_capture/scenario_receipts.py",
+      "from_sha256": "b8e34ed888440dfde743ac3babf24ae9104fa129520b73abe17b24a3c2ff5e39",
+      "to_sha256": "e8e352c077b37c84333222590a2bb04ab5c142988cd4de6e1473c2e2a321c0a2",
+      "reason": "对 A14 正负收据逐字段验证并拒绝 create／uploaded 语义漂移。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_candidate_aux_capture.py",
+      "from_sha256": "6cf6aeb2b6b68d2a5de9efdf1dcf5f5c2c05ffe6b410a31b3955394c444b9527",
+      "to_sha256": "1cdf1e7f2e9797444a94befd1a89278b3732df9f3d75acb31f71ed41cb7eb112",
+      "reason": "覆盖 0.151 候选辅助链强制注入双分支序列。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "2f29e29a06c082d36ece4c59b022ea206f81e4bf92d5f83c63e62069b908cf06",
+      "to_sha256": "c15862fc4d709bc2fc732abc70346bf3674ef5765ca2feaa686e9ec336ff3b24",
+      "reason": "覆盖 0.151 规则、场景加载、A14 独立证据根与双分支 Campaign 绑定。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_scenario_receipt.py",
+      "from_sha256": "3ed76d36ec298f71e0de0f7303474a9d49419f39a7ffc2f9516ed52f0e03393d",
+      "to_sha256": "388e2b50fd31a51aef801fd18d88168a2847566808ad9e591a4dea146480e534",
+      "reason": "覆盖 A14 收据正反条件、原始响应和 JSON 绑定的 mutation。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_upstream_byte_relay.py",
+      "from_sha256": "3907ffe23126d1d1ebea9f206735cb416129aa68adc50ae82c080aaa3005f63c",
+      "to_sha256": "97f254b7ca29822972c3a8bc95bc1d2f4e9be71f61b480e13b3fbef8fdd86257",
+      "reason": "覆盖官方受控 create 响应与候选双分支 uploaded Body 的失败关闭行为。"
+    },
+    {
+      "path": "tools/official_client_capture/upstream_byte_relay.py",
+      "from_sha256": "b7912b0cdad7784b3a70d8a5f4a99265aa3d5f4e5b41ddba1e39acb1ea802fe9",
+      "to_sha256": "f12ffef88aff255718fa1ecdbeb586aa5f60160fd8e6f7f0a7514ee0706fdd35",
+      "reason": "封存官方正向最小响应注入和候选正负三跳 JSON 对拍状态机。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_c2pa_capture_tool_successor_test.go",
+      "sha256": "e1d155184fd9bffb5b98660d7469f3e045675fef564f3167c0cf3f0385f7e1ad",
+      "reason": "在 officialegress 包重放 C2PA 工具后继的完整摘要闭集与 mutation。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_c2pa_capture_tool_successor_test.go",
+      "sha256": "0b1842a1ba57a91b16523484dd25d377aeb4e25844c594eccfd37de377934d7a",
+      "reason": "在 service 包独立重放同一后继摘要闭集与 mutation。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-c2pa-capture-tool-successor/plan.json",
+      "sha256": "6fe6f426339b75c9c7460f7a8c3981ee06120b2e7b017a18038646d89192875d",
+      "reason": "冻结本次独立工具后继变更集的预算、网络不变量和输出闭集。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_rules_0_151_0.json",
+      "sha256": "527318710def0db14aa89c433fb0c7ca01fc679f4ea82a4a1b5ccb453cd51951",
+      "reason": "冻结 0.151 P0 和 Formal 使用的 42 条规则全集。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
+      "sha256": "314e7f36a3569efbd51bf6f5feab740d448c25942e6ab541c1d318ba22c3b843",
+      "reason": "冻结 0.151 A14 正反官方 job 与候选双分支任务清单。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_c2pa_capture_tool_successor",
+  "identity_sha256": "ec79c2044fdf2f8afba2e77d1e2a149f21442d6fe3f56a11eed5ecf762a7d064"
+}

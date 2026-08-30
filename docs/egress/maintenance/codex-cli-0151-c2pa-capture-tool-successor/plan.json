@@ -1,0 +1,50 @@
+{
+  "schema_version": "codex-cli-0151-c2pa-capture-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_c2pa_capture_tool_successor",
+  "purpose": "在正式 P0 前以只追加后继收据封存 0.151 C2PA 正反抓包、候选对拍和版本化清单工具变更",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "9dfbcd94e78e322ecadb0531414db1dc8b33636d",
+    "tree": "68e4a650d6ad0930c266d71497d29f53e73f5b54"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T15:47:58Z",
+    "deadline_at_utc": "2026-08-30T17:47:58Z",
+    "wall_clock_minutes": 120,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "本变更集不清理历史证据、镜像、容器、运行目录或旧 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "C2PA negative／positive 官方抓包工具的只追加源码承接",
+    "候选 negative,positive 双分支对拍工具的只追加源码承接",
+    "0.151 规则和场景清单的新增文件闭集",
+    "旧工具就绪收据到后继收据的逐摘要重放",
+    "ARM64 工具全量测试与出站规格门禁通过"
+  ]
+}
