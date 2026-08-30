@@ -59,6 +59,7 @@ REGIONAL_SNI_RE = re.compile(r"^[a-z0-9.-]+\.oaiusercontent\.com$")
 # 真实观测形态：`Location: /v1/realtime/calls/rtc_u0_EBE4oHU6FYPaFejVfBpPW`。
 CALL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 A11_CONTROLLED_INTERVENTION = "synthesize_realtime_call_after_live_failure"
+A14_C2PA_EXPECTATIONS = ("negative", "positive")
 
 
 class ScenarioFactsError(ValueError):
@@ -71,6 +72,19 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    """返回 JSON 语义摘要；字段顺序和空白不影响等值判定。"""
+
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _utc(value: float) -> str:
@@ -192,6 +206,7 @@ def _body_of(payload: bytes, headers: dict[str, str], start: int) -> tuple[bytes
 def _iter_requests(payload: bytes) -> Iterator[dict[str, Any]]:
     cursor = 0
     while cursor < len(payload):
+        request_start = cursor
         parsed = _split_head(payload, cursor)
         if parsed is None:
             return
@@ -208,6 +223,7 @@ def _iter_requests(payload: bytes) -> Iterator[dict[str, Any]]:
             "target": parts[1],
             "headers": headers,
             "body": body,
+            "start_offset": request_start,
         }
         if cursor <= body_start:
             cursor = body_start
@@ -740,28 +756,222 @@ def _facts_a13(evidence: EvidenceSet, root: Path) -> dict[str, Any]:
     }
 
 
-def _facts_a14(evidence: EvidenceSet, root: Path) -> dict[str, Any]:
-    create_request, create_response = _find_exchange(
+def _json_document(body: bytes, label: str) -> dict[str, Any]:
+    """把原始 Body 解为闭合 JSON 对象。"""
+
+    try:
+        document = json.loads(body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ScenarioFactsError(f"{label}不可解析：{error}") from error
+    if not isinstance(document, dict):
+        raise ScenarioFactsError(f"{label}顶层必须是对象。")
+    return document
+
+
+def _json_boolean_state(document: dict[str, Any], field: str, label: str) -> str:
+    """提取 JSON 布尔字段三态，拒绝数字、字符串等宽松值。"""
+
+    if field not in document:
+        return "absent"
+    value = document[field]
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    raise ScenarioFactsError(f"{label}.{field} 必须是 JSON 布尔值。")
+
+
+def _exchange_seen_at(exchange: dict[str, Any], connection: dict[str, Any]) -> float:
+    """用连接绝对时刻和原始 write segment 定位请求首字节的 Unix 秒。"""
+
+    opened = connection.get("opened_at_unix_ms")
+    segments = connection.get("segments")
+    offset = exchange["request"].get("start_offset")
+    if (
+        not isinstance(opened, (int, float))
+        or isinstance(opened, bool)
+        or not isinstance(segments, list)
+        or not isinstance(offset, int)
+    ):
+        raise ScenarioFactsError("A14 relay 缺少请求时刻或 segment 偏移。")
+    matches = []
+    for segment in segments:
+        if not isinstance(segment, dict) or segment.get("direction") != "client_to_upstream":
+            continue
+        start = segment.get("offset")
+        length = segment.get("length")
+        elapsed = segment.get("t_ms")
+        if (
+            isinstance(start, int)
+            and isinstance(length, int)
+            and length > 0
+            and isinstance(elapsed, (int, float))
+            and not isinstance(elapsed, bool)
+            and start <= offset < start + length
+        ):
+            matches.append(float(elapsed))
+    if len(matches) != 1:
+        raise ScenarioFactsError("A14 请求首字节无法唯一映射到 relay segment。")
+    return float(opened) / 1000.0 + matches[0] / 1000.0
+
+
+def _a14_original_create_response(
+    evidence: EvidenceSet,
+    root: Path,
+    connection_id: int,
+) -> dict[str, Any]:
+    """读取正向受控场景保留的生产 create 原始响应。"""
+
+    path = root / RELAY_DIR / f"conn{connection_id:03d}.upstream_original.bin"
+    if path.is_symlink() or not path.is_file():
+        raise ScenarioFactsError("A14 C2PA 正向样本缺少注入前生产响应原始字节。")
+    evidence.bind(path)
+    responses = list(_iter_responses(path.read_bytes()))
+    if len(responses) != 1:
+        raise ScenarioFactsError("A14 注入前生产响应必须且只能包含一个 HTTP 响应。")
+    return responses[0]
+
+
+def _facts_a14(
+    evidence: EvidenceSet,
+    root: Path,
+    c2pa_expectation: str,
+) -> dict[str, Any]:
+    if c2pa_expectation not in A14_C2PA_EXPECTATIONS:
+        raise ScenarioFactsError("A14 必须显式冻结 positive／negative C2PA 条件。")
+
+    create_exchanges = _find_exchanges(
         evidence, root, "POST", lambda path: path == "/backend-api/files"
     )
-    del create_request
+    if len(create_exchanges) != 1:
+        raise ScenarioFactsError("A14 必须且只能有一次 file create。")
+    create_exchange = create_exchanges[0]
+    create_request = create_exchange["request"]
+    create_response = create_exchange["response"]
     if not 200 <= create_response["status"] <= 299:
         raise ScenarioFactsError(
             f"file create 返回 {create_response['status']}，上传链未开始。"
         )
-    try:
-        document = json.loads(create_response["body"].decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as error:
-        raise ScenarioFactsError(f"file create 响应体不可解析：{error}") from error
-    upload_url = document.get("upload_url") or (document.get("file") or {}).get(
-        "upload_url"
+    create_request_document = _json_document(
+        create_request["body"], "file create 请求体"
     )
+    create_response_document = _json_document(
+        create_response["body"], "file create 响应体"
+    )
+    file_id = create_response_document.get("file_id")
+    upload_url = create_response_document.get("upload_url")
+    if not isinstance(file_id, str) or not file_id:
+        raise ScenarioFactsError("file create 响应没有 file_id。")
     if not isinstance(upload_url, str) or "://" not in upload_url:
         raise ScenarioFactsError("file create 响应没有 upload_url。")
+    delivered_state = _json_boolean_state(
+        create_response_document,
+        "pdf_c2pa_reservation",
+        "file create 响应",
+    )
+
+    connections = _relay_manifest_connections(evidence, root)
+    create_connection = connections.get(create_exchange["connection_id"])
+    if create_connection is None:
+        raise ScenarioFactsError("A14 create 连接不在 relay.json。")
+    original_path = (
+        root
+        / RELAY_DIR
+        / f"conn{create_exchange['connection_id']:03d}.upstream_original.bin"
+    )
+    control = create_connection.get("file_c2pa_control")
+    request_control = create_connection.get("file_c2pa_request_control")
+
+    if c2pa_expectation == "positive":
+        if delivered_state != "true":
+            raise ScenarioFactsError("A14 C2PA 正向样本的交付响应没有 true 条件。")
+        original_response = _a14_original_create_response(
+            evidence, root, create_exchange["connection_id"]
+        )
+        if not 200 <= original_response["status"] <= 299:
+            raise ScenarioFactsError("A14 注入前生产 create 响应不是 2xx。")
+        original_document = _json_document(
+            original_response["body"], "A14 注入前生产响应体"
+        )
+        original_state = _json_boolean_state(
+            original_document,
+            "pdf_c2pa_reservation",
+            "A14 注入前生产响应",
+        )
+        original_without_condition = dict(original_document)
+        delivered_without_condition = dict(create_response_document)
+        original_without_condition.pop("pdf_c2pa_reservation", None)
+        delivered_without_condition.pop("pdf_c2pa_reservation", None)
+        if original_without_condition != delivered_without_condition:
+            raise ScenarioFactsError("A14 受控响应除 C2PA 条件外还改写了其他字段。")
+        response_mutated = original_state != "true"
+        expected_control = {
+            "request_accept_encoding_forced_identity": True,
+            "original_response_bound": True,
+            "production_response_state": original_state,
+            "delivered_response_state": "true",
+            "response_mutated": response_mutated,
+            "status_2xx": True,
+        }
+        if control != expected_control:
+            raise ScenarioFactsError("A14 C2PA relay 控制元数据与原始响应不一致。")
+        if (
+            not isinstance(request_control, dict)
+            or set(request_control)
+            != {"accept_encoding_changed", "forwarded_accept_encoding"}
+            or not isinstance(request_control["accept_encoding_changed"], bool)
+            or request_control["forwarded_accept_encoding"] != "identity"
+        ):
+            raise ScenarioFactsError("A14 C2PA 正向样本没有冻结 identity 响应控制。")
+        observation_mode = (
+            "natural_positive" if original_state == "true" else "controlled_positive"
+        )
+        original_response_bound = True
+        request_accept_encoding_forced_identity = True
+    else:
+        if delivered_state not in {"absent", "false"}:
+            raise ScenarioFactsError("A14 C2PA 负向样本意外收到 true 条件。")
+        if original_path.exists() or control is not None or request_control is not None:
+            raise ScenarioFactsError("A14 C2PA 负向样本混入了正向受控响应。")
+        original_state = delivered_state
+        response_mutated = False
+        observation_mode = "natural_negative"
+        original_response_bound = False
+        request_accept_encoding_forced_identity = False
+
+    uploaded_path = f"/backend-api/files/{file_id}/uploaded"
+    uploaded_exchanges = _find_exchanges(
+        evidence, root, "POST", lambda path: path == uploaded_path
+    )
+    uploaded_documents = [
+        _json_document(exchange["request"]["body"], "file uploaded 请求体")
+        for exchange in uploaded_exchanges
+    ]
+    uploaded_body_hashes = {
+        _canonical_json_sha256(document) for document in uploaded_documents
+    }
+    if len(uploaded_body_hashes) != 1:
+        raise ScenarioFactsError("A14 uploaded retry 的 Body 语义不一致。")
+    if c2pa_expectation == "positive":
+        if any(
+            set(document) != {"pdf_c2pa_create_request"}
+            or document["pdf_c2pa_create_request"] != create_request_document
+            for document in uploaded_documents
+        ):
+            raise ScenarioFactsError(
+                "A14 C2PA 正向 uploaded Body 未逐 JSON 回放 create 请求。"
+            )
+        body_mode = "pdf_c2pa_create_request"
+        embedded_create_request_matches = True
+    else:
+        if any(document != {} for document in uploaded_documents):
+            raise ScenarioFactsError("A14 C2PA 负向 uploaded Body 必须是空对象。")
+        body_mode = "empty_object"
+        embedded_create_request_matches = False
+
     host = upload_url.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0].lower()
     if not REGIONAL_SNI_RE.fullmatch(host):
         raise ScenarioFactsError(f"upload_url 主机不是区域上传主机：{host}")
-
     hellos = _client_hellos(evidence, root)
     # 区域主机必须由本轮响应派生：预列域名凑出的 SNI 不满足这一条。
     regional_times = [when for name, when in hellos if name == host]
@@ -770,15 +980,21 @@ def _facts_a14(evidence: EvidenceSet, root: Path) -> dict[str, Any]:
             f"pcap 中没有响应返回的区域主机 {host} 的 ClientHello。"
         )
 
-    tool = _load_observation(evidence, root, "A14-tool-call.json")
-    # 三跳顺序从原始证据推导，不读脚本写的顺序声明：relay.json 的连接墙钟时刻与
-    # pcap 的捕获时刻同为 Unix 时间，可直接比较。
-    create_at = _upload_chain_times(evidence, root)
+    create_at = _exchange_seen_at(create_exchange, create_connection)
+    uploaded_times: list[float] = []
+    for exchange in uploaded_exchanges:
+        connection = connections.get(exchange["connection_id"])
+        if connection is None:
+            raise ScenarioFactsError("A14 uploaded 连接不在 relay.json。")
+        uploaded_times.append(_exchange_seen_at(exchange, connection))
     first_seen = min(regional_times)
     last_seen = max(regional_times)
     if not create_at <= first_seen:
         raise ScenarioFactsError("create 不早于区域连接，URL 来源无法证明。")
+    if not first_seen <= min(uploaded_times):
+        raise ScenarioFactsError("区域 PUT 连接不早于 uploaded，请求顺序无法证明。")
 
+    tool = _load_observation(evidence, root, "A14-tool-call.json")
     return {
         "tool_name": _require(tool, "tool_name", "A14 工具调用记录"),
         "tool_call_id": _require(tool, "tool_call_id", "A14 工具调用记录"),
@@ -786,6 +1002,26 @@ def _facts_a14(evidence: EvidenceSet, root: Path) -> dict[str, Any]:
             "method": "POST",
             "path": "/backend-api/files",
             "status_2xx": True,
+            "json_sha256": _canonical_json_sha256(create_request_document),
+        },
+        "c2pa_condition": {
+            "expectation": c2pa_expectation,
+            "observation_mode": observation_mode,
+            "production_response_state": original_state,
+            "delivered_response_state": delivered_state,
+            "response_mutated": response_mutated,
+            "original_response_bound": original_response_bound,
+            "request_accept_encoding_forced_identity": (
+                request_accept_encoding_forced_identity
+            ),
+        },
+        "uploaded_request": {
+            "method": "POST",
+            "file_id_linked": True,
+            "attempt_count": len(uploaded_exchanges),
+            "body_mode": body_mode,
+            "body_json_sha256": next(iter(uploaded_body_hashes)),
+            "embedded_create_request_matches": embedded_create_request_matches,
         },
         "upload_url_source_event": {
             "event": "file_create_response",
@@ -797,51 +1033,14 @@ def _facts_a14(evidence: EvidenceSet, root: Path) -> dict[str, Any]:
             "sni": host,
             "first_seen_at_utc": _utc(first_seen),
             "last_seen_at_utc": _utc(last_seen),
-
         },
         "regional_sni": host,
         "regional_host_from_response": True,
-        "upload_sequence": {"create_before_regional": True},
+        "upload_sequence": {
+            "create_before_regional": True,
+            "regional_before_uploaded": True,
+        },
     }
-
-
-def _upload_chain_times(evidence: EvidenceSet, root: Path) -> float:
-    """从 relay.json 取出 create 所在连接的墙钟时刻（Unix 秒）。
-
-    relay 的 segments 用相对 monotonic 毫秒，无法与 pcap 的捕获时间比较；连接记录
-    额外带 `opened_at_unix_ms`／`closed_at_unix_ms` 才能跨两侧排序。区域 PUT 直连
-    不经中继，只在 pcap 里可见，所以这个共同基准是三跳判据成立的前提。
-    """
-
-    manifest_path = root / RELAY_DIR / "relay.json"
-    if manifest_path.is_symlink() or not manifest_path.is_file():
-        raise ScenarioFactsError("缺少 relay.json，无法取得连接时刻。")
-    evidence.bind(manifest_path)
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ScenarioFactsError(f"relay.json 不可解析：{error}") from error
-    times: dict[str, float] = {}
-    for connection in manifest.get("connections") or []:
-        identifier = connection.get("connection_id")
-        opened = connection.get("opened_at_unix_ms")
-        if not isinstance(identifier, int) or not isinstance(opened, (int, float)):
-            continue
-        stem = f"conn{identifier:03d}.client_to_upstream.bin"
-        path = root / RELAY_DIR / stem
-        if path.is_symlink() or not path.is_file():
-            continue
-        for request in _iter_requests(path.read_bytes()):
-            target = _path_of(request["target"])
-            if request["method"] != "POST":
-                continue
-            if target == "/backend-api/files" and "create" not in times:
-                times["create"] = float(opened) / 1000.0
-    if "create" not in times:
-        raise ScenarioFactsError(
-            "relay.json 缺少 create 连接的墙钟时刻，无法证明 URL 来源顺序。"
-        )
-    return times["create"]
 
 
 def _ordered(earlier: str, later: str) -> bool:
@@ -858,7 +1057,6 @@ def _ordered(earlier: str, later: str) -> bool:
 EXTRACTORS = {
     "A11": _facts_a11,
     "A13": _facts_a13,
-    "A14": _facts_a14,
 }
 
 
@@ -868,15 +1066,24 @@ def build(
     run_id: str,
     run_root: Path,
     output: Path | None = None,
+    *,
+    a14_c2pa_expectation: str | None = None,
 ) -> dict[str, Any]:
     """提取一个场景的原始事实；证据不足即抛 ScenarioFactsError。"""
 
-    if scenario_id not in EXTRACTORS:
+    if scenario_id not in {*EXTRACTORS, "A14"}:
         raise ScenarioFactsError(f"R0 未登记场景：{scenario_id}")
     if run_root.is_symlink() or not run_root.is_dir():
         raise ScenarioFactsError(f"run 目录不可用：{run_root}")
     evidence = EvidenceSet(run_root)
-    facts = EXTRACTORS[scenario_id](evidence, run_root)
+    if scenario_id == "A14":
+        facts = _facts_a14(
+            evidence,
+            run_root,
+            a14_c2pa_expectation or "",
+        )
+    else:
+        facts = EXTRACTORS[scenario_id](evidence, run_root)
     destination = output or (run_root / FACTS_DIR / f"{scenario_id}-facts.json")
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
@@ -901,10 +1108,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--a14-c2pa-expectation",
+        choices=A14_C2PA_EXPECTATIONS,
+        default=None,
+        help="A14 必填：冻结 uploaded Body 的正向或负向条件。",
+    )
     args = parser.parse_args(argv)
     try:
         document = build(
-            args.scenario, args.job_id, args.run_id, args.run_root, args.output
+            args.scenario,
+            args.job_id,
+            args.run_id,
+            args.run_root,
+            args.output,
+            a14_c2pa_expectation=args.a14_c2pa_expectation,
         )
     except (ScenarioFactsError, OSError) as error:
         print(f"错误：{error}", file=sys.stderr)

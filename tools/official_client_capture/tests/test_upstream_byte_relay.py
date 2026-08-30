@@ -39,7 +39,10 @@ from tools.official_client_capture.upstream_byte_relay import (
     _annotate_relay_stop_after_client_request,
     _decode_client_text_frame,
     _encode_server_text_frame,
+    _force_accept_encoding_identity,
+    _force_file_c2pa_reservation,
     _redact_oauth_refresh_body,
+    _rewrite_h1_body_headers,
     _should_synthesize_realtime_call,
     _synthetic_claude_response,
     _synthetic_aux_response,
@@ -99,6 +102,86 @@ def _fragmented_compressed_text_frames(
         _masked_client_frame(payload[split:], opcode=0x0, fin=False),
         _masked_client_frame(b"", opcode=0x0, fin=True),
     ]
+
+
+class UpstreamByteRelayFileC2paTest(unittest.TestCase):
+    def test_absent_and_false_are_rewritten_to_true_only(self) -> None:
+        for original_state in ("absent", "false"):
+            with self.subTest(original_state=original_state):
+                document = {
+                    "file_id": "file-1",
+                    "upload_url": "https://region.example/upload",
+                    "other": {"keep": True},
+                }
+                if original_state == "false":
+                    document["pdf_c2pa_reservation"] = False
+                result = _force_file_c2pa_reservation(
+                    json.dumps(document, separators=(",", ":")).encode("utf-8")
+                )
+                delivered = json.loads(result.delivered_body)
+                self.assertEqual(result.original_state, original_state)
+                self.assertTrue(result.response_mutated)
+                self.assertIs(delivered.pop("pdf_c2pa_reservation"), True)
+                document.pop("pdf_c2pa_reservation", None)
+                self.assertEqual(delivered, document)
+
+    def test_natural_true_is_not_semantically_mutated(self) -> None:
+        body = b'{"file_id":"file-1","upload_url":"https://region.example/u","pdf_c2pa_reservation":true}'
+        result = _force_file_c2pa_reservation(body)
+        self.assertEqual(result.original_state, "true")
+        self.assertFalse(result.response_mutated)
+        self.assertEqual(json.loads(result.delivered_body), json.loads(body))
+
+    def test_non_boolean_condition_fails_closed(self) -> None:
+        body = b'{"file_id":"file-1","upload_url":"https://region.example/u","pdf_c2pa_reservation":"true"}'
+        with self.assertRaises(ValueError):
+            _force_file_c2pa_reservation(body)
+
+    def test_accept_encoding_forward_copy_is_identity(self) -> None:
+        head = (
+            b"POST /backend-api/files HTTP/1.1\r\n"
+            b"Host: chatgpt.com\r\n"
+            b"Accept-Encoding: gzip, br, zstd\r\n\r\n"
+        )
+        rewritten, changed = _force_accept_encoding_identity(head)
+        self.assertTrue(changed)
+        self.assertIn(b"Accept-Encoding: identity\r\n", rewritten)
+        self.assertNotIn(b"gzip", rewritten)
+
+    def test_chunked_headers_are_replaced_with_content_length(self) -> None:
+        head = (
+            b"HTTP/1.1 200 OK\r\n"
+            b"content-type: application/json\r\n"
+            b"transfer-encoding: chunked\r\n"
+            b"trailer: x-checksum\r\n\r\n"
+        )
+        rewritten = _rewrite_h1_body_headers(head, 123)
+        self.assertIn(b"content-length: 123\r\n", rewritten)
+        self.assertNotIn(b"transfer-encoding", rewritten.lower())
+        self.assertNotIn(b"trailer:", rewritten.lower())
+
+    def test_control_flag_requires_codex_0151_or_newer(self) -> None:
+        script = Path(__file__).parents[1] / "upstream_byte_relay.py"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--cert",
+                "missing.crt",
+                "--key",
+                "missing.key",
+                "--output",
+                "missing-output",
+                "--codex-version",
+                "0.149.1",
+                "--force-file-c2pa-reservation",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Codex >=0.151.0", result.stderr)
 
 
 class UpstreamByteRelayWebSocketTest(unittest.TestCase):

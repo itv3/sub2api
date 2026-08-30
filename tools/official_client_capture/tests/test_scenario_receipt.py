@@ -291,6 +291,33 @@ class ScenarioReceiptSchemaTest(unittest.TestCase):
         self.assertEqual(
             defs["factsA14"]["properties"]["regional_host_from_response"]["const"], True
         )
+        self.assertIn("c2pa_condition", defs["factsA14"]["required"])
+        self.assertIn("uploaded_request", defs["factsA14"]["required"])
+        self.assertEqual(
+            defs["factsA14"]["properties"]["uploaded_request"]["properties"][
+                "file_id_linked"
+            ]["const"],
+            True,
+        )
+        condition_rules = defs["factsA14"]["properties"]["c2pa_condition"]["allOf"]
+        negative_rule = condition_rules[0]["then"]
+        self.assertEqual(
+            negative_rule["oneOf"],
+            [
+                {
+                    "properties": {
+                        "production_response_state": {"const": "absent"},
+                        "delivered_response_state": {"const": "absent"},
+                    }
+                },
+                {
+                    "properties": {
+                        "production_response_state": {"const": "false"},
+                        "delivered_response_state": {"const": "false"},
+                    }
+                },
+            ],
+        )
         # R3：采集侧不得写 auth.json，刷新必须真的改写凭据。
         restore = defs["factsA13"]["properties"]["credential_restore"]["properties"]
         self.assertEqual(restore["capture_side_wrote_auth"]["const"], False)
@@ -533,7 +560,13 @@ class ScenarioFactsPassTest(ScenarioFixtureBase):
 
     def test_A14_成功形态区域主机来自响应(self) -> None:
         root = self._a14_run("sdmntprwestus3.oaiusercontent.com")
-        document = facts_builder.build("A14", "official-relay-file-upload", RUN_ID, root)
+        document = facts_builder.build(
+            "A14",
+            "official-relay-file-upload",
+            RUN_ID,
+            root,
+            a14_c2pa_expectation="negative",
+        )
         self.assertEqual(document["final_state"], "upload_chain_complete")
         self.assertEqual(
             document["facts"]["regional_sni"], "sdmntprwestus3.oaiusercontent.com"
@@ -543,20 +576,159 @@ class ScenarioFactsPassTest(ScenarioFixtureBase):
             document["facts"]["put_destination"]["host"],
             document["facts"]["upload_url_source_event"]["host"],
         )
+        self.assertEqual(
+            document["facts"]["uploaded_request"]["body_mode"], "empty_object"
+        )
 
-    def _a14_run(self, response_host: str, pcap_host: str | None = None) -> Path:
+    def test_A14_C2PA_正向_body_逐_JSON_回放_create(self) -> None:
+        root = self._a14_run(
+            "sdmntprwestus3.oaiusercontent.com",
+            c2pa_expectation="positive",
+            original_state="absent",
+        )
+        document = facts_builder.build(
+            "A14",
+            "official-relay-file-upload-c2pa-positive",
+            RUN_ID,
+            root,
+            a14_c2pa_expectation="positive",
+        )
+        condition = document["facts"]["c2pa_condition"]
+        self.assertEqual(condition["observation_mode"], "controlled_positive")
+        self.assertEqual(condition["production_response_state"], "absent")
+        self.assertEqual(condition["delivered_response_state"], "true")
+        self.assertTrue(condition["response_mutated"])
+        uploaded = document["facts"]["uploaded_request"]
+        self.assertEqual(uploaded["body_mode"], "pdf_c2pa_create_request")
+        self.assertTrue(uploaded["embedded_create_request_matches"])
+
+    def test_A14_C2PA_收据字段_mutation_失败关闭(self) -> None:
+        root = self._a14_run(
+            "sdmntprwestus3.oaiusercontent.com",
+            c2pa_expectation="positive",
+        )
+        facts = facts_builder.build(
+            "A14",
+            "official-relay-file-upload-c2pa-positive",
+            RUN_ID,
+            root,
+            a14_c2pa_expectation="positive",
+        )["facts"]
+        scenario_receipts.validate_facts("A14", facts)
+        mutations = (
+            (
+                "condition-delivered",
+                {
+                    **facts,
+                    "c2pa_condition": {
+                        **facts["c2pa_condition"],
+                        "delivered_response_state": "false",
+                    },
+                },
+            ),
+            (
+                "condition-unbound",
+                {
+                    **facts,
+                    "c2pa_condition": {
+                        **facts["c2pa_condition"],
+                        "original_response_bound": False,
+                    },
+                },
+            ),
+            (
+                "uploaded-mode",
+                {
+                    **facts,
+                    "uploaded_request": {
+                        **facts["uploaded_request"],
+                        "body_mode": "empty_object",
+                    },
+                },
+            ),
+            (
+                "embedded-mismatch",
+                {
+                    **facts,
+                    "uploaded_request": {
+                        **facts["uploaded_request"],
+                        "embedded_create_request_matches": False,
+                    },
+                },
+            ),
+        )
+        for label, mutated in mutations:
+            with self.subTest(label=label):
+                with self.assertRaises(scenario_receipts.ScenarioReceiptError):
+                    scenario_receipts.validate_facts("A14", mutated)
+
+    def _a14_run(
+        self,
+        response_host: str,
+        pcap_host: str | None = None,
+        *,
+        c2pa_expectation: str = "negative",
+        original_state: str = "absent",
+        uploaded_body: dict | None = None,
+    ) -> Path:
         root = self._run_root()
         upload_url = f"https://{response_host}/blob/abc"
+        create_document = {
+            "file_name": "ep002-probe.pdf",
+            "file_size": 48,
+            "use_case": "codex",
+            "codex_connector_id": "sites",
+            "codex_action_name": "save_site_version",
+            "codex_model": "gpt-5.5",
+        }
+        delivered_response = {"file_id": "f-1", "upload_url": upload_url}
+        if c2pa_expectation == "positive":
+            delivered_response["pdf_c2pa_reservation"] = True
+        elif original_state == "false":
+            delivered_response["pdf_c2pa_reservation"] = False
+        create_request_wire = _request(
+            "POST",
+            "/backend-api/files",
+            json.dumps(create_document, separators=(",", ":")).encode("utf-8"),
+        )
         self._write_relay(
             root,
             1,
-            _request("POST", "/backend-api/files", b"{}"),
-            _response(200, json.dumps({"upload_url": upload_url}).encode("utf-8")),
+            create_request_wire,
+            _response(
+                200,
+                json.dumps(delivered_response, separators=(",", ":")).encode("utf-8"),
+            ),
+        )
+        if c2pa_expectation == "positive":
+            original_response = {"file_id": "f-1", "upload_url": upload_url}
+            if original_state == "false":
+                original_response["pdf_c2pa_reservation"] = False
+            elif original_state == "true":
+                original_response["pdf_c2pa_reservation"] = True
+            (root / "relay" / "conn001.upstream_original.bin").write_bytes(
+                _response(
+                    200,
+                    json.dumps(original_response, separators=(",", ":")).encode(
+                        "utf-8"
+                    ),
+                )
+            )
+        if uploaded_body is None:
+            uploaded_body = (
+                {"pdf_c2pa_create_request": create_document}
+                if c2pa_expectation == "positive"
+                else {}
+            )
+        uploaded_request_wire = _request(
+            "POST",
+            "/backend-api/files/f-1/uploaded",
+            json.dumps(uploaded_body, separators=(",", ":")).encode("utf-8"),
         )
         self._write_relay(
             root,
             2,
-            _request("POST", "/backend-api/files/f-1/uploaded", b"{}"),
+            uploaded_request_wire,
             _response(200, b"{}"),
         )
         (root / "direct" / "traffic.pcap").write_bytes(
@@ -576,11 +748,45 @@ class ScenarioFactsPassTest(ScenarioFixtureBase):
                     "connection_id": 1,
                     "opened_at_unix_ms": int((REGIONAL_TS - 60) * 1000),
                     "closed_at_unix_ms": int((REGIONAL_TS - 50) * 1000),
+                    "segments": [
+                        {
+                            "direction": "client_to_upstream",
+                            "t_ms": 0,
+                            "offset": 0,
+                            "length": len(create_request_wire),
+                        }
+                    ],
+                    **(
+                        {
+                            "file_c2pa_request_control": {
+                                "accept_encoding_changed": True,
+                                "forwarded_accept_encoding": "identity",
+                            },
+                            "file_c2pa_control": {
+                                "request_accept_encoding_forced_identity": True,
+                                "original_response_bound": True,
+                                "production_response_state": original_state,
+                                "delivered_response_state": "true",
+                                "response_mutated": original_state != "true",
+                                "status_2xx": True,
+                            },
+                        }
+                        if c2pa_expectation == "positive"
+                        else {}
+                    ),
                 },
                 {
                     "connection_id": 2,
                     "opened_at_unix_ms": int((REGIONAL_TS + 50) * 1000),
                     "closed_at_unix_ms": int((REGIONAL_TS + 60) * 1000),
+                    "segments": [
+                        {
+                            "direction": "client_to_upstream",
+                            "t_ms": 0,
+                            "offset": 0,
+                            "length": len(uploaded_request_wire),
+                        }
+                    ],
                 },
             ],
         )
@@ -720,7 +926,87 @@ class ScenarioFactsNegativeTest(ScenarioFixtureBase):
             _pcap([(1_780_000_000.0, "chatgpt.com")])
         )
         with self.assertRaises(facts_builder.ScenarioFactsError):
-            facts_builder.build("A14", "official-relay-file-upload", RUN_ID, root)
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="negative",
+            )
+        self._assert_no_facts(root, "A14")
+
+    def test_A14_只有_create_true_没有_uploaded_正向拒绝产出(self) -> None:
+        """禁止仅凭 create 标志推断官方二进制会构造哪种 uploaded Body。"""
+
+        passer = ScenarioFactsPassTest()
+        passer.root = self.root
+        root = passer._a14_run(
+            "sdmntprwestus3.oaiusercontent.com",
+            c2pa_expectation="positive",
+        )
+        (root / "relay" / "conn002.client_to_upstream.bin").unlink()
+        (root / "relay" / "conn002.upstream_to_client.bin").unlink()
+        with self.assertRaises(facts_builder.ScenarioFactsError):
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload-c2pa-positive",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="positive",
+            )
+        self._assert_no_facts(root, "A14")
+
+    def test_A14_C2PA_正向嵌入的_create_不等值_拒绝产出(self) -> None:
+        passer = ScenarioFactsPassTest()
+        passer.root = self.root
+        root = passer._a14_run(
+            "sdmntprwestus3.oaiusercontent.com",
+            c2pa_expectation="positive",
+            uploaded_body={"pdf_c2pa_create_request": {"file_name": "other.pdf"}},
+        )
+        with self.assertRaises(facts_builder.ScenarioFactsError):
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload-c2pa-positive",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="positive",
+            )
+        self._assert_no_facts(root, "A14")
+
+    def test_A14_C2PA_负向_uploaded_非空_拒绝产出(self) -> None:
+        passer = ScenarioFactsPassTest()
+        passer.root = self.root
+        root = passer._a14_run(
+            "sdmntprwestus3.oaiusercontent.com",
+            uploaded_body={"pdf_c2pa_create_request": {}},
+        )
+        with self.assertRaises(facts_builder.ScenarioFactsError):
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload-c2pa-negative",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="negative",
+            )
+        self._assert_no_facts(root, "A14")
+
+    def test_A14_C2PA_正向缺少注入前原始响应_拒绝产出(self) -> None:
+        passer = ScenarioFactsPassTest()
+        passer.root = self.root
+        root = passer._a14_run(
+            "sdmntprwestus3.oaiusercontent.com",
+            c2pa_expectation="positive",
+        )
+        (root / "relay" / "conn001.upstream_original.bin").unlink()
+        with self.assertRaises(facts_builder.ScenarioFactsError):
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload-c2pa-positive",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="positive",
+            )
         self._assert_no_facts(root, "A14")
 
     def test_pcap_缺目标_ClientHello_拒绝产出(self) -> None:
@@ -781,7 +1067,13 @@ class ScenarioFactsNegativeTest(ScenarioFixtureBase):
             ],
         )
         with self.assertRaises(facts_builder.ScenarioFactsError):
-            facts_builder.build("A14", "official-relay-file-upload", RUN_ID, root)
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="negative",
+            )
         self._assert_no_facts(root, "A14")
 
     def test_A14_relay_缺墙钟时刻_拒绝产出(self) -> None:
@@ -794,7 +1086,13 @@ class ScenarioFactsNegativeTest(ScenarioFixtureBase):
             root, [{"connection_id": 1}, {"connection_id": 2}]
         )
         with self.assertRaises(facts_builder.ScenarioFactsError):
-            facts_builder.build("A14", "official-relay-file-upload", RUN_ID, root)
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="negative",
+            )
         self._assert_no_facts(root, "A14")
 
     def test_A14_区域_SNI_与响应主机不一致_拒绝产出(self) -> None:
@@ -807,7 +1105,13 @@ class ScenarioFactsNegativeTest(ScenarioFixtureBase):
             pcap_host="sdmntprwestus3.oaiusercontent.com",
         )
         with self.assertRaises(facts_builder.ScenarioFactsError):
-            facts_builder.build("A14", "official-relay-file-upload", RUN_ID, root)
+            facts_builder.build(
+                "A14",
+                "official-relay-file-upload",
+                RUN_ID,
+                root,
+                a14_c2pa_expectation="negative",
+            )
         self._assert_no_facts(root, "A14")
 
 
@@ -1611,6 +1915,13 @@ class OfficialCaptureScriptTest(unittest.TestCase):
         self.assertIn("这些检索调用是允许且必要的", self.source)
         # 安全约束仍在。
         self.assertIn("不要创建站点、不要发布或部署", self.source)
+
+    def test_A14_0151_显式冻结_C2PA_正负条件(self) -> None:
+        self.assertIn("A14_C2PA_EXPECTATION", self.source)
+        self.assertIn("--force-file-c2pa-reservation", self.source)
+        self.assertIn("--a14-c2pa-expectation", self.source)
+        self.assertIn("ep002-probe.pdf", self.source)
+        self.assertIn("ep002-probe.tar.gz", self.source)
 
     def test_A13_探针必须分配_stdin(self) -> None:
         """docker exec 不带 -i 时 heredoc 传不进容器，探针静默输出空。"""

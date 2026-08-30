@@ -579,6 +579,8 @@
         "tool_name",
         "tool_call_id",
         "create_request",
+        "c2pa_condition",
+        "uploaded_request",
         "upload_url_source_event",
         "put_destination",
         "regional_sni",
@@ -600,7 +602,8 @@
           "required": [
             "method",
             "path",
-            "status_2xx"
+            "status_2xx",
+            "json_sha256"
           ],
           "properties": {
             "method": {
@@ -611,6 +614,216 @@
             },
             "status_2xx": {
               "const": true
+            },
+            "json_sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "c2pa_condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expectation",
+            "observation_mode",
+            "production_response_state",
+            "delivered_response_state",
+            "response_mutated",
+            "original_response_bound",
+            "request_accept_encoding_forced_identity"
+          ],
+          "properties": {
+            "expectation": {
+              "enum": [
+                "negative",
+                "positive"
+              ]
+            },
+            "observation_mode": {
+              "enum": [
+                "natural_negative",
+                "controlled_positive",
+                "natural_positive"
+              ]
+            },
+            "production_response_state": {
+              "enum": [
+                "absent",
+                "false",
+                "true"
+              ]
+            },
+            "delivered_response_state": {
+              "enum": [
+                "absent",
+                "false",
+                "true"
+              ]
+            },
+            "response_mutated": {
+              "type": "boolean"
+            },
+            "original_response_bound": {
+              "type": "boolean"
+            },
+            "request_accept_encoding_forced_identity": {
+              "type": "boolean"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "expectation": {
+                    "const": "negative"
+                  }
+                },
+                "required": [
+                  "expectation"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "observation_mode": {
+                    "const": "natural_negative"
+                  },
+                  "production_response_state": {
+                    "enum": [
+                      "absent",
+                      "false"
+                    ]
+                  },
+                  "delivered_response_state": {
+                    "enum": [
+                      "absent",
+                      "false"
+                    ]
+                  },
+                  "response_mutated": {
+                    "const": false
+                  },
+                  "original_response_bound": {
+                    "const": false
+                  },
+                  "request_accept_encoding_forced_identity": {
+                    "const": false
+                  }
+                },
+                "oneOf": [
+                  {
+                    "properties": {
+                      "production_response_state": {
+                        "const": "absent"
+                      },
+                      "delivered_response_state": {
+                        "const": "absent"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "production_response_state": {
+                        "const": "false"
+                      },
+                      "delivered_response_state": {
+                        "const": "false"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "expectation": {
+                    "const": "positive"
+                  }
+                },
+                "required": [
+                  "expectation"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "delivered_response_state": {
+                    "const": "true"
+                  },
+                  "original_response_bound": {
+                    "const": true
+                  },
+                  "request_accept_encoding_forced_identity": {
+                    "const": true
+                  }
+                },
+                "oneOf": [
+                  {
+                    "properties": {
+                      "observation_mode": {
+                        "const": "controlled_positive"
+                      },
+                      "production_response_state": {
+                        "enum": [
+                          "absent",
+                          "false"
+                        ]
+                      },
+                      "response_mutated": {
+                        "const": true
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "observation_mode": {
+                        "const": "natural_positive"
+                      },
+                      "production_response_state": {
+                        "const": "true"
+                      },
+                      "response_mutated": {
+                        "const": false
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "uploaded_request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "file_id_linked",
+            "attempt_count",
+            "body_mode",
+            "body_json_sha256",
+            "embedded_create_request_matches"
+          ],
+          "properties": {
+            "method": {
+              "const": "POST"
+            },
+            "file_id_linked": {
+              "const": true
+            },
+            "attempt_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "body_mode": {
+              "enum": [
+                "empty_object",
+                "pdf_c2pa_create_request"
+              ]
+            },
+            "body_json_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "embedded_create_request_matches": {
+              "type": "boolean"
             }
           }
         },
@@ -671,16 +884,69 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "create_before_regional"
+            "create_before_regional",
+            "regional_before_uploaded"
           ],
           "properties": {
             "create_before_regional": {
               "const": true
+            },
+            "regional_before_uploaded": {
+              "const": true
             }
           },
-          "description": "create 必须早于区域连接——这是「URL 来自响应而非预知」的时序证明。"
+          "description": "create 必须早于区域连接，区域连接必须早于 uploaded；三跳顺序来自原始时间事实。"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "c2pa_condition": {
+                "properties": {
+                  "expectation": {
+                    "const": "positive"
+                  }
+                },
+                "required": [
+                  "expectation"
+                ]
+              }
+            },
+            "required": [
+              "c2pa_condition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "uploaded_request": {
+                "properties": {
+                  "body_mode": {
+                    "const": "pdf_c2pa_create_request"
+                  },
+                  "embedded_create_request_matches": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "uploaded_request": {
+                "properties": {
+                  "body_mode": {
+                    "const": "empty_object"
+                  },
+                  "embedded_create_request_matches": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

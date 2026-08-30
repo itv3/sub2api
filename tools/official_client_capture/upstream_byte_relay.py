@@ -139,6 +139,123 @@ class SyntheticClaudeResponse:
     delay_seconds: float = 0.0
 
 
+@dataclass(frozen=True)
+class FileC2paResponseRewrite:
+    """受控 C2PA 条件响应的纯函数结果。
+
+    ``original_state`` 记录真实上游响应里的三态值；``delivered_body`` 是交给
+    官方 Codex CLI 的 JSON。只有原值不是 ``true`` 时才允许增加／改写这一字段，
+    其余响应字段必须逐 JSON 保持不变。
+    """
+
+    original_state: str
+    delivered_body: bytes
+    response_mutated: bool
+
+
+def _json_boolean_state(document: dict, field: str) -> str:
+    """返回 JSON 布尔字段的 ``absent／false／true`` 三态，拒绝宽松类型。"""
+
+    if field not in document:
+        return "absent"
+    value = document[field]
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    raise ValueError(f"{field} 必须是 JSON 布尔值")
+
+
+def _force_file_c2pa_reservation(body: bytes) -> FileC2paResponseRewrite:
+    """只把 file create 响应的 C2PA 条件设为 true，并保留其他 JSON 事实。"""
+
+    try:
+        document = json.loads(body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"files create 响应不是 UTF-8 JSON：{error}") from error
+    if not isinstance(document, dict):
+        raise ValueError("files create 响应顶层必须是对象")
+    if not isinstance(document.get("file_id"), str) or not document["file_id"]:
+        raise ValueError("files create 响应缺少 file_id")
+    if not isinstance(document.get("upload_url"), str) or not document["upload_url"]:
+        raise ValueError("files create 响应缺少 upload_url")
+
+    original_state = _json_boolean_state(document, "pdf_c2pa_reservation")
+    mutated = original_state != "true"
+    if mutated:
+        document["pdf_c2pa_reservation"] = True
+    delivered = json.dumps(
+        document,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return FileC2paResponseRewrite(
+        original_state=original_state,
+        delivered_body=delivered,
+        response_mutated=mutated,
+    )
+
+
+def _force_accept_encoding_identity(head: bytes) -> tuple[bytes, bool]:
+    """让受控 create 响应保持明文；返回（转发首部，是否改写）。
+
+    客户端原始首部仍由 ``client_to_upstream`` 记录。这里只改变中继发往真实上游
+    的副本，避免压缩体掩盖受控 JSON 字段注入；该干预会写入 relay 元数据。
+    """
+
+    if not head.endswith(b"\r\n\r\n"):
+        raise ValueError("HTTP 请求首部没有完整结束符")
+    lines = head[:-4].split(b"\r\n")
+    found = False
+    changed = False
+    rewritten: list[bytes] = []
+    for line in lines:
+        name, separator, value = line.partition(b":")
+        if separator and name.strip().lower() == b"accept-encoding":
+            if found:
+                raise ValueError("HTTP 请求含重复 accept-encoding")
+            found = True
+            replacement = name + b": identity"
+            changed = changed or replacement != line
+            rewritten.append(replacement)
+        else:
+            rewritten.append(line)
+    if not found:
+        rewritten.append(b"accept-encoding: identity")
+        changed = True
+    return b"\r\n".join(rewritten) + b"\r\n\r\n", changed
+
+
+def _rewrite_h1_body_headers(head: bytes, body_length: int) -> bytes:
+    """把已解码响应改为明确 Content-Length，并移除分块／Trailer 声明。"""
+
+    if not head.endswith(b"\r\n\r\n") or body_length < 0:
+        raise ValueError("HTTP 响应首部或 body 长度非法")
+    lines = head[:-4].split(b"\r\n")
+    if not lines or not lines[0].startswith(b"HTTP/1."):
+        raise ValueError("HTTP 响应状态行非法")
+    rewritten = [lines[0]]
+    length_written = False
+    for line in lines[1:]:
+        name, separator, value = line.partition(b":")
+        lowered = name.strip().lower() if separator else b""
+        if lowered in {b"transfer-encoding", b"trailer"}:
+            if lowered == b"transfer-encoding" and not length_written:
+                rewritten.append(f"content-length: {body_length}".encode("ascii"))
+                length_written = True
+            continue
+        if lowered == b"content-length":
+            if length_written:
+                raise ValueError("HTTP 响应含重复 content-length")
+            rewritten.append(name + f": {body_length}".encode("ascii"))
+            length_written = True
+            continue
+        rewritten.append(line)
+    if not length_written:
+        rewritten.append(f"content-length: {body_length}".encode("ascii"))
+    return b"\r\n".join(rewritten) + b"\r\n\r\n"
+
+
 def _h1_response(
     status: int,
     reason: str,
@@ -1612,6 +1729,122 @@ class Relay:
         body_length = int(length_match.group(1)) if length_match else 0
         return await reader.readexactly(body_length) if body_length else b""
 
+    @staticmethod
+    async def _read_h1_response_body(
+        reader: asyncio.StreamReader,
+        head: bytes,
+    ) -> tuple[bytes, bytes]:
+        """读取一个完整 H1 响应体，返回（原始 wire body，解分块后的 body）。
+
+        C2PA 受控响应只接受明文 JSON。请求侧会显式要求 ``identity``；若真实上游
+        仍返回 gzip／br／zstd，则失败关闭，禁止把压缩字节猜成 JSON。
+        """
+
+        lower = head.lower()
+        encoding = re.search(rb"\r\ncontent-encoding:\s*([^\r\n]+)", lower)
+        if encoding and encoding.group(1).strip() not in {b"", b"identity"}:
+            raise ValueError(
+                "files create 响应未遵守 identity 编码："
+                + encoding.group(1).decode("latin-1", "replace")
+            )
+
+        transfer = re.search(rb"\r\ntransfer-encoding:\s*([^\r\n]+)", lower)
+        if transfer:
+            codings = [item.strip() for item in transfer.group(1).split(b",")]
+            if codings != [b"chunked"]:
+                raise ValueError("files create 响应使用了非单一 chunked 编码")
+            wire = bytearray()
+            decoded = bytearray()
+            while True:
+                size_line = await reader.readuntil(b"\r\n")
+                wire.extend(size_line)
+                raw_size = size_line[:-2].split(b";", 1)[0].strip()
+                try:
+                    size = int(raw_size, 16)
+                except ValueError as error:
+                    raise ValueError("files create chunk size 非法") from error
+                if size < 0:
+                    raise ValueError("files create chunk size 非法")
+                if size:
+                    chunk = await reader.readexactly(size + 2)
+                    if not chunk.endswith(b"\r\n"):
+                        raise ValueError("files create chunk 缺少结束符")
+                    wire.extend(chunk)
+                    decoded.extend(chunk[:-2])
+                    continue
+                while True:
+                    trailer = await reader.readuntil(b"\r\n")
+                    wire.extend(trailer)
+                    if trailer == b"\r\n":
+                        break
+                return bytes(wire), bytes(decoded)
+
+        length_match = re.search(rb"\r\ncontent-length:\s*(\d+)\r\n", lower)
+        if length_match is None:
+            raise ValueError("files create 响应缺少 Content-Length 或 chunked")
+        body_length = int(length_match.group(1))
+        body = await reader.readexactly(body_length) if body_length else b""
+        return body, body
+
+    async def _pump_response_with_file_c2pa(
+        self,
+        src: asyncio.StreamReader,
+        dst: asyncio.StreamWriter,
+        rec: ByteRecorder,
+        conn_id: int,
+        meta: dict,
+    ) -> None:
+        """保留真实 create 响应，再向官方 0.151 CLI 交付 C2PA=true 条件。"""
+
+        head = await src.readuntil(b"\r\n\r\n")
+        raw_body, decoded_body = await self._read_h1_response_body(src, head)
+        original_wire = head + raw_body
+        rec.write("upstream_original", original_wire)
+
+        status_line = head.split(b"\r\n", 1)[0]
+        parts = status_line.split(b" ", 2)
+        if len(parts) < 2 or not parts[1].isdigit():
+            raise ValueError("files create 响应状态行不可解析")
+        status = int(parts[1])
+        if not 200 <= status <= 299:
+            # 非成功响应不具备 create 条件，原样交付后让场景事实失败关闭。
+            rec.write("upstream_to_client", original_wire)
+            dst.write(original_wire)
+            await dst.drain()
+            meta["file_c2pa_control"] = {
+                "request_accept_encoding_forced_identity": True,
+                "original_response_bound": True,
+                "response_mutated": False,
+                "status_2xx": False,
+            }
+            await pump(src, dst, rec, "upstream_to_client")
+            return
+
+        rewrite = _force_file_c2pa_reservation(decoded_body)
+        delivered_head = _rewrite_h1_body_headers(head, len(rewrite.delivered_body))
+        delivered_wire = delivered_head + rewrite.delivered_body
+        rec.write("upstream_to_client", delivered_wire)
+        dst.write(delivered_wire)
+        await dst.drain()
+        meta["intervention"] = "force_file_c2pa_reservation"
+        meta["file_c2pa_control"] = {
+            "request_accept_encoding_forced_identity": True,
+            "original_response_bound": True,
+            "production_response_state": rewrite.original_state,
+            "delivered_response_state": "true",
+            "response_mutated": rewrite.response_mutated,
+            "status_2xx": True,
+        }
+        self._log_intervention({
+            "type": "force_file_c2pa_reservation",
+            "connection_id": conn_id,
+            "production_response_state": rewrite.original_state,
+            "delivered_response_state": "true",
+            "response_mutated": rewrite.response_mutated,
+            "request_accept_encoding_forced_identity": True,
+        })
+        await pump(src, dst, rec, "upstream_to_client")
+
     async def _pump_response_with_turn_state(
         self,
         src: asyncio.StreamReader,
@@ -1878,12 +2111,15 @@ class Relay:
             initial_head_recorded = False
             request_line = ""
             is_responses_ws = False
+            force_this_file_c2pa = False
+            forward_head = None
             intervention_enabled = bool(
                 self.args.force_ws_fallback_426
                 or self.args.inject_turn_state
                 or self.args.inject_ws_turn_state
                 or self.args.synthesize_realtime_call
                 or self.args.synthesize_realtime_call_after is not None
+                or self.args.force_file_c2pa_reservation
                 or self.args.retry_probe
                 or self.args.synthetic_profile
             )
@@ -1897,6 +2133,21 @@ class Relay:
                     "latin-1", "replace"
                 )
                 meta["request_line"] = request_line
+                force_this_file_c2pa = bool(
+                    self.args.force_file_c2pa_reservation
+                    and request_line == "POST /backend-api/files HTTP/1.1"
+                    and target_host.lower().rstrip(".") == "chatgpt.com"
+                )
+                forward_head = initial_head
+                if force_this_file_c2pa:
+                    initial_body = await self._read_h1_body(reader, initial_head)
+                    forward_head, accept_encoding_changed = (
+                        _force_accept_encoding_identity(initial_head)
+                    )
+                    meta["file_c2pa_request_control"] = {
+                        "accept_encoding_changed": accept_encoding_changed,
+                        "forwarded_accept_encoding": "identity",
+                    }
 
                 if self.args.synthetic_profile:
                     # 合成模式在这里终止：请求最多读到完整 H1 body，随后只调用冻结
@@ -2341,8 +2592,10 @@ class Relay:
             if initial_head is not None:
                 if not initial_head_recorded:
                     rec.write("client_to_upstream", initial_head)
-                up_w.write(initial_head)
+                up_w.write(forward_head)
                 if initial_body:
+                    if not initial_head_recorded:
+                        rec.write("client_to_upstream", initial_body)
                     up_w.write(initial_body)
                 await up_w.drain()
 
@@ -2356,7 +2609,14 @@ class Relay:
                 and not self._ws_turn_state_injected
                 and is_responses_ws
             )
-            if inject_this_ws_response:
+            if force_this_file_c2pa:
+                await asyncio.gather(
+                    pump(reader, up_w, rec, "client_to_upstream"),
+                    self._pump_response_with_file_c2pa(
+                        up_r, writer, rec, conn_id, meta
+                    ),
+                )
+            elif inject_this_ws_response:
                 ws_request_ready = asyncio.Event()
                 await asyncio.gather(
                     self._pump_client_until_ws_response_create(
@@ -2526,6 +2786,12 @@ def main() -> None:
         help="先真实转发一次 realtime/calls，再仅对下一次请求合成 200",
     )
     ap.add_argument(
+        "--force-file-c2pa-reservation",
+        action="store_true",
+        help=("仅对真实 /backend-api/files create：保留上游原始响应，向官方 "
+              "Codex >=0.151.0 交付 pdf_c2pa_reservation=true；用于取得条件正样本"),
+    )
+    ap.add_argument(
         "--synthetic-profile",
         choices=(
             "candidate-aux-v1",
@@ -2608,6 +2874,13 @@ def main() -> None:
         ap.error("--claude-version 必须是完整的 x.y.z 版本")
     if args.synthetic_profile in {"candidate-aux-v1", "candidate-core-v1"} and not args.codex_version:
         ap.error("候选合成画像必须提供 --codex-version")
+    if args.force_file_c2pa_reservation:
+        if args.synthetic_profile:
+            ap.error("--force-file-c2pa-reservation 不得与候选合成画像同时使用")
+        if not args.codex_version:
+            ap.error("--force-file-c2pa-reservation 必须绑定完整 Codex 版本")
+        if tuple(int(part) for part in args.codex_version.split(".")) < (0, 151, 0):
+            ap.error("--force-file-c2pa-reservation 只适用于 Codex >=0.151.0")
     if args.synthetic_profile and (args.upstream_ip or args.upstream_map):
         ap.error("候选合成模式禁止配置任何生产上游 IP/map")
     if args.preconnect_timeout <= 0:

@@ -84,6 +84,23 @@ if [[ ! $codex_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "CODEX_VERSION 必须是三段数字。" >&2
   exit 2
 fi
+IFS=. read -r codex_major codex_minor _ <<<"$codex_version"
+a14_c2pa_expectation=${A14_C2PA_EXPECTATION:-}
+if [[ $scenario == "file-upload" ]]; then
+  # 0.151 起 uploaded Body 受 create 响应中的 pdf_c2pa_reservation 控制。
+  # 旧版清单没有该变量，继续按历史自然负样本重放；0.151+ 必须显式冻结正／负条件。
+  if [[ -z $a14_c2pa_expectation ]]; then
+    if (( codex_major > 0 || codex_minor >= 151 )); then
+      echo "Codex >=0.151.0 的 file-upload 必须显式提供 A14_C2PA_EXPECTATION。" >&2
+      exit 2
+    fi
+    a14_c2pa_expectation=negative
+  fi
+  if [[ $a14_c2pa_expectation != positive && $a14_c2pa_expectation != negative ]]; then
+    echo "A14_C2PA_EXPECTATION 只能是 positive 或 negative。" >&2
+    exit 2
+  fi
+fi
 if [[ $model_catalog_only != 0 && $model_catalog_only != 1 ]]; then
   echo "MODEL_CATALOG_ONLY 必须是 0 或 1。" >&2
   exit 2
@@ -160,6 +177,7 @@ requirements_changed=0
 requirements_backup="/tmp/codex-requirements-$run_id.toml"
 memgen_home=""
 file_upload_home=""
+file_upload_path=""
 model_catalog_home=""
 auth_backup=""
 auth_before_sha256=""
@@ -624,6 +642,9 @@ if [[ -n ${RELAY_RETRY_PROBE:-} ]]; then
     relay_intervention_args+=(--retry-probe-target "$RELAY_RETRY_PROBE_TARGET")
   fi
 fi
+if [[ $scenario == "file-upload" && $a14_c2pa_expectation == positive ]]; then
+  relay_intervention_args+=(--force-file-c2pa-reservation)
+fi
 if [[ $capture_client_hello == 1 ]]; then
   # 容器缺 tcpdump 时 `docker exec -d` 静默返回 0，整轮跑完才发现没有 pcap。
   # 候选侧早有这道预检（run_candidate_aux_capture.sh），官方侧此前是缺的。
@@ -648,6 +669,7 @@ docker exec -d "$capture_container" python3 \
   --mode direct --port "$relay_port" \
   --upstream-host chatgpt.com --upstream-ip "$upstream_ip" \
   --upstream-map "$upstream_map" \
+  --codex-version "$codex_version" \
   --output "/capture/runs/$run_id/relay" --timeout "$relay_timeout" \
   "${relay_intervention_args[@]}"
 relay_started=1
@@ -1008,12 +1030,20 @@ case "$scenario" in
     docker exec "$capture_container" sh -c \
       "printf '{\"project_id\":\"ep002-probe-do-not-exist\"}\n' > '$file_upload_home/site/.openai/hosting.json' && \
        printf '<!doctype html><title>EP002 probe</title>\n' > '$file_upload_home/site/index.html' && \
-       tar -C '$file_upload_home/site' -czf '$file_upload_home/ep002-probe.tar.gz' ."
+       tar -C '$file_upload_home/site' -czf '$file_upload_home/ep002-probe.tar.gz' . && \
+       printf '%%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%%%EOF\n' > '$file_upload_home/ep002-probe.pdf'"
+    if [[ $a14_c2pa_expectation == positive ]]; then
+      # PDF 只作为 fileParams 的上传输入；不存在的 project_id 仍确保 Sites 业务调用失败，
+      # 不会创建、发布或部署站点。C2PA 条件来自受控 create 响应，不从文件扩展名推断。
+      file_upload_path="$file_upload_home/ep002-probe.pdf"
+    else
+      file_upload_path="$file_upload_home/ep002-probe.tar.gz"
+    fi
     # k37 实测：内置 Sites 工具默认不直接暴露在会话里，模型需要先做一次工具检索
     # 才能取到它。原提示词写的是「不要调用任何其他工具」，反而把这条路堵死——模型
     # 明确回答「若要发现并调用它，需要先用别的工具做检索/加载，这会违反你的要求」，
     # 于是一个请求都没发。现在显式放行检索步骤，同时保留不创建/不发布的安全约束。
-    prompt="这是经过授权的官方客户端出站采集。目标：调用一次内置 Sites 的 ${A14_TOOL_NAME:-save_site_version} 工具。如果该工具尚未在当前会话中直接暴露，请先执行必要的工具检索或加载步骤把它取出来——这些检索调用是允许且必要的。取到后只调用它一次，参数必须是：project_id=ep002-probe-do-not-exist，commit_sha=0000000000000000000000000000000000000000，archive=$file_upload_home/ep002-probe.tar.gz。即使工具报错也立即停止，不要重试、不要创建站点、不要发布或部署。" ;;
+    prompt="这是经过授权的官方客户端出站采集。目标：调用一次内置 Sites 的 ${A14_TOOL_NAME:-save_site_version} 工具。如果该工具尚未在当前会话中直接暴露，请先执行必要的工具检索或加载步骤把它取出来——这些检索调用是允许且必要的。取到后只调用它一次，参数必须是：project_id=ep002-probe-do-not-exist，commit_sha=0000000000000000000000000000000000000000，archive=$file_upload_path。即使工具报错也立即停止，不要重试、不要创建站点、不要发布或部署。" ;;
   *) echo "未知 SCENARIO: $scenario" >&2; exit 2 ;;
 esac
 
@@ -1440,11 +1470,16 @@ case "$scenario" in
 esac
 if [[ -n $target_scenario ]]; then
   echo "=== 场景真实性事实（$target_scenario）==="
+  scenario_fact_args=()
+  if [[ $target_scenario == A14 ]]; then
+    scenario_fact_args+=(--a14-c2pa-expectation "$a14_c2pa_expectation")
+  fi
   if ! python3 "$capture_tool_root/build_scenario_facts.py" \
     --scenario "$target_scenario" \
     --job-id "${SCENARIO_JOB_ID:-official-relay-$scenario}" \
     --run-id "$run_id" \
-    --run-root "$work_dir"; then
+    --run-root "$work_dir" \
+    "${scenario_fact_args[@]}"; then
     echo "❌ $target_scenario 目标协议分支未成立，不产出场景收据。" >&2
     exit 1
   fi

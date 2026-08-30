@@ -239,16 +239,14 @@ def _facts_a13(facts: Any) -> dict[str, Any]:
 
 
 def _facts_a14(facts: Any) -> dict[str, Any]:
-    # 只保留规格要的：PUT 打到的区域主机由 create 响应派生，而不是硬编码。
-    #
-    # 曾经还要求 uploaded 事件 2xx，那属于业务是否完成，SPEC-EP-002 没有要求——
-    # 规则原文是「文件上传 PUT 使用服务端返回的区域 *.oaiusercontent.com URL」。
-    # 采集刻意用不存在的 project_id，好让上传链走完后在业务校验阶段失败，从而不会
-    # 真的发布站点；uploaded 因此天然不会出现，拿它当必要条件等于自相矛盾。
+    # 0.151 起 uploaded Body 受 create 响应条件控制。收据必须绑定正／负条件与
+    # 官方二进制实际发出的 Body；只看到 create 标志或区域 SNI 不足以推断该规则。
     expected = {
         "tool_name",
         "tool_call_id",
         "create_request",
+        "c2pa_condition",
+        "uploaded_request",
         "upload_url_source_event",
         "put_destination",
         "regional_sni",
@@ -259,9 +257,102 @@ def _facts_a14(facts: Any) -> dict[str, Any]:
     _nonempty(facts["tool_name"], "A14 tool_name")
     _nonempty(facts["tool_call_id"], "A14 tool_call_id")
     create = facts["create_request"]
-    _expect_exact(create, {"method", "path", "status_2xx"}, "A14 create_request")
-    if create != {"method": "POST", "path": "/backend-api/files", "status_2xx": True}:
+    _expect_exact(
+        create,
+        {"method", "path", "status_2xx", "json_sha256"},
+        "A14 create_request",
+    )
+    if {
+        "method": create["method"],
+        "path": create["path"],
+        "status_2xx": create["status_2xx"],
+    } != {"method": "POST", "path": "/backend-api/files", "status_2xx": True}:
         raise ScenarioReceiptError("A14 file create 不匹配。")
+    _sha256(create["json_sha256"], "A14 create_request.json_sha256")
+
+    condition = facts["c2pa_condition"]
+    _expect_exact(
+        condition,
+        {
+            "expectation",
+            "observation_mode",
+            "production_response_state",
+            "delivered_response_state",
+            "response_mutated",
+            "original_response_bound",
+            "request_accept_encoding_forced_identity",
+        },
+        "A14 c2pa_condition",
+    )
+    expectation = condition["expectation"]
+    if expectation == "negative":
+        if (
+            condition["observation_mode"] != "natural_negative"
+            or condition["production_response_state"] not in {"absent", "false"}
+            or condition["delivered_response_state"]
+            != condition["production_response_state"]
+            or condition["response_mutated"] is not False
+            or condition["original_response_bound"] is not False
+            or condition["request_accept_encoding_forced_identity"] is not False
+        ):
+            raise ScenarioReceiptError("A14 C2PA 负向条件事实不闭合。")
+    elif expectation == "positive":
+        if (
+            condition["delivered_response_state"] != "true"
+            or condition["original_response_bound"] is not True
+            or condition["request_accept_encoding_forced_identity"] is not True
+        ):
+            raise ScenarioReceiptError("A14 C2PA 正向交付条件不闭合。")
+        if condition["observation_mode"] == "controlled_positive":
+            if (
+                condition["production_response_state"] not in {"absent", "false"}
+                or condition["response_mutated"] is not True
+            ):
+                raise ScenarioReceiptError("A14 C2PA 受控正向事实不闭合。")
+        elif condition["observation_mode"] == "natural_positive":
+            if (
+                condition["production_response_state"] != "true"
+                or condition["response_mutated"] is not False
+            ):
+                raise ScenarioReceiptError("A14 C2PA 自然正向事实不闭合。")
+        else:
+            raise ScenarioReceiptError("A14 C2PA 正向 observation_mode 非法。")
+    else:
+        raise ScenarioReceiptError("A14 C2PA expectation 非法。")
+
+    uploaded = facts["uploaded_request"]
+    _expect_exact(
+        uploaded,
+        {
+            "method",
+            "file_id_linked",
+            "attempt_count",
+            "body_mode",
+            "body_json_sha256",
+            "embedded_create_request_matches",
+        },
+        "A14 uploaded_request",
+    )
+    if uploaded["method"] != "POST" or uploaded["file_id_linked"] is not True:
+        raise ScenarioReceiptError("A14 uploaded 请求或 file_id 关联不匹配。")
+    if (
+        not isinstance(uploaded["attempt_count"], int)
+        or isinstance(uploaded["attempt_count"], bool)
+        or uploaded["attempt_count"] < 1
+    ):
+        raise ScenarioReceiptError("A14 uploaded attempt_count 必须是正整数。")
+    _sha256(uploaded["body_json_sha256"], "A14 uploaded body_json_sha256")
+    if expectation == "positive":
+        if (
+            uploaded["body_mode"] != "pdf_c2pa_create_request"
+            or uploaded["embedded_create_request_matches"] is not True
+        ):
+            raise ScenarioReceiptError("A14 C2PA 正向 uploaded Body 不匹配。")
+    elif (
+        uploaded["body_mode"] != "empty_object"
+        or uploaded["embedded_create_request_matches"] is not False
+    ):
+        raise ScenarioReceiptError("A14 C2PA 负向 uploaded Body 不匹配。")
     source = facts["upload_url_source_event"]
     _expect_exact(source, {"event", "host", "url_sha256"}, "A14 upload_url_source_event")
     _nonempty(source["event"], "A14 upload_url_source_event.event")
@@ -289,9 +380,16 @@ def _facts_a14(facts: Any) -> dict[str, Any]:
         raise ScenarioReceiptError("A14 区域主机不是由响应派生。")
     # create 必须早于区域连接——这才是「URL 来自响应而非预知」的时序证明。
     sequence = facts["upload_sequence"]
-    _expect_exact(sequence, {"create_before_regional"}, "A14 upload_sequence")
-    if sequence["create_before_regional"] is not True:
-        raise ScenarioReceiptError("A14 create 未早于区域连接，URL 来源无法证明。")
+    _expect_exact(
+        sequence,
+        {"create_before_regional", "regional_before_uploaded"},
+        "A14 upload_sequence",
+    )
+    if (
+        sequence["create_before_regional"] is not True
+        or sequence["regional_before_uploaded"] is not True
+    ):
+        raise ScenarioReceiptError("A14 create／区域 PUT／uploaded 顺序无法证明。")
     return dict(facts)
 
 
