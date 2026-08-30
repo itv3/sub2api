@@ -62,6 +62,24 @@ class TimingLedgerTests(unittest.TestCase):
             self.assertEqual(status["status"], "active")
             self.assertEqual(status["total_deadline_at_utc"], "2026-08-30T06:00:00+00:00")
 
+    def test_checkpoint_replays_across_registered_producer_successor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            frozen_sha256 = (
+                "f28f2527e6496a20af0377f00febf7c40f1b1d673a3d149f9797c899c257b8ee"
+            )
+            plan_path = root / "ledger.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["producer"]["tool_sha256"] = frozen_sha256
+            plan_path.write_bytes(ledger._canonical(plan))
+            plan_path.chmod(0o600)
+            receipt = ledger.build_checkpoint(root, observed_at_utc=self._at(1))
+            receipt["producer"]["tool_sha256"] = frozen_sha256
+            ledger._write_once(root / "receipts" / "frozen-producer.json", receipt)
+            replayed = ledger.replay(root, "receipts/frozen-producer.json")
+            self.assertEqual(replayed, receipt)
+
     def test_unregistered_producer_digest_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "UpgradeTimingLedger"

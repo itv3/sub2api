@@ -66,6 +66,13 @@ PRODUCER_SUCCESSOR_TRANSITIONS = (
         "scope": "codex-cli-0.151-container-path-recovery-tool-successor",
         "result": "passed_codex_cli_0151_container_path_recovery_tool_successor",
     },
+    {
+        "path": "docs/egress/maintenance/codex-cli-0151-timing-producer-replay-tool-successor-source-transition.json",
+        "schema_version": "sub2apiplus-codex-cli-0151-timing-producer-replay-tool-successor-source-transition/v1",
+        "base_commit": "990c26f955fde57817fe1e0e98862d01c3ec5f7d",
+        "scope": "codex-cli-0.151-timing-producer-replay-tool-successor",
+        "result": "passed_codex_cli_0151_timing_producer_replay_tool_successor",
+    },
 )
 
 
@@ -858,9 +865,13 @@ def replay(root: Path, receipt_relative: str) -> dict[str, Any]:
         },
         "event_head": {"sequence": sequence, "sha256": summary["head_sha256"]},
         "summary": summary,
-        "producer": _producer(),
+        "producer": receipt.get("producer"),
     }
-    if head.get("sha256") != summary["head_sha256"] or _canonical(expected) != raw:
+    if (
+        not _producer_identity_matches(receipt.get("producer"), _producer())
+        or head.get("sha256") != summary["head_sha256"]
+        or _canonical(expected) != raw
+    ):
         raise TimingLedgerError("UpgradeTimingLedger checkpoint 重放结果不一致")
     return receipt
 

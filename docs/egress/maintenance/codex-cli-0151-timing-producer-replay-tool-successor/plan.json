@@ -1,0 +1,42 @@
+{
+  "schema_version": "codex-cli-0151-timing-producer-replay-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_timing_producer_replay_tool_successor",
+  "purpose": "让旧 UpgradeTimingLedger checkpoint 在生产者工具已由精确来源 transition 承接后仍可按原字节独立重放",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "990c26f955fde57817fe1e0e98862d01c3ec5f7d",
+    "predecessor_transition": "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor-source-transition.json"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T17:21:30Z",
+    "deadline_at_utc": "2026-08-30T17:45:00Z",
+    "wall_clock_minutes": 23,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留全部旧 checkpoint、失败 Campaign、attempt、恢复报告和来源 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4_address": "172.25.0.3",
+    "capture_cli_ipv4_address": "172.30.0.10",
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "旧 checkpoint producer 通过同一精确来源 transition 链校验",
+    "checkpoint 原始 producer 字节保持不变并可独立重放",
+    "未知 producer 摘要与非连续后继继续失败关闭",
+    "ARM64 捕获工具全量测试与出站规格门禁通过",
+    "原台账追加 stage_abandoned 后返回干净 VC-0"
+  ]
+}
