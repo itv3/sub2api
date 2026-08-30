@@ -17,6 +17,7 @@ from unittest import mock
 from tools.official_client_capture import candidate_evidence_guard
 from tools.official_client_capture import codex_upgrade
 from tools.official_client_capture import codex_upgrade_gate_receipt
+from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
 from tools.official_client_capture import codex_upgrade_receipt_finalizer
 from tools.official_client_capture.codex_upgrade import (
     build_coverage,
@@ -29,6 +30,7 @@ from tools.official_client_capture.codex_upgrade import (
 from tools.official_client_capture.codex_upgrade import Job
 from tools.official_client_capture.tests.control_receipt_fixtures import (
     create_arm_receipt,
+    create_job_rehearsal_receipt,
     create_timing_checkpoint,
 )
 
@@ -70,6 +72,8 @@ class CodexUpgradeTest(unittest.TestCase):
         self.assertTrue(actions["timing_receipt"].required)
         self.assertTrue(actions["arm64_environment_root"].required)
         self.assertTrue(actions["arm64_environment_receipt"].required)
+        self.assertFalse(actions["job_rehearsal_root"].required)
+        self.assertFalse(actions["job_rehearsal_receipt"].required)
         self.assertIsNone(actions["model"].default)
         self.assertIsNone(actions["lite_model"].default)
 
@@ -152,6 +156,42 @@ class CodexUpgradeTest(unittest.TestCase):
                     message,
                 ):
                     codex_upgrade.create_campaign(arguments)
+
+    def test_formal_requires_matching_full_job_rehearsal_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for field in ("job_rehearsal_root", "job_rehearsal_receipt"):
+                with self.subTest(field=field):
+                    arguments = self._campaign_arguments(root / field)
+                    setattr(arguments, field, None)
+                    with self.assertRaisesRegex(
+                        codex_upgrade.ConfigurationError,
+                        "job-rehearsal",
+                    ):
+                        codex_upgrade.create_campaign(arguments)
+
+            drifted = self._campaign_arguments(root / "drifted")
+            drifted.capture_container = "other-capture"
+            with self.assertRaisesRegex(
+                codex_upgrade.ConfigurationError,
+                "完整 Job 离线演练收据未通过",
+            ):
+                codex_upgrade.create_campaign(drifted)
+
+    def test_preflight_rejects_job_rehearsal_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments = self._campaign_arguments(
+                root / "preflight",
+                campaign_mode="preflight_only",
+            )
+            arguments.job_rehearsal_root = arguments.arm64_environment_root
+            arguments.job_rehearsal_receipt = arguments.arm64_environment_receipt
+            with self.assertRaisesRegex(
+                codex_upgrade.ConfigurationError,
+                "preflight_only 不得消费",
+            ):
+                codex_upgrade.create_campaign(arguments)
 
     def test_campaign_loader_rejects_missing_invalid_and_tampered_mode(self) -> None:
         for mutation, update_digest, message in (
@@ -713,7 +753,9 @@ class CodexUpgradeTest(unittest.TestCase):
     def test_plan_freezes_target_scenario_and_official_reloads_same_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            arguments = self._campaign_arguments(root)
+            arguments = self._campaign_arguments(
+                root, campaign_mode="preflight_only"
+            )
             target_payload = json.loads(
                 arguments.target_scenario_manifest.read_text(encoding="utf-8")
             )
@@ -1135,6 +1177,58 @@ class CodexUpgradeTest(unittest.TestCase):
             subject_id=campaign_id,
             prefix="p0",
         )
+        runtime_image = f"capture-runtime@sha256:{'b' * 64}"
+        target_sha256 = hashlib.sha256(binary_bytes).hexdigest()
+        target_package_sha256 = codex_upgrade.file_sha256(package_path)
+        target_code_mode_host_sha256 = hashlib.sha256(
+            code_mode_host_bytes
+        ).hexdigest()
+        live_compose_dir = ""
+        live_compose_files = ""
+        rehearsal_root: Path | None = None
+        rehearsal_receipt: Path | None = None
+        if campaign_mode == "formal":
+            contract = codex_upgrade_job_rehearsal_receipt.build_execution_contract(
+                target_version="0.147.0",
+                target_sha256=target_sha256,
+                target_package_sha256=target_package_sha256,
+                target_code_mode_host_sha256=target_code_mode_host_sha256,
+                suite="full",
+                tool_files_sha256=codex_upgrade._tool_identity()["files_sha256"],
+                configuration={
+                    "runtime_image": runtime_image,
+                    "model": "gpt-5.4",
+                    "lite_model": "gpt-5.6-luna",
+                    "capture_root": "/root/oauth-capture",
+                    "capture_container": "capture-cli",
+                    "service_container": "sub2apiplus",
+                    "keeper_container": "sub2apiplus-keeper",
+                    "postgres_container": "sub2apiplus-postgres",
+                    "redis_container": "sub2apiplus-redis",
+                    "capture_codex_bin": "/opt/codex-0.147.0/bin/codex",
+                    "relay_codex_bin": "/opt/codex-0.147.0/bin/codex",
+                    "capture_code_mode_host_bin": (
+                        "/opt/codex-0.147.0/bin/codex-code-mode-host"
+                    ),
+                    "relay_code_mode_host_bin": (
+                        "/opt/codex-0.147.0/bin/codex-code-mode-host"
+                    ),
+                    "codex_account_id": 90,
+                    "api_key_id": 1,
+                    "live_attestation_compose_dir": live_compose_dir,
+                    "live_attestation_compose_files": live_compose_files,
+                },
+                target_scenario=json.loads(
+                    target_scenario_manifest.read_text(encoding="utf-8")
+                ),
+                extra_jobs=None,
+            )
+            rehearsal_root = root / "control" / "job-rehearsal"
+            rehearsal_receipt = create_job_rehearsal_receipt(
+                rehearsal_root,
+                contract=contract,
+                preflight_campaign_id="preflight-fixture",
+            )
         return argparse.Namespace(
             command="plan",
             campaign_dir=root / "campaign",
@@ -1150,16 +1244,16 @@ class CodexUpgradeTest(unittest.TestCase):
             timing_receipt=timing_receipt,
             arm64_environment_root=arm_root,
             arm64_environment_receipt=arm_receipt,
+            job_rehearsal_root=rehearsal_root,
+            job_rehearsal_receipt=rehearsal_receipt,
             baseline_source=baseline_source,
             target_source=target_source,
             baseline_evidence=baseline_evidence,
-            target_sha256=hashlib.sha256(binary_bytes).hexdigest(),
+            target_sha256=target_sha256,
             target_package=package_path,
-            target_package_sha256=codex_upgrade.file_sha256(package_path),
-            target_code_mode_host_sha256=hashlib.sha256(
-                code_mode_host_bytes
-            ).hexdigest(),
-            runtime_image=f"capture-runtime@sha256:{'b' * 64}",
+            target_package_sha256=target_package_sha256,
+            target_code_mode_host_sha256=target_code_mode_host_sha256,
+            runtime_image=runtime_image,
             rule_manifest=baseline_rule_manifest,
             scenario_manifest=scenario_manifest,
             target_scenario_manifest=target_scenario_manifest,
@@ -1184,6 +1278,8 @@ class CodexUpgradeTest(unittest.TestCase):
             ),
             codex_account_id=90,
             api_key_id=1,
+            live_attestation_compose_dir=live_compose_dir,
+            live_attestation_compose_files=live_compose_files,
             candidate_id=None,
             candidate_purpose=None,
             profile_id=None,
@@ -3166,6 +3262,10 @@ class CodexUpgradeTest(unittest.TestCase):
                     str(arguments.arm64_environment_root),
                     "--arm64-environment-receipt",
                     str(arguments.arm64_environment_receipt),
+                    "--job-rehearsal-root",
+                    str(arguments.job_rehearsal_root),
+                    "--job-rehearsal-receipt",
+                    str(arguments.job_rehearsal_receipt),
                     "--baseline-source",
                     str(arguments.baseline_source),
                     "--target-source",

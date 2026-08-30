@@ -1,0 +1,50 @@
+{
+  "schema_version": "codex-cli-0151-full-job-readiness-plan/v1",
+  "change_set": "codex_cli_0151_full_job_readiness",
+  "purpose": "在正式 0.151 Campaign 前，于 ARM64 对目标版本全部 38 个官方与 candidate Job 完成零 live 请求离线演练并冻结收据",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "e70ea7e0f9bc2aaafafec67c9b03c3e0cb480fd0",
+    "tree": "1f62e5b4cbeb155ffe8f8175db42117dbbc47fe5"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T22:23:51Z",
+    "deadline_at_utc": "2026-08-31T00:23:51Z",
+    "wall_clock_minutes": 120,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "本变更集不删除历史证据、镜像、容器或运行目录"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "可独立重放的完整 Job 离线演练收据与 Schema",
+    "38/38 Job 的路径、依赖、环境变量、身份和执行树摘要",
+    "Formal plan 对同一目标场景、工具、容器、二进制和运行镜像的强制绑定",
+    "缺 Job、C2PA 身份串线、工具或运行配置漂移的失败关闭测试",
+    "ARM64 固定网络下的全量测试、离线演练与独立重放结果"
+  ]
+}

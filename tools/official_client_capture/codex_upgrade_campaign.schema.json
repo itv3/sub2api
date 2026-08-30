@@ -107,6 +107,42 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "campaign_mode": {
+            "const": "formal"
+          }
+        },
+        "required": [
+          "campaign_mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "control_receipts": {
+            "required": [
+              "upgrade_timing",
+              "arm64_environment",
+              "job_rehearsal"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "control_receipts": {
+            "not": {
+              "required": [
+                "job_rehearsal"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "nonEmptyText": {
       "type": "string",
@@ -286,6 +322,50 @@
               "$ref": "#/$defs/sha256"
             }
           }
+        },
+        "job_rehearsal": {
+          "$ref": "#/$defs/jobRehearsalControl"
+        }
+      }
+    },
+    "jobRehearsalControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_root",
+        "receipt",
+        "preflight_campaign_id",
+        "preflight_campaign_manifest_sha256",
+        "execution_contract_sha256",
+        "runtime_identity_sha256",
+        "job_count",
+        "job_set_sha256"
+      ],
+      "properties": {
+        "evidence_root": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "receipt": {
+          "$ref": "#/$defs/fileBindingWithBytes"
+        },
+        "preflight_campaign_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "preflight_campaign_manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "execution_contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtime_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "job_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "job_set_sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     },

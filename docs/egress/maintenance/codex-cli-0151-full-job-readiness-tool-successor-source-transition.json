@@ -1,0 +1,90 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-full-job-readiness-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-30T22:53:31Z",
+  "base_commit": "e70ea7e0f9bc2aaafafec67c9b03c3e0cb480fd0",
+  "scope": "codex-cli-0.151-full-job-readiness-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_c2pa_job_identity_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-c2pa-job-identity-tool-successor-source-transition.json",
+    "sha256": "3cd7f55378d6ff28182c3eb6222f9042d1fbb0f25b5854412ae78d29e54fcc10"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "15acea27b2d780d0b80ae03871b35015537c1e1fb0d8027afbdd7c8f1911001a",
+      "to_sha256": "583b633b924d7b4043956a549ba79d06aeb9f6c65555b2603b7d59c564b902bd",
+      "reason": "在 officialegress 包登记完整 Job 就绪工具后继，并让前序 C2PA transition 连续承接当前摘要。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "df2042041bf2657ef5ffe2f9b9f7307327356506fc0e04024741f9b8868aeeaf",
+      "to_sha256": "24f0c77983a5d0a749d29a5e40a07d68e23021cb6183dab37bb63813b1b260ea",
+      "reason": "在 service 包独立重放同一完整 Job 就绪摘要闭集与 mutation 门禁。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "25eefc5ff46abb6723550629d18f5f7b5bb42e360a48f3305a8b407d19393cfb",
+      "to_sha256": "5eb3541c0cade2736e79657f205d41c2d2002d4f5c8fb125c53e98005aabd3d5",
+      "reason": "承接已确认的 Formal 前完整 Job 硬门禁，并补充 38 个 Job 离线演练、收据冻结、独立重放和连续摘要规则。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "085e06e89aa9e9885974c84d278c81f6e4e0b2a2992c9a1c9b2e3c2e15d54fbe",
+      "to_sha256": "33016a16fcbb93eaf6fde54a2fd3982ddc856dd7dbe4d8d1f69128b9e1979f55",
+      "reason": "让 Formal plan 必须重放完整 Job 演练收据并绑定场景、工具树、容器、二进制、镜像与模型。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_campaign.schema.json",
+      "from_sha256": "33df7ddd141b5f1bd527624ed26ccf89fb13a95afb57576412a8c2bf2d794e8b",
+      "to_sha256": "763bdbf67718ae2a74726b6346c1566658faf762e5e802151e8506795c95fb63",
+      "reason": "把完整 Job 演练绑定纳入 Formal Campaign 的严格 Schema。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/control_receipt_fixtures.py",
+      "from_sha256": "e1dea353094b45d38360491a5d4d7d5ada65b13aa69f03827a452e0e16712df3",
+      "to_sha256": "0e139cd8f5a61a4d89e483dbd5bc59a0d11759d171192b1ddf3406b9dc156c8b",
+      "reason": "为 Formal 控制收据测试提供完整 Job 演练的冻结事实与收据夹具。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "1e9742f3953e625792264da1b74c910479765b047c61e2c3a7d0756fabbc943b",
+      "to_sha256": "f104aeef4fff9181925903fbedb708ad9683e61e56184295b44999316ed8df8e",
+      "reason": "覆盖 Formal 对完整 Job 收据缺失、目标漂移、工具漂移和运行身份漂移的失败关闭。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-full-job-readiness/plan.json",
+      "sha256": "c43cff11750075fa21da052a6371a5cf9108938e6bab2489e667dd3b222eb9de",
+      "reason": "冻结本变更集的 ARM64 固定网络、零 live 请求、时间预算和资源边界。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.py",
+      "sha256": "c72128c2594c043d3c347ca237cc8e3ed6c8fbce107ca43494fa9b76b7622020",
+      "reason": "新增 38 个 Job 的 ARM64 离线探针、事实采集、收据冻结和独立重放工具。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.schema.json",
+      "sha256": "c9613e0d0a31d8fde3fc5b215c19e88343e1193588e905974edfb4377a39c2cd",
+      "reason": "冻结完整 Job 演练事实与收据的闭集结构。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_job_rehearsal_receipt.py",
+      "sha256": "2d2e6f18baf53992b71b8ff917a3df3a2a71ce2298a9e4697ae3f7cba16b7472",
+      "reason": "覆盖 38 个 Job 展开、离线环境探针、C2PA 身份隔离和收据 mutation。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_full_job_readiness_tool_successor",
+  "identity_sha256": "7e2aa1691b37d1cf530e795b63a0a380bb91282a0699d8f9d7500a74ebb4614d"
+}

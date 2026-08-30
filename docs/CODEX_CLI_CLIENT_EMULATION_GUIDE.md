@@ -1217,6 +1217,8 @@ Framework §5.3 是升级总操作入口并规定 `VC-0～VC-6` 顺序；本部�
 正式 Campaign 前先完成可丢弃的 DOC-PRE／P0。DOC-PRE 只登记并审核本次 maintenance
 transition；合并后必须从干净 HEAD 执行 P0。P0 只发现阻断，不形成目标版本证据：
 
+路径级 `from_sha256` 必须承接上一份机器 transition 的 `to_sha256`；已确认但尚未单独登记的前置修改须并入当前 transition，不能从工作树基线摘要另起一条断链。`base_commit` 只标识本变更集起点，不替代路径级前序摘要。
+
 0.149.1 的 DOC-PRE 规则现已合并到本指南第二部分，不再维护独立候选规则文档。历史 DOC-PRE 配套输入为
 `candidate_rule_expectations_0_149_1.json`、`codex_upgrade_scenarios_0_147_0.json`、
 `codex_upgrade_scenarios_0_149_1.json`，规范锚点与依赖基线统一使用
@@ -1444,6 +1446,23 @@ DMIT 归档只读复用，不登录或修改 DMIT 主机。ARM64 固定出站边
 | 完整 Job 演练 | 展开目标版本全部官方／candidate Job，在 ARM64 实际 `capture-cli` 内逐项验证路径、依赖、环境变量、Job 身份和执行树摘要；演练不得发送官方请求 |
 
 完整 Job 演练必须生成并重放工具就绪收据。任一 Job 未通过时禁止创建 Formal Campaign；修复后须重新完整演练并冻结工具摘要。
+
+执行顺序固定为：先创建 `preflight_only` Campaign，再在 ARM64 运行以下三个离线命令；`collect` 只做路径、
+依赖、语法、二进制、bubblewrap 和 zstd 探针，不执行 Job，也不发送官方请求。
+
+```bash
+python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt collect \
+  --campaign-dir "$PREFLIGHT_CAMPAIGN" --evidence-root "$JOB_REHEARSAL_ROOT" \
+  --output facts.json
+python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt finalize \
+  --evidence-root "$JOB_REHEARSAL_ROOT" --facts facts.json --output receipt.json
+python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt replay \
+  --evidence-root "$JOB_REHEARSAL_ROOT" --receipt receipt.json
+```
+
+随后新建 Formal Campaign，并在原 `plan` 参数后追加
+`--job-rehearsal-root "$JOB_REHEARSAL_ROOT" --job-rehearsal-receipt "$JOB_REHEARSAL_ROOT/receipt.json"`。
+Formal 会再次独立重放收据，并拒绝目标场景、Job 集、工具树、容器、Codex／code-mode-host 路径或运行镜像漂移。
 
 从官方 GitHub Release 取得 ARM64 制品时同样不得把 DNS 轮询当作隐式重试。下载前必须在
 `capture-cli` 内用 `codex_upgrade_official_asset_receipt.py` 逐一 TLS 预连接解析所得的全部 IPv4，

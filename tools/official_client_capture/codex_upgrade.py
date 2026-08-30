@@ -78,6 +78,7 @@ from tools.official_client_capture.codex_upgrade_environment_probe import (
     run_probe as run_environment_probe,
 )
 from tools.official_client_capture import codex_upgrade_arm64_environment_receipt
+from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
 from tools.official_client_capture import codex_upgrade_timing_ledger
 from tools.official_client_capture import codex_upgrade_gate_receipt as external_gate_receipt
 from tools.official_client_capture.codex_upgrade_receipt_finalizer import (
@@ -2375,6 +2376,22 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="P0 生成并重放通过的 ARM64 环境收据。",
     )
+    plan.add_argument(
+        "--job-rehearsal-root",
+        type=Path,
+        help=(
+            "Formal 必需：ARM64 全量 Job 离线演练收据所在的 0700 绝对目录；"
+            "preflight_only 不需要。"
+        ),
+    )
+    plan.add_argument(
+        "--job-rehearsal-receipt",
+        type=Path,
+        help=(
+            "Formal 必需：从 preflight_only Campaign 生成并独立重放通过的"
+            "完整 Job 演练收据。"
+        ),
+    )
     plan.add_argument("--baseline-source", type=Path, required=True)
     plan.add_argument("--target-source", type=Path, required=True)
     plan.add_argument("--baseline-evidence", type=Path, required=True)
@@ -2698,6 +2715,22 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
         raise ConfigurationError(
             "--campaign-purpose 必须显式为 validation_only 或 "
             "production_replacement。"
+        )
+    rehearsal_root = getattr(arguments, "job_rehearsal_root", None)
+    rehearsal_receipt = getattr(arguments, "job_rehearsal_receipt", None)
+    if arguments.campaign_mode == "formal" and not all(
+        isinstance(value, Path) for value in (rehearsal_root, rehearsal_receipt)
+    ):
+        raise ConfigurationError(
+            "formal plan 必须显式提供 --job-rehearsal-root 与 "
+            "--job-rehearsal-receipt。"
+        )
+    if arguments.campaign_mode == "preflight_only" and any(
+        value is not None for value in (rehearsal_root, rehearsal_receipt)
+    ):
+        raise ConfigurationError(
+            "preflight_only 不得消费完整 Job 演练收据；先创建 preflight，"
+            "完成 ARM64 演练后再创建 Formal。"
         )
     if not getattr(arguments, "redis_container", None):
         arguments.redis_container = "sub2apiplus-redis"
@@ -3554,8 +3587,107 @@ def _control_receipt_relative(root: Path, value: Path, label: str) -> str:
     return relative
 
 
+def _job_rehearsal_configuration(
+    source: Mapping[str, Any] | argparse.Namespace,
+) -> dict[str, Any]:
+    """提取会改变 Job 实际执行的固定配置。"""
+
+    def value(field: str) -> Any:
+        if isinstance(source, Mapping):
+            current = source.get(field)
+        else:
+            current = getattr(source, field, None)
+        return str(current) if isinstance(current, Path) else current
+
+    return {
+        field: value(field)
+        for field in codex_upgrade_job_rehearsal_receipt.EXECUTION_CONFIGURATION_FIELDS
+    }
+
+
+def _job_rehearsal_contract_from_arguments(
+    arguments: argparse.Namespace,
+) -> dict[str, Any]:
+    """按 Formal plan 输入复算应与 preflight 完全一致的执行合同。"""
+
+    target_scenario = _read_json(
+        arguments.target_scenario_manifest, "target 正式采集场景清单"
+    )
+    extra_jobs = (
+        _read_json(arguments.extra_jobs, "附加任务清单")
+        if arguments.extra_jobs is not None
+        else None
+    )
+    try:
+        return codex_upgrade_job_rehearsal_receipt.build_execution_contract(
+            target_version=arguments.target_version,
+            target_sha256=arguments.target_sha256,
+            target_package_sha256=arguments.target_package_sha256,
+            target_code_mode_host_sha256=arguments.target_code_mode_host_sha256,
+            suite=arguments.suite,
+            tool_files_sha256=_tool_identity()["files_sha256"],
+            configuration=_job_rehearsal_configuration(arguments),
+            target_scenario=target_scenario,
+            extra_jobs=extra_jobs,
+        )
+    except codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError as error:
+        raise ConfigurationError(f"Formal Job 执行合同非法：{error}") from error
+
+
+def _job_rehearsal_contract_from_manifest(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """从已封存 Formal Campaign 复算完整 Job 演练合同。"""
+
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise ConfigurationError("Campaign 缺少输入绑定。")
+    scenario_reference = inputs.get("target_discovery_scenarios")
+    if not isinstance(scenario_reference, Mapping):
+        raise ConfigurationError("Campaign 缺少 target 场景清单绑定。")
+    target_scenario = _read_json(
+        _campaign_file(campaign_dir, str(scenario_reference.get("path", ""))),
+        "Campaign target 场景清单",
+    )
+    extra_reference = inputs.get("extra_jobs")
+    extra_jobs = (
+        _read_json(
+            _campaign_file(campaign_dir, str(extra_reference.get("path", ""))),
+            "Campaign 附加任务清单",
+        )
+        if isinstance(extra_reference, Mapping)
+        else None
+    )
+    package = manifest.get("official_identity", {}).get("package")
+    configuration = manifest.get("configuration")
+    tool_identity = manifest.get("tool_identity")
+    if (
+        not isinstance(package, Mapping)
+        or not isinstance(configuration, Mapping)
+        or not isinstance(tool_identity, Mapping)
+    ):
+        raise ConfigurationError("Campaign 缺少 Job 演练所需身份。")
+    try:
+        return codex_upgrade_job_rehearsal_receipt.build_execution_contract(
+            target_version=str(manifest.get("target_version", "")),
+            target_sha256=str(manifest.get("target_sha256", "")),
+            target_package_sha256=str(package.get("asset_sha256", "")),
+            target_code_mode_host_sha256=str(
+                package.get("code_mode_host_sha256", "")
+            ),
+            suite=str(manifest.get("suite", "")),
+            tool_files_sha256=str(tool_identity.get("files_sha256", "")),
+            configuration=_job_rehearsal_configuration(configuration),
+            target_scenario=target_scenario,
+            extra_jobs=extra_jobs,
+        )
+    except codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError as error:
+        raise ConfigurationError(f"Campaign Job 执行合同非法：{error}") from error
+
+
 def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
-    """在创建 Campaign 前重放并绑定时间与 ARM64 P0 硬门禁。"""
+    """在创建 Campaign 前重放并绑定时间、ARM64 与完整 Job 硬门禁。"""
 
     timing_root = getattr(arguments, "timing_ledger_dir", None)
     timing_receipt_path = getattr(arguments, "timing_receipt", None)
@@ -3611,7 +3743,7 @@ def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
     resolved_arm = arm_root.resolve(strict=True)
     timing_file = resolved_timing / timing_relative
     arm_file = resolved_arm / arm_relative
-    return {
+    controls: dict[str, Any] = {
         "upgrade_timing": {
             "ledger_dir": str(resolved_timing),
             "ledger_plan_sha256": file_sha256(resolved_timing / "ledger.json"),
@@ -3638,18 +3770,69 @@ def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
             ],
         },
     }
+    if arguments.campaign_mode == "formal":
+        rehearsal_root = getattr(arguments, "job_rehearsal_root", None)
+        rehearsal_path = getattr(arguments, "job_rehearsal_receipt", None)
+        assert isinstance(rehearsal_root, Path)
+        assert isinstance(rehearsal_path, Path)
+        rehearsal_relative = _control_receipt_relative(
+            rehearsal_root,
+            rehearsal_path,
+            "ARM64 完整 Job 离线演练收据",
+        )
+        try:
+            rehearsal = codex_upgrade_job_rehearsal_receipt.replay(
+                rehearsal_root, rehearsal_relative
+            )
+            expected_contract = _job_rehearsal_contract_from_arguments(arguments)
+            codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
+                rehearsal, expected_contract
+            )
+        except (
+            OSError,
+            codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError,
+        ) as error:
+            raise ConfigurationError(
+                f"ARM64 完整 Job 离线演练收据未通过：{error}"
+            ) from error
+        resolved_rehearsal = rehearsal_root.resolve(strict=True)
+        rehearsal_file = resolved_rehearsal / rehearsal_relative
+        preflight = rehearsal["preflight_campaign"]
+        controls["job_rehearsal"] = {
+            "evidence_root": str(resolved_rehearsal),
+            "receipt": {
+                "path": rehearsal_relative,
+                "sha256": file_sha256(rehearsal_file),
+                "bytes": rehearsal_file.stat().st_size,
+            },
+            "preflight_campaign_id": preflight["campaign_id"],
+            "preflight_campaign_manifest_sha256": preflight["manifest_sha256"],
+            "execution_contract_sha256": rehearsal[
+                "execution_contract_sha256"
+            ],
+            "runtime_identity_sha256": rehearsal["runtime_identity_sha256"],
+            "job_count": rehearsal["job_count"],
+            "job_set_sha256": rehearsal["job_set_sha256"],
+        }
+    return controls
 
 
 def _verify_control_receipts(
-    manifest: Mapping[str, Any], *, require_active: bool
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    require_active: bool,
 ) -> None:
     """重放 Campaign 冻结控制收据；执行前额外检查实时墙钟。"""
 
     controls = manifest.get("control_receipts")
-    if not isinstance(controls, dict) or set(controls) != {
+    expected_controls = {
         "upgrade_timing",
         "arm64_environment",
-    }:
+    }
+    if manifest.get("campaign_mode") == "formal":
+        expected_controls.add("job_rehearsal")
+    if not isinstance(controls, dict) or set(controls) != expected_controls:
         raise ConfigurationError("Campaign 缺少完整控制收据绑定。")
     timing = controls.get("upgrade_timing")
     arm = controls.get("arm64_environment")
@@ -3745,6 +3928,66 @@ def _verify_control_receipts(
         if isinstance(error, ConfigurationError):
             raise
         raise ConfigurationError(f"ARM64 P0 环境收据无法重放：{error}") from error
+
+    if manifest.get("campaign_mode") == "formal":
+        rehearsal = controls.get("job_rehearsal")
+        if not isinstance(rehearsal, dict) or set(rehearsal) != {
+            "evidence_root",
+            "receipt",
+            "preflight_campaign_id",
+            "preflight_campaign_manifest_sha256",
+            "execution_contract_sha256",
+            "runtime_identity_sha256",
+            "job_count",
+            "job_set_sha256",
+        }:
+            raise ConfigurationError("Campaign 完整 Job 演练绑定字段不闭合。")
+        try:
+            rehearsal_root = Path(str(rehearsal["evidence_root"]))
+            rehearsal_relative, rehearsal_sha, rehearsal_bytes = validate_binding(
+                rehearsal.get("receipt"), "ARM64 完整 Job 离线演练收据"
+            )
+            rehearsal_path = rehearsal_root / rehearsal_relative
+            if (
+                file_sha256(rehearsal_path) != rehearsal_sha
+                or rehearsal_path.stat().st_size != rehearsal_bytes
+            ):
+                raise ConfigurationError("完整 Job 演练收据绑定摘要漂移。")
+            receipt = codex_upgrade_job_rehearsal_receipt.replay(
+                rehearsal_root, rehearsal_relative
+            )
+            expected_contract = _job_rehearsal_contract_from_manifest(
+                campaign_dir, manifest
+            )
+            codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
+                receipt, expected_contract
+            )
+            preflight = receipt["preflight_campaign"]
+            if (
+                preflight.get("campaign_id")
+                != rehearsal.get("preflight_campaign_id")
+                or preflight.get("manifest_sha256")
+                != rehearsal.get("preflight_campaign_manifest_sha256")
+                or receipt.get("execution_contract_sha256")
+                != rehearsal.get("execution_contract_sha256")
+                or receipt.get("runtime_identity_sha256")
+                != rehearsal.get("runtime_identity_sha256")
+                or receipt.get("job_count") != rehearsal.get("job_count")
+                or receipt.get("job_set_sha256")
+                != rehearsal.get("job_set_sha256")
+            ):
+                raise ConfigurationError("Campaign 完整 Job 演练身份漂移。")
+        except (
+            KeyError,
+            OSError,
+            ValueError,
+            codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError,
+        ) as error:
+            if isinstance(error, ConfigurationError):
+                raise
+            raise ConfigurationError(
+                f"ARM64 完整 Job 离线演练收据无法重放：{error}"
+            ) from error
 
 
 def create_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -4551,7 +4794,6 @@ def load_campaign_manifest(path: Path) -> dict[str, Any]:
     if manifest.get("schema_version") != CAMPAIGN_SCHEMA:
         raise ConfigurationError("Campaign schema_version 不受支持。")
     _campaign_coordinates(manifest)
-    _verify_control_receipts(manifest, require_active=False)
     predecessor = manifest.get("predecessor")
     if predecessor is not None:
         if (
@@ -4585,6 +4827,11 @@ def load_campaign_manifest(path: Path) -> dict[str, Any]:
             target = _campaign_file(campaign_dir, relative)
             if not target.is_file() or file_sha256(target) != expected_sha:
                 raise ConfigurationError(f"Campaign 输入摘要漂移：{relative}")
+    _verify_control_receipts(
+        campaign_dir,
+        manifest,
+        require_active=False,
+    )
     return manifest
 
 
@@ -6403,7 +6650,7 @@ def _campaign_jobs(
 
 
 def _verify_plan_identity(campaign_dir: Path, manifest: dict[str, Any]) -> None:
-    _verify_control_receipts(manifest, require_active=True)
+    _verify_control_receipts(campaign_dir, manifest, require_active=True)
     target_source = Path(manifest["configuration"]["target_source"])
     expected = manifest["official_identity"]
     cargo_lock = target_source / "Cargo.lock"
