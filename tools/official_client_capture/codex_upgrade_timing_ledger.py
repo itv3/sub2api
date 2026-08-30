@@ -39,6 +39,7 @@ EVENT_TYPES = frozenset(
     {
         "stage_started",
         "stage_completed",
+        "stage_abandoned",
         "attempt_started",
         "attempt_failed",
         "attempt_completed",
@@ -400,6 +401,19 @@ def _summarize(
         elif event_type == "stage_completed":
             if active_phase != phase or any(item["status"] == "active" for item in attempts.values()):
                 raise TimingLedgerError("stage_completed 与当前阶段或 attempt 状态不一致")
+            active_phase = None
+            active_phase_started = None
+        elif event_type == "stage_abandoned":
+            if (
+                active_phase != phase
+                or any(item["status"] == "active" for item in attempts.values())
+                or normalized["attempt_id"] is not None
+                or normalized["root_cause_id"] is None
+                or not normalized["next_action"]
+            ):
+                raise TimingLedgerError(
+                    "stage_abandoned 必须关闭当前阶段、登记根因和唯一下一动作"
+                )
             active_phase = None
             active_phase_started = None
         elif event_type == "attempt_started":

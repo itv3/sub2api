@@ -71,6 +71,88 @@ class TimingLedgerTests(unittest.TestCase):
             )
             self.assertEqual(stopped["status"], "stopped")
 
+    def test_stage_abandoned_returns_to_vc0_without_resetting_total_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            ledger.append_event(
+                root,
+                event_id="vc0-complete",
+                phase="VC-0",
+                event_type="stage_completed",
+                recorded_at_utc=self._at(1),
+            )
+            ledger.append_event(
+                root,
+                event_id="vc1-start",
+                phase="VC-1",
+                event_type="stage_started",
+                recorded_at_utc=self._at(2),
+            )
+            ledger.append_event(
+                root,
+                event_id="capture-start",
+                phase="VC-1",
+                event_type="attempt_started",
+                attempt_id="capture-1",
+                recorded_at_utc=self._at(3),
+            )
+            ledger.append_event(
+                root,
+                event_id="capture-failed",
+                phase="VC-1",
+                event_type="attempt_failed",
+                attempt_id="capture-1",
+                root_cause_id="producer-tool-path-drift",
+                recorded_at_utc=self._at(4),
+            )
+            abandoned = ledger.append_event(
+                root,
+                event_id="vc1-abandoned",
+                phase="VC-1",
+                event_type="stage_abandoned",
+                root_cause_id="producer-tool-path-drift",
+                next_action="独立修复产出工具并从干净 VC-0 重来",
+                recorded_at_utc=self._at(5),
+            )
+            self.assertIsNone(abandoned["active_phase"])
+            self.assertEqual(
+                abandoned["total_deadline_at_utc"],
+                "2026-08-30T06:00:00+00:00",
+            )
+            restarted = ledger.append_event(
+                root,
+                event_id="vc0-restarted",
+                phase="VC-0",
+                event_type="stage_started",
+                recorded_at_utc=self._at(6),
+            )
+            self.assertEqual(restarted["active_phase"], "VC-0")
+            self.assertEqual(
+                restarted["stage_deadline_at_utc"],
+                "2026-08-30T00:51:00+00:00",
+            )
+            self.assertEqual(
+                restarted["total_deadline_at_utc"],
+                "2026-08-30T06:00:00+00:00",
+            )
+
+    def test_stage_abandoned_requires_root_cause_and_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            with self.assertRaisesRegex(
+                ledger.TimingLedgerError,
+                "stage_abandoned",
+            ):
+                ledger.append_event(
+                    root,
+                    event_id="vc0-abandoned-without-cause",
+                    phase="VC-0",
+                    event_type="stage_abandoned",
+                    recorded_at_utc=self._at(1),
+                )
+
     def test_third_same_root_cause_attempt_is_forbidden(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "UpgradeTimingLedger"

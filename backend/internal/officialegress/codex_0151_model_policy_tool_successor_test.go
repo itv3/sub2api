@@ -111,7 +111,13 @@ func validateCodex0151ModelPolicyToolSuccessor(receipt codex0151ToolReadinessRec
 			return errors.New("Codex CLI 0.151 模型政策工具后继 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151ContainerPathRecoveryToolSuccessorSupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 模型政策工具后继 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -123,7 +129,13 @@ func validateCodex0151ModelPolicyToolSuccessor(receipt codex0151ToolReadinessRec
 			return errors.New("Codex CLI 0.151 模型政策工具后继 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151ContainerPathRecoveryToolSuccessorSupersedes(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 模型政策工具后继 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -146,11 +158,16 @@ func codex0151ModelPolicyToolSuccessorSupersedes(path, priorDigest, currentDiges
 	}
 	for _, transition := range receipt.Transitions {
 		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
+			(transition.ToSHA256 == currentDigest ||
+				codex0151ContainerPathRecoveryToolSuccessorSupersedes(
+					path,
+					transition.ToSHA256,
+					currentDigest,
+				)) {
 			return true
 		}
 	}
-	return false
+	return codex0151ContainerPathRecoveryToolSuccessorSupersedes(path, priorDigest, currentDigest)
 }
 
 func TestCodex0151ModelPolicyToolSuccessorSourceTransitionIsFrozen(t *testing.T) {

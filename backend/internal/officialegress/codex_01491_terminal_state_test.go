@@ -944,7 +944,13 @@ func validateCodex0151ToolReadinessTransition(receipt codex0151ToolReadinessRece
 			return errors.New("Codex CLI 0.151 工具就绪 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151C2PACaptureToolSuccessorSupersedes(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 工具就绪 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -976,7 +982,7 @@ func codex0151ToolReadinessTransitionSupersedes(path, priorDigest, currentDigest
 			return true
 		}
 	}
-	return false
+	return codex0151C2PACaptureToolSuccessorSupersedes(path, priorDigest, currentDigest)
 }
 
 func TestCodex0151ToolReadinessSourceTransitionIsFrozen(t *testing.T) {

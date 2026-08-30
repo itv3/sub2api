@@ -1,0 +1,43 @@
+{
+  "schema_version": "codex-cli-0151-container-path-recovery-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_container_path_recovery_tool_successor",
+  "purpose": "修复 0.151 正式任务在 capture-cli 内引用不可见宿主机工作树，并让工具变化后保留总计时返回 VC-0",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "432a4dfb9dc612b0343ed217b8dace587698fc37",
+    "failed_campaign": "c0151-formal-20260830t1644z",
+    "failed_attempt": "20260830T164545Z-21112095643cb219"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T16:51:40Z",
+    "deadline_at_utc": "2026-08-30T17:24:00Z",
+    "wall_clock_minutes": 32,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留失败 Campaign、attempt、网络收据、恢复报告和全部历史 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4_address": "172.25.0.3",
+    "capture_cli_ipv4_address": "172.30.0.10",
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "0.151 容器内产出路径只引用 capture_root 下受管执行副本",
+    "宿主机路径回归 mutation 门禁",
+    "stage_abandoned 只追加事件及总预算连续性测试",
+    "ARM64 捕获工具全量测试与出站规格门禁通过",
+    "返回干净 VC-0 后的新 P0 与 Formal Campaign"
+  ]
+}

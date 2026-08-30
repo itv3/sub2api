@@ -1,0 +1,96 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-container-path-recovery-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-30T17:02:00Z",
+  "base_commit": "432a4dfb9dc612b0343ed217b8dace587698fc37",
+  "scope": "codex-cli-0.151-container-path-recovery-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_model_policy_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-model-policy-tool-successor-source-transition.json",
+    "sha256": "95f43f1e7b4fe74e4edcd042fd5ecb57e29368f475989f5662c26921af3a6b73"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
+      "from_sha256": "997e4fab24374ab80c46d4f0e91e5f7f580f02cf4f02f1f089174162196d9278",
+      "to_sha256": "1d2ecea92a9952f75007669cda6553bfbd27c6983e36435ece5de8c573a1870c",
+      "reason": "让工具就绪 addition 在 officialegress 包通过后继链承接已登记的容器路径恢复摘要边。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_model_policy_tool_successor_test.go",
+      "from_sha256": "c1f9ea41f1d9d2a320929d485e4f2e0ea79a554bc118de104973d17667e99440",
+      "to_sha256": "3f4115d9e82d34bce4ceef0e3f444fc3470632a6c7eec2ef1d4090470992fe8b",
+      "reason": "让模型政策工具后继在 officialegress 包通过精确摘要继续承接容器路径恢复后继。"
+    },
+    {
+      "path": "backend/internal/service/codex_01491_terminal_state_test.go",
+      "from_sha256": "d5f16d2aa0a9a5adb76deb6c1c0671921148fc33cf9ccbaca1653f22586c20df",
+      "to_sha256": "5c3015450960ea21170ce071d56a2b097747a9c51326bf4307efc9f55b8b60df",
+      "reason": "让工具就绪 addition 在 service 包独立重放同一容器路径恢复摘要承接边。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_model_policy_tool_successor_test.go",
+      "from_sha256": "84057e4904cbcbea1aedfb734ce8ac844e076ddac100627d41850f5b79aacc0e",
+      "to_sha256": "5467e42521a6c91da0350c613207cb9924632ed821177a78211def42e34ffd8a",
+      "reason": "让模型政策工具后继在 service 包独立重放同一容器路径恢复摘要链。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "67b9c7bcbc2e585e76eb7c5b34514a5bf42769e014fa211041945610f21313c7",
+      "to_sha256": "6d87c0b7e69717ceaccf5c0cdf82fcaf72747fd41c218601a7d94b7e62ebd0c5",
+      "reason": "登记 Formal 建立后发现产出侧工具阻断时的只追加封存、阶段放弃和返回 VC-0 规则。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
+      "from_sha256": "314e7f36a3569efbd51bf6f5feab740d448c25942e6ab541c1d318ba22c3b843",
+      "to_sha256": "8903c9138487b65f3b42959965e68b4c99ce9bfc6f283e9ac2151d300d3a0274",
+      "reason": "让 capture-cli 内的 0.151 正式采集只调用 capture_root 下可见的受管工具副本。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_timing_ledger.py",
+      "from_sha256": "f28f2527e6496a20af0377f00febf7c40f1b1d673a3d149f9797c899c257b8ee",
+      "to_sha256": "59f37b9d50f49f6c1ad85218ff3c500db3e1f4c77df7ba529a2f2351e0a83ac1",
+      "reason": "新增 stage_abandoned 只追加事件，在保留总墙钟和失败历史的前提下关闭受阻阶段。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_timing_ledger.py",
+      "from_sha256": "ad807e15799182d954bd7898fcf1b9cdee5d8389322d59938db9b2903214b0d7",
+      "to_sha256": "4da71178dc2dd02fbba3d8db5fd0b323eefd27a410c4e091792083220bc13d1d",
+      "reason": "覆盖阶段放弃的根因与下一动作必填、返回 VC-0 及总预算不重置 mutation。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_container_path_recovery_tool_successor_test.go",
+      "sha256": "8679f98b2c76494fef90903e193c7312b91ab69031c7af7ba4e82746154b7d83",
+      "reason": "在 officialegress 包重放容器路径恢复工具后继的完整摘要闭集与 mutation。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_container_path_recovery_tool_successor_test.go",
+      "sha256": "ad63813efa3f7059e46e30ed0fe3016a3db1eb73e9290ace58546a67da690505",
+      "reason": "在 service 包独立重放同一容器路径恢复工具后继闭集与 mutation。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor/plan.json",
+      "sha256": "fef2a7edf82480f6a31a0151ae83597684bc676e0019fe71d377b5ee31a959ae",
+      "reason": "冻结独立修复预算、零 live 请求、固定 ARM64 网络坐标和唯一恢复出口。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_0151_container_paths.py",
+      "sha256": "9b762128b696d14b987be1fe2b512b452288d609aff420aa94ee9494621a9e33",
+      "reason": "锁定 docker exec capture-cli 禁止引用不可见宿主机工作树的回归与 mutation。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_container_path_recovery_tool_successor",
+  "identity_sha256": "138835b4be71ef99639a6ecfc12051ba75b16db4fb0e7f54ede503ffea5211fe"
+}
