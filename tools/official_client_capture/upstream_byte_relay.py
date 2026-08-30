@@ -196,6 +196,29 @@ def _force_file_c2pa_reservation(body: bytes) -> FileC2paResponseRewrite:
     )
 
 
+def _candidate_file_uploaded_body_matches(
+    create_document: dict,
+    uploaded_body: bytes,
+    expectation: str,
+) -> bool:
+    """核验候选 A14 uploaded Body 与同轮 create 请求及冻结条件一致。"""
+
+    if expectation not in {"negative", "positive"}:
+        return False
+    try:
+        uploaded_document = json.loads(uploaded_body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(uploaded_document, dict):
+        return False
+    if expectation == "negative":
+        return uploaded_document == {}
+    return (
+        set(uploaded_document) == {"pdf_c2pa_create_request"}
+        and uploaded_document["pdf_c2pa_create_request"] == create_document
+    )
+
+
 def _force_accept_encoding_identity(head: bytes) -> tuple[bytes, bool]:
     """让受控 create 响应保持明文；返回（转发首部，是否改写）。
 
@@ -617,6 +640,7 @@ def _synthetic_aux_response(
     body: bytes,
     codex_version: str,
     legacy_compact_ordinal: int = 0,
+    file_c2pa_reservation: bool = False,
 ) -> SyntheticAuxResponse | None:
     """返回候选 A09/A11/A12/A13/A14 的白名单受控响应。
 
@@ -736,8 +760,14 @@ def _synthetic_aux_response(
                 f"https://{_SYNTHETIC_FILE_HOST}/candidate-aux/{_SYNTHETIC_FILE_ID}"
                 f"?{_SYNTHETIC_FILE_QUERY}"
             )
+            response_document = {
+                "file_id": _SYNTHETIC_FILE_ID,
+                "upload_url": upload_url,
+            }
+            if file_c2pa_reservation:
+                response_document["pdf_c2pa_reservation"] = True
             payload = json.dumps(
-                {"file_id": _SYNTHETIC_FILE_ID, "upload_url": upload_url},
+                response_document,
                 separators=(",", ":"),
             ).encode("ascii")
             return SyntheticAuxResponse("files_create", _h1_response(200, "OK", payload))
@@ -1339,6 +1369,9 @@ class Relay:
         # 生成 x-codex-turn-metadata，客户端放进去的 capture_variant 不会出现在
         # 出站字节里，任何基于该字段的判定都恒为假。
         self._core_aux_legacy_compacts = 0
+        self._core_aux_file_creates = 0
+        self._core_aux_file_uploaded = 0
+        self._candidate_file_create_documents: dict[int, dict] = {}
         self._core_counter_lock = asyncio.Lock()
         self._stop_requested = False
         self._stop_event: asyncio.Event | None = None
@@ -2200,12 +2233,64 @@ class Relay:
 
                     if self.args.synthetic_profile == "candidate-aux-v1":
                         legacy_compact_ordinal = 0
+                        candidate_file_expectation = None
+                        candidate_file_body_matches = None
+                        candidate_file_allowed = True
+                        file_c2pa_reservation = False
                         if request_line == (
                             "POST /backend-api/codex/responses/compact HTTP/1.1"
                         ):
                             legacy_compact_ordinal = await self._claim_core_counter(
                                 "aux_legacy_compacts"
                             )
+                        elif request_line == "POST /backend-api/files HTTP/1.1":
+                            file_ordinal = await self._claim_core_counter(
+                                "aux_file_creates"
+                            )
+                            modes = self.args.candidate_file_c2pa_modes
+                            if file_ordinal > len(modes):
+                                candidate_file_allowed = False
+                            else:
+                                candidate_file_expectation = modes[file_ordinal - 1]
+                                file_c2pa_reservation = (
+                                    candidate_file_expectation == "positive"
+                                )
+                                try:
+                                    create_document = json.loads(
+                                        initial_body.decode("utf-8")
+                                    )
+                                except (UnicodeError, json.JSONDecodeError):
+                                    candidate_file_allowed = False
+                                else:
+                                    if not isinstance(create_document, dict):
+                                        candidate_file_allowed = False
+                                    else:
+                                        self._candidate_file_create_documents[
+                                            file_ordinal
+                                        ] = create_document
+                        elif request_line == (
+                            f"POST /backend-api/files/{_SYNTHETIC_FILE_ID}/uploaded "
+                            "HTTP/1.1"
+                        ):
+                            file_ordinal = await self._claim_core_counter(
+                                "aux_file_uploaded"
+                            )
+                            modes = self.args.candidate_file_c2pa_modes
+                            create_document = self._candidate_file_create_documents.get(
+                                file_ordinal
+                            )
+                            if file_ordinal > len(modes) or create_document is None:
+                                candidate_file_allowed = False
+                            else:
+                                candidate_file_expectation = modes[file_ordinal - 1]
+                                candidate_file_body_matches = (
+                                    _candidate_file_uploaded_body_matches(
+                                        create_document,
+                                        initial_body,
+                                        candidate_file_expectation,
+                                    )
+                                )
+                                candidate_file_allowed = candidate_file_body_matches
                         synthetic = _synthetic_aux_response(
                             target_host,
                             request_line,
@@ -2213,7 +2298,18 @@ class Relay:
                             initial_body,
                             self.args.codex_version,
                             legacy_compact_ordinal,
+                            file_c2pa_reservation,
                         )
+                        if not candidate_file_allowed:
+                            synthetic = None
+                        if candidate_file_expectation is not None:
+                            meta["candidate_file_c2pa_expectation"] = (
+                                candidate_file_expectation
+                            )
+                        if candidate_file_body_matches is not None:
+                            meta["candidate_file_uploaded_body_matches"] = (
+                                candidate_file_body_matches
+                            )
                     elif self.args.synthetic_profile == "candidate-core-v1":
                         is_core_ws = (
                             request_line == "GET /backend-api/codex/responses HTTP/1.1"
@@ -2368,6 +2464,15 @@ class Relay:
                                 meta,
                             )
                     elif self.args.synthetic_profile == "candidate-aux-v1":
+                        auxiliary_evidence = {}
+                        if candidate_file_expectation is not None:
+                            auxiliary_evidence["candidate_file_c2pa_expectation"] = (
+                                candidate_file_expectation
+                            )
+                        if candidate_file_body_matches is not None:
+                            auxiliary_evidence[
+                                "candidate_file_uploaded_body_matches"
+                            ] = candidate_file_body_matches
                         self._log_intervention({
                             "type": "synthetic_aux_response",
                             "profile": self.args.synthetic_profile,
@@ -2376,6 +2481,7 @@ class Relay:
                             "host": target_host,
                             "request_line": request_line,
                             "production_forwarded": False,
+                            **auxiliary_evidence,
                         })
                     else:
                         self._log_intervention({
@@ -2716,6 +2822,11 @@ class Relay:
                            if self.args.synthetic_profile == "candidate-core-v1"
                            else None
                        ),
+                       "candidate_file_c2pa_sequence": (
+                           list(self.args.candidate_file_c2pa_modes)
+                           if self.args.synthetic_profile == "candidate-aux-v1"
+                           else None
+                       ),
                        "production_forwarding_enabled": not bool(self.args.synthetic_profile),
                        "mirror_selected_alpn": self.args.mirror_selected_alpn,
                        "upstream_preconnect_enabled": self.args.preconnect_upstream,
@@ -2815,6 +2926,12 @@ def main() -> None:
         help="candidate-core-v1 必填的冻结验收场景",
     )
     ap.add_argument(
+        "--candidate-file-c2pa-sequence",
+        default="negative",
+        help=("candidate-aux-v1 的 A14 create 响应条件序列；0.151+ 必须逐字为 "
+              "negative,positive，旧版本必须为 negative"),
+    )
+    ap.add_argument(
         "--candidate-core-ws-failures",
         type=int,
         default=6,
@@ -2874,6 +2991,27 @@ def main() -> None:
         ap.error("--claude-version 必须是完整的 x.y.z 版本")
     if args.synthetic_profile in {"candidate-aux-v1", "candidate-core-v1"} and not args.codex_version:
         ap.error("候选合成画像必须提供 --codex-version")
+    candidate_file_c2pa_modes = tuple(
+        item.strip() for item in args.candidate_file_c2pa_sequence.split(",")
+    )
+    if (
+        not candidate_file_c2pa_modes
+        or any(item not in {"negative", "positive"} for item in candidate_file_c2pa_modes)
+    ):
+        ap.error("--candidate-file-c2pa-sequence 只能包含 negative／positive")
+    if args.synthetic_profile == "candidate-aux-v1":
+        version = tuple(int(part) for part in args.codex_version.split("."))
+        expected_modes = (
+            ("negative", "positive") if version >= (0, 151, 0) else ("negative",)
+        )
+        if candidate_file_c2pa_modes != expected_modes:
+            ap.error(
+                "candidate-aux-v1 的 C2PA 序列与 Codex 版本不匹配："
+                + ",".join(expected_modes)
+            )
+    elif args.candidate_file_c2pa_sequence != "negative":
+        ap.error("--candidate-file-c2pa-sequence 只适用于 candidate-aux-v1")
+    args.candidate_file_c2pa_modes = candidate_file_c2pa_modes
     if args.force_file_c2pa_reservation:
         if args.synthetic_profile:
             ap.error("--force-file-c2pa-reservation 不得与候选合成画像同时使用")

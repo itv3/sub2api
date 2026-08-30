@@ -37,6 +37,7 @@ from tools.official_client_capture.upstream_byte_relay import (
     _SYNTHETIC_REALTIME_CALL_ID,
     _SyntheticCoreWebSocketDecoder,
     _annotate_relay_stop_after_client_request,
+    _candidate_file_uploaded_body_matches,
     _decode_client_text_frame,
     _encode_server_text_frame,
     _force_accept_encoding_identity,
@@ -645,6 +646,55 @@ class UpstreamByteRelaySyntheticAuxTest(unittest.TestCase):
         self.assertIsNotNone(finalized)
         self.assertEqual(finalized.action, "files_uploaded")
 
+    def test_0151_file_create_positive_response_and_uploaded_body_contract(self) -> None:
+        create_document = {
+            "file_name": "candidate.pdf",
+            "file_size": 8,
+            "use_case": "codex",
+        }
+        created = _synthetic_aux_response(
+            "chatgpt.com",
+            "POST /backend-api/files HTTP/1.1",
+            b"POST /backend-api/files HTTP/1.1\r\n\r\n",
+            json.dumps(create_document).encode("utf-8"),
+            "0.151.0",
+            file_c2pa_reservation=True,
+        )
+        self.assertIsNotNone(created)
+        _, response_body = created.wire.split(b"\r\n\r\n", 1)
+        self.assertIs(json.loads(response_body)["pdf_c2pa_reservation"], True)
+        self.assertTrue(
+            _candidate_file_uploaded_body_matches(
+                create_document,
+                json.dumps(
+                    {"pdf_c2pa_create_request": create_document},
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                "positive",
+            )
+        )
+        self.assertTrue(
+            _candidate_file_uploaded_body_matches(create_document, b"{}", "negative")
+        )
+
+    def test_candidate_file_uploaded_body_mismatch_fails_closed(self) -> None:
+        create_document = {"file_name": "candidate.pdf"}
+        mismatches = (
+            (b"{}", "positive"),
+            (b'{"pdf_c2pa_create_request":{}}', "positive"),
+            (b'{"pdf_c2pa_create_request":{}}', "negative"),
+            (b"[]", "negative"),
+        )
+        for body, expectation in mismatches:
+            with self.subTest(body=body, expectation=expectation):
+                self.assertFalse(
+                    _candidate_file_uploaded_body_matches(
+                        create_document,
+                        body,
+                        expectation,
+                    )
+                )
+
     def test_unknown_or_wrong_query_is_fail_closed(self) -> None:
         self.assertIsNone(
             self.response("chatgpt.com", "POST /backend-api/wham/unknown HTTP/1.1")
@@ -716,6 +766,40 @@ class UpstreamByteRelaySyntheticAuxTest(unittest.TestCase):
         )
         self.assertEqual(invalid.returncode, 2)
         self.assertIn("完整的 x.y.z 版本", invalid.stderr)
+
+    def test_0151_candidate_aux_requires_fixed_c2pa_sequence(self) -> None:
+        script = Path(__file__).parents[1] / "upstream_byte_relay.py"
+        base = [
+            sys.executable,
+            str(script),
+            "--cert",
+            "missing.crt",
+            "--key",
+            "missing.key",
+            "--output",
+            "missing-output",
+            "--synthetic-profile",
+            "candidate-aux-v1",
+            "--allow-synthetic-responses",
+            "--codex-version",
+            "0.151.0",
+        ]
+        missing = subprocess.run(
+            base,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("negative,positive", missing.stderr)
+
+        valid = subprocess.run(
+            [*base, "--candidate-file-c2pa-sequence", "negative,positive"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotIn("C2PA 序列与 Codex 版本不匹配", valid.stderr)
 
     def test_synthetic_profile_rejects_production_upstream_map(self) -> None:
         script = Path(__file__).parents[1] / "upstream_byte_relay.py"

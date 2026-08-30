@@ -80,6 +80,13 @@ class CandidateAuxCaptureScriptTest(unittest.TestCase):
         self.assertIn('"wham_credit_details": 2', self.source)
         self.assertIn('"wham_safe_consume": 1', self.source)
 
+    def test_a14_0151_runs_fixed_negative_and_positive_body_branches(self) -> None:
+        self.assertIn("CANDIDATE_A14_C2PA_SEQUENCE", self.source)
+        self.assertIn("negative,positive", self.source)
+        self.assertIn("--candidate-file-c2pa-sequence", self.source)
+        self.assertIn('for expectation in "${a14_expectations[@]}"', self.source)
+        self.assertIn("candidate_file_uploaded_body_matches", self.source)
+
     def test_compact_trigger_carries_strict_official_identity(self) -> None:
         self.assertIn('"prompt_cache_key":"%s"', self.source)
         self.assertIn('"text":{"verbosity":"low"}', self.source)

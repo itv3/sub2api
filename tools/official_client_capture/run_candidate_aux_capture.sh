@@ -22,6 +22,19 @@ if [[ ! $codex_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "CODEX_VERSION 必须是完整的 x.y.z 版本。" >&2
   exit 2
 fi
+IFS=. read -r codex_major codex_minor _ <<<"$codex_version"
+candidate_a14_c2pa_sequence=${CANDIDATE_A14_C2PA_SEQUENCE:-}
+if (( codex_major > 0 || codex_minor >= 151 )); then
+  if [[ $candidate_a14_c2pa_sequence != negative,positive ]]; then
+    echo "Codex >=0.151.0 必须显式冻结 CANDIDATE_A14_C2PA_SEQUENCE=negative,positive。" >&2
+    exit 2
+  fi
+elif [[ -z $candidate_a14_c2pa_sequence ]]; then
+  candidate_a14_c2pa_sequence=negative
+elif [[ $candidate_a14_c2pa_sequence != negative ]]; then
+  echo "Codex <0.151.0 的 CANDIDATE_A14_C2PA_SEQUENCE 只能是 negative。" >&2
+  exit 2
+fi
 
 capture_container=${CAPTURE_CONTAINER:-capture-cli}
 service_container=${SERVICE_CONTAINER:-sub2apiplus}
@@ -807,7 +820,8 @@ if ! docker exec "$capture_container" sh -c 'command -v tcpdump' >/dev/null; the
 fi
 relay_help=$(docker exec "$capture_container" python3 "$relay_tool" --help 2>&1 || true)
 if ! grep -q 'candidate-aux-v1' <<<"$relay_help" ||
-  ! grep -q -- '--codex-version' <<<"$relay_help"; then
+  ! grep -q -- '--codex-version' <<<"$relay_help" ||
+  ! grep -q -- '--candidate-file-c2pa-sequence' <<<"$relay_help"; then
   echo "capture 容器中的 relay 尚未同步目标版本参数或候选辅助合成画像。" >&2
   exit 1
 fi
@@ -897,12 +911,14 @@ start_capture() {
     python3 "$1" --cert "$2" --key "$3" --mode connect --port "$4" \
       --upstream-host chatgpt.com --output "$5" --timeout 300 \
       --codex-version "$6" \
+      --candidate-file-c2pa-sequence "$7" \
       --synthetic-profile candidate-aux-v1 --allow-synthetic-responses \
-      >"$7" 2>&1 &
-    echo $! >"$8"
+      >"$8" 2>&1 &
+    echo $! >"$9"
   ' sh "$relay_tool" "$container_tls_dir/relay.crt" "$container_tls_dir/relay.key" \
     "$relay_port" "$container_scenario_root/relay-private" "$codex_version" \
-    "$container_scenario_root/relay.log" "$container_scenario_root/relay.pid"
+    "$candidate_a14_c2pa_sequence" "$container_scenario_root/relay.log" \
+    "$container_scenario_root/relay.pid"
   relay_started=1
 
   docker exec "$capture_container" sh -c '
@@ -1114,14 +1130,20 @@ stop_capture
 # uploaded。入口没有区域 URL 参数，因此 PUT host 只能来自 create 响应。
 start_capture A14
 trigger_root="$work_dir/scenarios/A14/trigger"
-code=$(request_with_token "$admin_token" --output "$trigger_root/files-probe.sse" \
-  --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' \
-  --data-binary '{"mode":"official_files_probe"}' \
-  "$admin_base_url/accounts/$account_id/test")
-assert_2xx A14-files "$code"
-wait_action A14 files_create
-wait_action A14 files_blob_put
-wait_action A14 files_uploaded
+IFS=, read -r -a a14_expectations <<<"$candidate_a14_c2pa_sequence"
+a14_ordinal=0
+for expectation in "${a14_expectations[@]}"; do
+  ((a14_ordinal += 1))
+  code=$(request_with_token "$admin_token" \
+    --output "$trigger_root/files-probe-$expectation.sse" \
+    --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    --data-binary '{"mode":"official_files_probe"}' \
+    "$admin_base_url/accounts/$account_id/test")
+  assert_2xx "A14-files-$expectation" "$code"
+  wait_action A14 files_create "$a14_ordinal"
+  wait_action A14 files_blob_put "$a14_ordinal"
+  wait_action A14 files_uploaded "$a14_ordinal"
+done
 stop_capture
 
 # 冻结动作计数与“绝不生产转发”最终门禁。任何多余/缺失动作都让本轮失败；摘要仍由
@@ -1134,6 +1156,8 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 codex_version = sys.argv[2]
+a14_modes = ["negative", "positive"] if tuple(map(int, codex_version.split("."))) >= (0, 151, 0) else ["negative"]
+a14_count = len(a14_modes)
 expected = {
     "A09": {
         "models_manifest": 1,
@@ -1155,7 +1179,11 @@ expected = {
         "wham_safe_consume": 1,
     },
     "A13": {"oauth_dummy_invalid_grant": 1},
-    "A14": {"files_create": 1, "files_blob_put": 1, "files_uploaded": 1},
+    "A14": {
+        "files_create": a14_count,
+        "files_blob_put": a14_count,
+        "files_uploaded": a14_count,
+    },
 }
 for scenario, wanted in expected.items():
     path = root / "scenarios" / scenario / "relay" / "intervention.jsonl"
@@ -1173,6 +1201,7 @@ for scenario, wanted in expected.items():
         if connection.get("production_forwarded") is not False:
             raise SystemExit(f"{scenario} 连接未证明 production_forwarded=false")
     counts = Counter()
+    events = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -1181,9 +1210,28 @@ for scenario, wanted in expected.items():
             raise SystemExit(f"{scenario} 存在未证明为本地合成的事件")
         if event.get("type") != "synthetic_aux_response":
             raise SystemExit(f"{scenario} 存在白名单外受控事件: {event.get('type')}")
+        events.append(event)
         counts[event["action"]] += 1
     if counts != Counter(wanted):
         raise SystemExit(f"{scenario} 动作计数不匹配: {dict(counts)} != {wanted}")
+    if scenario == "A14":
+        for action in ("files_create", "files_uploaded"):
+            actual_modes = [
+                event.get("candidate_file_c2pa_expectation")
+                for event in events
+                if event.get("action") == action
+            ]
+            if actual_modes != a14_modes:
+                raise SystemExit(
+                    f"A14 {action} 条件序列不匹配: {actual_modes} != {a14_modes}"
+                )
+        uploaded_matches = [
+            event.get("candidate_file_uploaded_body_matches")
+            for event in events
+            if event.get("action") == "files_uploaded"
+        ]
+        if uploaded_matches != [True] * a14_count:
+            raise SystemExit(f"A14 uploaded Body 未逐条件闭合: {uploaded_matches}")
 PY
 
 capture_status=complete
