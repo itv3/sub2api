@@ -1387,6 +1387,7 @@ candidate 必须由最新有效激活收据、运行容器 digest 和 activation
 | post-promotion gate receipt | 已实现 | 同一工具生成并独立重放 `post_promotion` 收据，绑定 acceptance、promotion、production tree 和目标架构；六项固定门禁均须零失败、零跳过 |
 | production activation receipt | 已实现 | `production_activation_receipt.py` v2 强制消费 promotion、post-promotion gate、acceptance、production tree 和四阶段原始事实，生成不可覆盖收据并独立重放；历史 v1／K80 收据只证明当时事实 |
 | 时间、ARM64 环境与门禁承接 | 已实现 | `codex_upgrade_timing_ledger.py`、`codex_upgrade_arm64_environment_receipt.py` 和 `codex_upgrade_gate_receipt.py` v3 分别生成并独立重放墙钟、固定双容器网络／磁盘及失败门禁 attempt 链；同根因连续失败两次后拒绝第三次 attempt |
+| 官方 Release 制品取得 | 已实现 | `codex_upgrade_official_asset_receipt.py` 逐个预连接 CDN IPv4，冻结 Release metadata、asset 摘要、证书和唯一精确地址；离线重放通过后才能下载 |
 | 第三方客户端绑定 | 当前固定为 Kilo 双入口 | 工具和 Schema 明确要求 `kilo-compatible`、`kilo-responses`，文档不得单独泛化 |
 
 Campaign v3 的 `plan` 必须显式提供 `--timing-ledger-dir`、`--timing-receipt`、
@@ -1429,6 +1430,12 @@ DMIT 归档只读复用，不登录或修改 DMIT 主机。ARM64 固定出站边
 | 出站与 TLS | DNS 冻结精确 IP 并在 CLI 计时前预连接，不得静默回退其他地址 |
 | 运行坐标 | reservation 前确认 ID 不超过 128 字符，失败证据完成归档和收据重定位后才补跑 |
 | 同源环境 | 工具、候选、finalizer、目标架构依赖摘要一致，完整环境烟测稳定通过 |
+
+从官方 GitHub Release 取得 ARM64 制品时同样不得把 DNS 轮询当作隐式重试。下载前必须在
+`capture-cli` 内用 `codex_upgrade_official_asset_receipt.py` 逐一 TLS 预连接解析所得的全部 IPv4，
+把唯一选中的成功地址、证书摘要、Release metadata、asset 大小和 SHA-256 封存并离线重放；实际
+下载以收据中的 `curl_resolve` 精确固定该地址。全部地址失败、元数据漂移或下载字节不匹配均停线，
+禁止改网络、改路由或转用未经登记的镜像站。
 
 时间、归档复用、重试和门禁补跑统一遵守 Framework §5.3.5；`UpgradeTimingLedger` 从 DOC-PRE 首项开始。
 创建运行目录前，ARM64 根文件系统须同时满足使用率低于 70% 且可用空间不少于 30 GiB。达到水位后仅按
