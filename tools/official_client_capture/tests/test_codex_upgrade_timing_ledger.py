@@ -47,6 +47,33 @@ class TimingLedgerTests(unittest.TestCase):
             self.assertEqual(replayed, original)
             self.assertEqual(replayed["summary"]["head_sequence"], 1)
 
+    def test_registered_producer_successor_preserves_frozen_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            plan_path = root / "ledger.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["producer"]["tool_sha256"] = (
+                "f28f2527e6496a20af0377f00febf7c40f1b1d673a3d149f9797c899c257b8ee"
+            )
+            plan_path.write_bytes(ledger._canonical(plan))
+            plan_path.chmod(0o600)
+            status = ledger.inspect_ledger(root, now=self._at(1))
+            self.assertEqual(status["status"], "active")
+            self.assertEqual(status["total_deadline_at_utc"], "2026-08-30T06:00:00+00:00")
+
+    def test_unregistered_producer_digest_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            plan_path = root / "ledger.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["producer"]["tool_sha256"] = "0" * 64
+            plan_path.write_bytes(ledger._canonical(plan))
+            plan_path.chmod(0o600)
+            with self.assertRaisesRegex(ledger.TimingLedgerError, "生成器身份漂移"):
+                ledger.inspect_ledger(root, now=self._at(1))
+
     def test_stage_deadline_requires_stop_the_line(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "UpgradeTimingLedger"

@@ -1329,6 +1329,10 @@ inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 
 并创建新的 preflight 与 Formal Campaign。禁止把失败阶段记成 `stage_completed`，也禁止用旧 Campaign
 的冻结 job 定义重跑已经变化的产出工具。
 
+原台账的 producer 绝对路径必须保持不变；工具摘要变化只接受维护 transition 自摘要、前序文件摘要及
+该工具 `from_sha256 → to_sha256` 精确边全部可重放的已登记后继。未知摘要、路径替换或不连续边一律失败关闭，
+不得覆盖 `ledger.json` 或伪造 checkpoint 来承接新工具。
+
 每个 candidate 建立时还必须声明用途，且用途不可在验收后追认：
 
 | 用途 | 含义 | 验收后的强制路径 |

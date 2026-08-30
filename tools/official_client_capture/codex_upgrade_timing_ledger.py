@@ -57,6 +57,16 @@ RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
 MAX_JSON_BYTES = 4 * 1024 * 1024
+PRODUCER_TOOL_RELATIVE = "tools/official_client_capture/codex_upgrade_timing_ledger.py"
+PRODUCER_SUCCESSOR_TRANSITIONS = (
+    {
+        "path": "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor-source-transition.json",
+        "schema_version": "sub2apiplus-codex-cli-0151-container-path-recovery-tool-successor-source-transition/v1",
+        "base_commit": "432a4dfb9dc612b0343ed217b8dace587698fc37",
+        "scope": "codex-cli-0.151-container-path-recovery-tool-successor",
+        "result": "passed_codex_cli_0151_container_path_recovery_tool_successor",
+    },
+)
 
 
 class TimingLedgerError(ValueError):
@@ -208,6 +218,167 @@ def _producer() -> dict[str, str]:
     }
 
 
+def _repository_file(root: Path, relative: Any, label: str) -> Path:
+    """解析并约束 Git 工作树内的只读来源文件。"""
+
+    if not isinstance(relative, str) or not relative or "\\" in relative:
+        raise TimingLedgerError(f"{label}不是规范仓库相对路径")
+    parsed = PurePosixPath(relative)
+    if (
+        parsed.is_absolute()
+        or str(parsed) != relative
+        or any(part in {"", ".", ".."} for part in parsed.parts)
+    ):
+        raise TimingLedgerError(f"{label}不是规范仓库相对路径")
+    current = root
+    for part in parsed.parts:
+        current /= part
+        if current.is_symlink():
+            raise TimingLedgerError(f"{label}包含符号链接")
+    try:
+        resolved = current.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise TimingLedgerError(f"{label}越过仓库根或不存在") from error
+    metadata = resolved.stat()
+    if not resolved.is_file() or stat.S_IMODE(metadata.st_mode) & 0o022:
+        raise TimingLedgerError(f"{label}不是只读普通文件")
+    if metadata.st_size <= 0 or metadata.st_size > MAX_JSON_BYTES:
+        raise TimingLedgerError(f"{label}大小非法")
+    return resolved
+
+
+def _load_producer_successor_edge(
+    repository_root: Path,
+    descriptor: dict[str, str],
+) -> tuple[str, str]:
+    """重放一个已登记来源 transition 中的计时工具精确摘要边。"""
+
+    transition_path = _repository_file(
+        repository_root,
+        descriptor["path"],
+        "producer successor transition",
+    )
+    raw = transition_path.read_bytes()
+    try:
+        payload = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise TimingLedgerError("producer successor transition 不是合法 JSON") from error
+    transition = _expect(
+        payload,
+        {
+            "schema_version",
+            "issued_at_utc",
+            "base_commit",
+            "scope",
+            "predecessor",
+            "transitions",
+            "additions",
+            "verification",
+            "safety",
+            "result",
+            "identity_sha256",
+        },
+        "producer successor transition",
+    )
+    for field in ("schema_version", "base_commit", "scope", "result"):
+        if transition.get(field) != descriptor[field]:
+            raise TimingLedgerError(f"producer successor transition {field} 漂移")
+    _timestamp(transition.get("issued_at_utc"), "producer successor issued_at_utc")
+    identity = transition.get("identity_sha256")
+    unsigned = dict(transition)
+    unsigned.pop("identity_sha256")
+    if not isinstance(identity, str) or not SHA256_RE.fullmatch(identity):
+        raise TimingLedgerError("producer successor transition 自摘要非法")
+    if _sha256_bytes(_canonical(unsigned)) != identity:
+        raise TimingLedgerError("producer successor transition 自摘要不一致")
+    predecessor = _expect(
+        transition.get("predecessor"),
+        {"kind", "path", "sha256"},
+        "producer successor predecessor",
+    )
+    predecessor_path = _repository_file(
+        repository_root,
+        predecessor.get("path"),
+        "producer successor predecessor.path",
+    )
+    predecessor_sha256 = predecessor.get("sha256")
+    if (
+        not isinstance(predecessor_sha256, str)
+        or not SHA256_RE.fullmatch(predecessor_sha256)
+        or _sha256_file(predecessor_path) != predecessor_sha256
+    ):
+        raise TimingLedgerError("producer successor predecessor 摘要不一致")
+    safety = _expect(
+        transition.get("safety"),
+        {
+            "live_account_used",
+            "online_acceptance_performed",
+            "production_config_changed",
+            "official_egress_profile_changed",
+        },
+        "producer successor safety",
+    )
+    if any(safety.values()):
+        raise TimingLedgerError("producer successor transition 超出离线工具修复边界")
+    entries = transition.get("transitions")
+    if not isinstance(entries, list):
+        raise TimingLedgerError("producer successor transitions 不是数组")
+    matches = [
+        item
+        for item in entries
+        if isinstance(item, dict) and item.get("path") == PRODUCER_TOOL_RELATIVE
+    ]
+    if len(matches) != 1:
+        raise TimingLedgerError("producer successor transition 未唯一登记计时工具")
+    edge = _expect(
+        matches[0],
+        {"path", "from_sha256", "to_sha256", "reason"},
+        "producer successor tool edge",
+    )
+    before = edge.get("from_sha256")
+    after = edge.get("to_sha256")
+    if (
+        not isinstance(before, str)
+        or not SHA256_RE.fullmatch(before)
+        or not isinstance(after, str)
+        or not SHA256_RE.fullmatch(after)
+        or before == after
+        or not isinstance(edge.get("reason"), str)
+        or not edge["reason"].strip()
+    ):
+        raise TimingLedgerError("producer successor tool edge 非法")
+    return before, after
+
+
+def _producer_identity_matches(frozen: Any, current: dict[str, str]) -> bool:
+    """只允许路径不变且由已登记来源 transition 连续承接的工具升级。"""
+
+    if frozen == current:
+        return True
+    if not isinstance(frozen, dict) or set(frozen) != set(current):
+        return False
+    for field in ("schema_version", "tool", "version"):
+        if frozen.get(field) != current[field]:
+            return False
+    frozen_sha256 = frozen.get("tool_sha256")
+    if not isinstance(frozen_sha256, str) or not SHA256_RE.fullmatch(frozen_sha256):
+        return False
+    tool = Path(current["tool"])
+    repository_root = tool.parents[2]
+    if tool != repository_root / PRODUCER_TOOL_RELATIVE:
+        return False
+    cursor = frozen_sha256
+    for descriptor in PRODUCER_SUCCESSOR_TRANSITIONS:
+        before, after = _load_producer_successor_edge(repository_root, descriptor)
+        if cursor == after:
+            continue
+        if cursor != before:
+            return False
+        cursor = after
+    return cursor == current["tool_sha256"]
+
+
 def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     _expect(
         plan,
@@ -255,7 +426,7 @@ def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
             raise TimingLedgerError(f"{phase} 预算必须为正数且不得宽于文档上限 {default}")
     if plan.get("same_root_cause_retry_limit") != DEFAULT_RETRY_LIMIT:
         raise TimingLedgerError("同根因重试上限必须固定为 2")
-    if plan.get("producer") != _producer():
+    if not _producer_identity_matches(plan.get("producer"), _producer()):
         raise TimingLedgerError("计时台账生成器身份漂移")
     return plan
 

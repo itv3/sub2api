@@ -36,7 +36,7 @@
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "67b9c7bcbc2e585e76eb7c5b34514a5bf42769e014fa211041945610f21313c7",
-      "to_sha256": "6d87c0b7e69717ceaccf5c0cdf82fcaf72747fd41c218601a7d94b7e62ebd0c5",
+      "to_sha256": "d1ae527c8e0894e7adfef9ed2bafbd0127cd66961b6f2c45069ec0e57e806462",
       "reason": "登记 Formal 建立后发现产出侧工具阻断时的只追加封存、阶段放弃和返回 VC-0 规则。"
     },
     {
@@ -48,13 +48,13 @@
     {
       "path": "tools/official_client_capture/codex_upgrade_timing_ledger.py",
       "from_sha256": "f28f2527e6496a20af0377f00febf7c40f1b1d673a3d149f9797c899c257b8ee",
-      "to_sha256": "59f37b9d50f49f6c1ad85218ff3c500db3e1f4c77df7ba529a2f2351e0a83ac1",
+      "to_sha256": "6dab54cddaf94e4d481c20d47392a8a36ce35d5f0aa49f0c2c2ea6334b18de68",
       "reason": "新增 stage_abandoned 只追加事件，在保留总墙钟和失败历史的前提下关闭受阻阶段。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade_timing_ledger.py",
       "from_sha256": "ad807e15799182d954bd7898fcf1b9cdee5d8389322d59938db9b2903214b0d7",
-      "to_sha256": "4da71178dc2dd02fbba3d8db5fd0b323eefd27a410c4e091792083220bc13d1d",
+      "to_sha256": "7329cd0f169742ba17874f29afe15a2c65d7396223aabe94d6082e5d7f2c051e",
       "reason": "覆盖阶段放弃的根因与下一动作必填、返回 VC-0 及总预算不重置 mutation。"
     }
   ],
@@ -92,5 +92,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_container_path_recovery_tool_successor",
-  "identity_sha256": "138835b4be71ef99639a6ecfc12051ba75b16db4fb0e7f54ede503ffea5211fe"
+  "identity_sha256": "54f592693664e78a517f75ab6035efb0a2d5e8e51b03ec4401884c86c526478b"
 }
