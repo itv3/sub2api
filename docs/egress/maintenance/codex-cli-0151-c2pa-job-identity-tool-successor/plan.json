@@ -1,0 +1,43 @@
+{
+  "schema_version": "codex-cli-0151-c2pa-job-identity-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_c2pa_job_identity_tool_successor",
+  "purpose": "修复 0.151 C2PA 正反官方 Job 与场景事实之间的冻结身份绑定，并以独立工具后继返回干净 P0",
+  "source": {
+    "branch": "codex/codex-cli-0151-emulation",
+    "commit": "e1ff1ca1538ba63ed94cdfffe62bc7b04e05f4ba",
+    "predecessor_transition": "docs/egress/maintenance/codex-cli-0151-bwrap-zstd-readiness-tool-successor-source-transition.json"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-30T20:51:00Z",
+    "deadline_at_utc": "2026-08-30T21:21:00Z",
+    "wall_clock_minutes": 30,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留失败 Formal Campaign、全部 attempt、原始抓包、环境收据和来源 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4_address": "172.25.0.3",
+    "capture_cli_ipv4_address": "172.30.0.10",
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "C2PA negative Job 的 SCENARIO_JOB_ID 与冻结 Job ID 完全一致",
+    "C2PA positive Job 的 SCENARIO_JOB_ID 与冻结 Job ID 完全一致",
+    "目标场景清单加载与 Formal Job 投影具备正反 mutation 门禁",
+    "来源 transition 连续承接前序 bubblewrap 与 zstd 就绪后继",
+    "ARM64 捕获工具全量测试与出站规格门禁通过",
+    "失败阶段保持只读并以新的 stage_started 返回干净 VC-0"
+  ]
+}

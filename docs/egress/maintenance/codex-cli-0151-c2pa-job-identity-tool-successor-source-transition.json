@@ -1,0 +1,57 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-c2pa-job-identity-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-30T20:52:00Z",
+  "base_commit": "e1ff1ca1538ba63ed94cdfffe62bc7b04e05f4ba",
+  "scope": "codex-cli-0.151-c2pa-job-identity-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_bwrap_zstd_readiness_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-bwrap-zstd-readiness-tool-successor-source-transition.json",
+    "sha256": "f41bd4c18b740919e53cea3e0e8f866c5298c5d90d55c8cda20c2bc2a3356ba5"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "40945c2e36d42603c101bfec29879218f0ccd5a149cb3a472a796a1d5e443880",
+      "to_sha256": "15acea27b2d780d0b80ae03871b35015537c1e1fb0d8027afbdd7c8f1911001a",
+      "reason": "在 officialegress 包登记 C2PA Job 身份工具后继，并让前序来源 transition 连续承接当前摘要。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "115ad29ed834426e749ca23e1c8520ae5ce3beef90f4657da21b3f6fb1ef8904",
+      "to_sha256": "df2042041bf2657ef5ffe2f9b9f7307327356506fc0e04024741f9b8868aeeaf",
+      "reason": "在 service 包独立重放同一 C2PA Job 身份摘要闭集与 mutation 门禁。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
+      "from_sha256": "8903c9138487b65f3b42959965e68b4c99ce9bfc6f283e9ac2151d300d3a0274",
+      "to_sha256": "6ff00b0cc9d3388ce7b67733312a200b3a270eab98e5950d2f210618a2e928cb",
+      "reason": "让 C2PA negative 与 positive 官方任务分别把冻结 Job ID 传给场景事实生成器。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "5d7f299b7019f154b68d65c1dd36e7c4e708848b68d6b71aaebdfd1b89ed03e3",
+      "to_sha256": "1e9742f3953e625792264da1b74c910479765b047c61e2c3a7d0756fabbc943b",
+      "reason": "覆盖目标清单原始加载和 Formal Job 投影中的 C2PA 正反身份绑定。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-c2pa-job-identity-tool-successor/plan.json",
+      "sha256": "2bfef7e96ec15577dc144a753f2746da6692a57bf955826b1a419061a72fe0a2",
+      "reason": "冻结独立修复的零 live 请求、ARM64 固定网络、资源预算和唯一恢复路径。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_c2pa_job_identity_tool_successor",
+  "identity_sha256": "f1b87e317abcfc6f1cf45f8bac8abead78e9bdf689369d1947e7cb0b475e1123"
+}

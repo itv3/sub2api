@@ -424,6 +424,14 @@ class CodexUpgradeTest(unittest.TestCase):
                     "positive",
                 )
                 self.assertEqual(
+                    negative["steps"][0]["environment"]["SCENARIO_JOB_ID"],
+                    negative["id"],
+                )
+                self.assertEqual(
+                    positive["steps"][0]["environment"]["SCENARIO_JOB_ID"],
+                    positive["id"],
+                )
+                self.assertEqual(
                     auxiliary["steps"][0]["environment"][
                         "CANDIDATE_A14_C2PA_SEQUENCE"
                     ],
@@ -534,6 +542,14 @@ class CodexUpgradeTest(unittest.TestCase):
             self.assertEqual(
                 positive.steps[0]["environment"]["A14_C2PA_EXPECTATION"],
                 "positive",
+            )
+            self.assertEqual(
+                negative.steps[0]["environment"]["SCENARIO_JOB_ID"],
+                negative.job_id,
+            )
+            self.assertEqual(
+                positive.steps[0]["environment"]["SCENARIO_JOB_ID"],
+                positive.job_id,
             )
             self.assertEqual(
                 auxiliary.steps[0]["environment"][
