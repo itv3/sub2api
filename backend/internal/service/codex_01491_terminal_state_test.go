@@ -72,6 +72,10 @@ func loadCodex01491TerminalServiceState() (codex01491TerminalServiceReceipt, err
 					transition.Path,
 					transition.CurrentSHA256,
 					currentDigest,
+				) && !codex0151ToolReadinessTransitionSupersedesService(
+					transition.Path,
+					transition.CurrentSHA256,
+					currentDigest,
 				)) {
 					codex01491TerminalServiceLoadErr = errors.New(
 						"0.149.1 终态当前摘要不一致：" + transition.Path,
@@ -97,7 +101,8 @@ func loadCodex01491TerminalServiceState() (codex01491TerminalServiceReceipt, err
 func codex01491TerminalStateSupersedesService(path, priorDigest, currentDigest string) bool {
 	if openAIReplayOOMRepairSupersedesService(path, priorDigest, currentDigest) ||
 		openAIWSCompatibilityGuardRepairSupersedesService(path, priorDigest, currentDigest) ||
-		openAIWSEmptyTerminalOutputRepairSupersedesService(path, priorDigest, currentDigest) {
+		openAIWSEmptyTerminalOutputRepairSupersedesService(path, priorDigest, currentDigest) ||
+		codex0151ToolReadinessTransitionSupersedesService(path, priorDigest, currentDigest) {
 		return true
 	}
 	receipt, err := loadCodex01491TerminalServiceState()
@@ -116,6 +121,10 @@ func codex01491TerminalStateSupersedesService(path, priorDigest, currentDigest s
 				transition.CurrentSHA256,
 				currentDigest,
 			) || openAIWSEmptyTerminalOutputRepairSupersedesService(
+				path,
+				transition.CurrentSHA256,
+				currentDigest,
+			) || codex0151ToolReadinessTransitionSupersedesService(
 				path,
 				transition.CurrentSHA256,
 				currentDigest,
@@ -673,7 +682,13 @@ func validateOpenAIWSEmptyTerminalOutputRepairTransitionService(
 			"../../..",
 			filepath.FromSlash(transition.Path),
 		))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkServiceDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151ToolReadinessTransitionSupersedesService(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("OpenAI WS 空终态输出修复 transition 当前摘要不一致：" + transition.Path)
 		}
 		paths = append(paths, transition.Path)
@@ -696,7 +711,13 @@ func openAIWSEmptyTerminalOutputRepairSupersedesService(
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.ToSHA256 == currentDigest &&
+		if transition.Path == path &&
+			(transition.ToSHA256 == currentDigest ||
+				codex0151ToolReadinessTransitionSupersedesService(
+					path,
+					transition.ToSHA256,
+					currentDigest,
+				)) &&
 			(transition.FromSHA256 == priorDigest ||
 				openAIWSCompatibilityGuardRepairSupersedesService(
 					path,
@@ -711,6 +732,200 @@ func openAIWSEmptyTerminalOutputRepairSupersedesService(
 
 func TestOpenAIWSEmptyTerminalOutputRepairSourceTransitionServiceIsFrozen(t *testing.T) {
 	if _, err := loadOpenAIWSEmptyTerminalOutputRepairTransitionService(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const codex0151ToolReadinessTransitionServicePath = "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json"
+
+type codex0151ToolReadinessReceiptService struct {
+	SchemaVersion  string                                   `json:"schema_version"`
+	IssuedAtUTC    string                                   `json:"issued_at_utc"`
+	BaseCommit     string                                   `json:"base_commit"`
+	Scope          string                                   `json:"scope"`
+	Predecessor    openAIReplayOOMRepairPredecessorService  `json:"predecessor"`
+	Transitions    []openAIReplayOOMRepairTransitionService `json:"transitions"`
+	Additions      []openAIReplayOOMRepairAdditionService   `json:"additions"`
+	Verification   []string                                 `json:"verification"`
+	Safety         openAIReplayOOMRepairSafetyService       `json:"safety"`
+	Result         string                                   `json:"result"`
+	IdentitySHA256 string                                   `json:"identity_sha256"`
+}
+
+var (
+	codex0151ToolReadinessServiceOnce    sync.Once
+	codex0151ToolReadinessServiceCached  codex0151ToolReadinessReceiptService
+	codex0151ToolReadinessServiceLoadErr error
+)
+
+func loadCodex0151ToolReadinessTransitionService() (
+	codex0151ToolReadinessReceiptService,
+	error,
+) {
+	codex0151ToolReadinessServiceOnce.Do(func() {
+		codex0151ToolReadinessServiceCached, codex0151ToolReadinessServiceLoadErr =
+			readCodex0151ToolReadinessTransitionService()
+	})
+	return codex0151ToolReadinessServiceCached, codex0151ToolReadinessServiceLoadErr
+}
+
+func readCodex0151ToolReadinessTransitionService() (
+	codex0151ToolReadinessReceiptService,
+	error,
+) {
+	var receipt codex0151ToolReadinessReceiptService
+	raw, err := os.ReadFile(filepath.Join(
+		"../../..",
+		filepath.FromSlash(codex0151ToolReadinessTransitionServicePath),
+	))
+	if err != nil {
+		return receipt, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return receipt, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return receipt, errors.New("Codex CLI 0.151 工具就绪 transition 尾部存在额外 JSON")
+	}
+	var identityDocument map[string]any
+	if err := json.Unmarshal(raw, &identityDocument); err != nil {
+		return receipt, err
+	}
+	delete(identityDocument, "identity_sha256")
+	canonical, err := json.Marshal(identityDocument)
+	if err != nil {
+		return receipt, err
+	}
+	canonical = append(canonical, '\n')
+	if upstreamMergeFrameworkServiceDigest(canonical) != receipt.IdentitySHA256 {
+		return receipt, errors.New("Codex CLI 0.151 工具就绪 transition 自摘要不一致")
+	}
+	if err := validateCodex0151ToolReadinessTransitionService(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func validateCodex0151ToolReadinessTransitionService(
+	receipt codex0151ToolReadinessReceiptService,
+) error {
+	if receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-tool-readiness-source-transition/v1" ||
+		receipt.IssuedAtUTC != "2026-08-30T14:16:49Z" ||
+		receipt.BaseCommit != "e9fb45cf85e6f3aec8654f52277987740ffaf5f2" ||
+		receipt.Scope != "codex-cli-0.151-tool-readiness" ||
+		receipt.Result != "passed_codex_cli_0151_tool_readiness" {
+		return errors.New("Codex CLI 0.151 工具就绪 transition 顶层事实非法")
+	}
+	if receipt.Predecessor.Kind != "openai_ws_empty_terminal_output_repair_source_transition" ||
+		receipt.Predecessor.Path != openAIWSEmptyTerminalOutputRepairTransitionServicePath ||
+		receipt.Predecessor.SHA256 != "8e496c82fbf5ca6c6c8d6e93402508df152faf15c3e1275116ef54a9c3145c2b" {
+		return errors.New("Codex CLI 0.151 工具就绪 transition 前序非法")
+	}
+	predecessorRaw, err := os.ReadFile(filepath.Join(
+		"../../..",
+		filepath.FromSlash(receipt.Predecessor.Path),
+	))
+	if err != nil || upstreamMergeFrameworkServiceDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+		return errors.New("Codex CLI 0.151 工具就绪 transition 前序摘要不一致")
+	}
+	expectedVerification := []string{
+		"python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+		"go test ./internal/officialegress ./internal/service -run 'TestCodex0151ToolReadinessSourceTransition(Service)?IsFrozen|TestCodex01491Terminal(State|ServiceState)IsFrozen' -count=1",
+		"make check-egress-spec",
+	}
+	if !slices.Equal(receipt.Verification, expectedVerification) {
+		return errors.New("Codex CLI 0.151 工具就绪 transition 验证集合非法")
+	}
+	if receipt.Safety.LiveAccountUsed || receipt.Safety.OnlineAcceptancePerformed ||
+		receipt.Safety.ProductionConfigChanged || receipt.Safety.OfficialEgressProfileChanged {
+		return errors.New("Codex CLI 0.151 工具就绪 transition 安全边界非法")
+	}
+	expectedFrom := map[string]string{
+		"backend/internal/officialegress/codex_01491_terminal_state_test.go":          "9c887f3d5bf77fe32a7acfcac1c6b60b46f02e5eebe0758fd9badc433811fef2",
+		"backend/internal/service/codex_01491_terminal_state_test.go":                 "07da47741683fcbdd833e73b3eb433f9c568ba5625ef9dfc59eb96718f855b67",
+		"docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md":                                    "1d7beef5b945f77a8837d2631121acb607032684fde07d4ef37f83b1ffd49e38",
+		"tools/official_client_capture/codex_upgrade.py":                              "cd643c5f9da9437dc7bc88b57d94cfc830b93f354b18c606955666d62457abcd",
+		"tools/official_client_capture/codex_upgrade_campaign.schema.json":            "7bf49249f31861d2a38c1c2896539373671ede9e3b8671ed8bf1a80da4b2255a",
+		"tools/official_client_capture/codex_upgrade_capture_attempt.schema.json":     "c3c0a952bc1f2ba7e80fafb505e6395a7933512c8371dcb891a6e7a2cc03a14d",
+		"tools/official_client_capture/codex_upgrade_gate_receipt.py":                 "861d07d5d6574c0e953df930907bfc8d5a2a64f34072b2f204992362f22327d8",
+		"tools/official_client_capture/codex_upgrade_gate_receipt.schema.json":        "b140621fb5fbf27292ab11e7ac4eec165bc8e86932528736c0bb4f6226ee4ea3",
+		"tools/official_client_capture/production_activation_receipt.py":              "83ed012547421355251e0cbc28a3c8b9cb471250170e9b2d11242356cd085382",
+		"tools/official_client_capture/tests/test_codex_upgrade.py":                   "b87b55aa9741a10f49fbc5da495104b483be089522fde7218effc577717ee002",
+		"tools/official_client_capture/tests/test_codex_upgrade_capture_lifecycle.py": "13ede17bb6453b53e2b4a5b526c017b34187d777c170f1302c376c229aa6d9bb",
+		"tools/official_client_capture/tests/test_codex_upgrade_gate_receipt.py":      "c0d4d642248a00687c4bf9d462ea3ec8d69830cd1cbcfaecd49552486edd16d7",
+		"tools/official_client_capture/tests/test_production_activation_receipt.py":   "9871203509cb1087e785a62ebdfcd56b5a2795d756510c51a381ba3ac81c850b",
+	}
+	expectedAdditions := map[string]struct{}{
+		"docs/egress/maintenance/codex-cli-0151-tool-readiness/plan.json":                     {},
+		"tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py":            {},
+		"tools/official_client_capture/codex_upgrade_arm64_environment_receipt.schema.json":   {},
+		"tools/official_client_capture/codex_upgrade_official_asset_receipt.py":               {},
+		"tools/official_client_capture/codex_upgrade_official_asset_receipt.schema.json":      {},
+		"tools/official_client_capture/codex_upgrade_timing_ledger.py":                        {},
+		"tools/official_client_capture/codex_upgrade_timing_ledger.schema.json":               {},
+		"tools/official_client_capture/tests/control_receipt_fixtures.py":                     {},
+		"tools/official_client_capture/tests/test_codex_upgrade_arm64_environment_receipt.py": {},
+		"tools/official_client_capture/tests/test_codex_upgrade_official_asset_receipt.py":    {},
+		"tools/official_client_capture/tests/test_codex_upgrade_timing_ledger.py":             {},
+	}
+	transitionPaths := make([]string, 0, len(receipt.Transitions))
+	for _, transition := range receipt.Transitions {
+		if expectedFrom[transition.Path] != transition.FromSHA256 ||
+			!validOpenAIReplayOOMRepairServiceSHA(transition.ToSHA256) ||
+			transition.FromSHA256 == transition.ToSHA256 || strings.TrimSpace(transition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 工具就绪 transition 条目非法")
+		}
+		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
+		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+			return errors.New("Codex CLI 0.151 工具就绪 transition 当前摘要不一致：" + transition.Path)
+		}
+		transitionPaths = append(transitionPaths, transition.Path)
+	}
+	additionPaths := make([]string, 0, len(receipt.Additions))
+	for _, addition := range receipt.Additions {
+		if _, ok := expectedAdditions[addition.Path]; !ok ||
+			!validOpenAIReplayOOMRepairServiceSHA(addition.SHA256) || strings.TrimSpace(addition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 工具就绪 addition 条目非法")
+		}
+		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(addition.Path)))
+		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != addition.SHA256 {
+			return errors.New("Codex CLI 0.151 工具就绪 addition 当前摘要不一致：" + addition.Path)
+		}
+		additionPaths = append(additionPaths, addition.Path)
+	}
+	if len(receipt.Transitions) != len(expectedFrom) || len(receipt.Additions) != len(expectedAdditions) ||
+		!slices.IsSorted(transitionPaths) ||
+		len(transitionPaths) != len(slices.Compact(append([]string(nil), transitionPaths...))) ||
+		!slices.IsSorted(additionPaths) ||
+		len(additionPaths) != len(slices.Compact(append([]string(nil), additionPaths...))) {
+		return errors.New("Codex CLI 0.151 工具就绪路径闭集非法")
+	}
+	return nil
+}
+
+// codex0151ToolReadinessTransitionSupersedesService 只承接本次工具就绪变更的精确摘要边。
+func codex0151ToolReadinessTransitionSupersedesService(
+	path string,
+	priorDigest string,
+	currentDigest string,
+) bool {
+	receipt, err := loadCodex0151ToolReadinessTransitionService()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			transition.ToSHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCodex0151ToolReadinessSourceTransitionServiceIsFrozen(t *testing.T) {
+	if _, err := loadCodex0151ToolReadinessTransitionService(); err != nil {
 		t.Fatal(err)
 	}
 }
