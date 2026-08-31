@@ -1446,6 +1446,8 @@ DMIT 归档只读复用，不登录或修改 DMIT 主机。ARM64 固定出站边
 
 ARM64 的 Go 固定使用 `/root/oauth-capture/state/local/go1.27.0/bin`；构建和 Go 门禁统一设置
 `GOPROXY=off`、`GOFLAGS=-mod=readonly`，不得临时下载或切换工具链。
+`docker build --network=none` 只限制 Dockerfile 的 `RUN`，不限制基础镜像解析；声称离线构建前必须
+确认全部基础镜像 digest 和层已在本机冻结。
 
 | 对象 | 强制出站网络坐标 | 公网出口 | 禁止变化 |
 |---|---|---|---|
@@ -1650,6 +1652,8 @@ Snapshot、Plan、Bundle 或 Executor 无法表达新机制时，才最小修改
 从完成入库和测试的同一最终源码树准备前端产物、运行资源、目标平台二进制和镜像，记录
 Git／tree／build／部署版本、二进制 SHA-256、架构、构建参数、image ID、OCI digest 和
 profile ID／digest。证据机和低资源生产机不承担 Go／Node 编译。
+本 ARM64 环境缓存不完整时，前端依赖只经 `capture-cli` 固定出口取得；Go 仍离线编译，再将二进制和
+运行资源叠加到已冻结的 ARM64 运行基础镜像，并在构建收据中绑定三者。
 
 退出条件：stage receipt 可复算，目标画像和制品同源，旧 Snapshot／Release 仍可执行，实现侧
 测试通过，生产 Active 未改变，第四步所需 candidate 身份字段齐备。
