@@ -1,0 +1,38 @@
+{
+  "schema_version": "codex-cli-0151-arm64-typescript-dependency-plan/v1",
+  "change_set": "codex_cli_0151_arm64_typescript_dependency",
+  "purpose": "让 ARM64 干净树使用仓库外只读且摘要锁定的 TypeScript 解析器执行 P0",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "4263d01750484a28d4771ea982de8227a98a40a9",
+    "tree": "6ab6ec8876e8c1aa242abfe4556beddb4a83f700",
+    "failed_command": "make test-capture-tools",
+    "failed_stage": "VC-4 recovery P0"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T05:40:05Z",
+    "deadline_at_utc": "2026-08-31T06:10:05Z",
+    "wall_clock_minutes": 30,
+    "same_root_cause_retry_limit": 2
+  },
+  "dependency": {
+    "name": "typescript.js",
+    "version": "5.6.3",
+    "sha256": "f316520790d4db220a10d890c5f85310e26a1bd3c104b8d3b5eb62ba0491651b",
+    "current_lockfile_sha256": "8dbd1876020e41b644d971414d29100c9f428f39ede953c03d0442b834f6f3af",
+    "source_lockfile_sha256": "8dbd1876020e41b644d971414d29100c9f428f39ede953c03d0442b834f6f3af",
+    "policy": "只读复用 ARM64 已有普通文件；禁止安装、复制 node_modules、相对路径和符号链接"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4": "172.25.0.3",
+    "capture_cli_ipv4": "172.30.0.10",
+    "network_changes_allowed": false
+  },
+  "required_outputs": [
+    "make test-capture-tools 接受摘要锁定的仓库外绝对路径",
+    "ARM64 受管执行树同步后零漂移",
+    "frontend/node_modules 与 local-analysis 保持不变",
+    "完整 P0 离线门禁重新通过"
+  ]
+}

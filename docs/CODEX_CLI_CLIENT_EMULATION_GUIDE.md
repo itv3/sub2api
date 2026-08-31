@@ -1453,6 +1453,11 @@ ARM64 的 Go 固定使用 `/root/oauth-capture/state/local/go1.27.0/bin`；构�
 `docker build --network=none` 只限制 Dockerfile 的 `RUN`，不限制基础镜像解析；声称离线构建前必须
 确认全部基础镜像 digest 和层已在本机冻结。
 
+干净树没有 `frontend/node_modules` 时，`make test-capture-tools` 必须通过
+`CAPTURE_TYPESCRIPT_MODULE=<绝对路径>` 读取 ARM64 已有的只读 TypeScript 5.6.3；门禁固定校验
+`typescript.js` 摘要 `f316520790d4db220a10d890c5f85310e26a1bd3c104b8d3b5eb62ba0491651b`。
+禁止为跑门禁安装依赖、复制 `node_modules` 或使用相对路径／符号链接。
+
 | 对象 | 强制出站网络坐标 | 公网出口 | 禁止变化 |
 |---|---|---|---|
 | `sub2apiplus` | `proxy-network`：`172.25.0.3`，网关 `172.25.0.1` | `179.255.100.158` | compose 网络、地址、默认出站路由、NAT／iptables |

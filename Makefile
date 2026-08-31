@@ -18,6 +18,8 @@ EGRESS_LEGACY_SEAL_RECEIPT := $(CURDIR)/docs/egress/lifecycle/legacy-seal-receip
 EGRESS_SEAL_BASE_REF ?=
 UPSTREAM_MERGE_PLAN ?= $(CURDIR)/docs/egress/maintenance/upstream-v0.1.177-merge-plan.json
 CODEX_0_149_1_SOURCE_ROOT ?= $(CURDIR)/local-analysis/sources/codex-cli-0.149.1
+CAPTURE_TYPESCRIPT_MODULE ?= $(CURDIR)/frontend/node_modules/typescript/lib/typescript.js
+CAPTURE_TYPESCRIPT_SHA256 := f316520790d4db220a10d890c5f85310e26a1bd3c104b8d3b5eb62ba0491651b
 
 FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/client.spec.ts \
@@ -214,10 +216,11 @@ test-frontend-critical:
 # 依赖 local-analysis 的原始证据复算仅在本机证据存在时执行。Claude bundle AST 用
 # frontend lockfile 中的 TypeScript 解析器，禁止临时下载或浮动版本。
 test-capture-tools:
-	@test -f frontend/node_modules/typescript/lib/typescript.js || \
-		{ echo "🔴 缺少锁定的 TypeScript AST 解析器，请先执行 pnpm --dir frontend install --frozen-lockfile"; exit 1; }
+	@python3 -c 'import hashlib, pathlib, sys; p = pathlib.Path(sys.argv[1]); expected = sys.argv[2]; (p.is_absolute() and p.is_file() and not p.is_symlink() and p.resolve() == p) or sys.exit("🔴 TypeScript AST 解析器必须是绝对路径下的非符号链接普通文件"); actual = hashlib.sha256(p.read_bytes()).hexdigest(); actual == expected or sys.exit(f"🔴 TypeScript AST 解析器摘要不一致：{actual}")' \
+		"$(CAPTURE_TYPESCRIPT_MODULE)" "$(CAPTURE_TYPESCRIPT_SHA256)"
 	@node --version >/dev/null
-	@PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+	@CLAUDE_AST_TYPESCRIPT_MODULE="$(CAPTURE_TYPESCRIPT_MODULE)" \
+		PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
 		-s tools/official_client_capture/tests -p 'test_*.py'
 
 # FW-D 通用受管工具链只使用当前 Codex 不可变制品和合成 Persona 数据，

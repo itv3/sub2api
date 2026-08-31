@@ -1,0 +1,67 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-arm64-typescript-dependency-source-transition/v1",
+  "issued_at_utc": "2026-08-31T05:40:05Z",
+  "base_commit": "4263d01750484a28d4771ea982de8227a98a40a9",
+  "scope": "codex-cli-0.151-arm64-typescript-dependency",
+  "predecessor": {
+    "kind": "codex_cli_0151_formal_recovery_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+    "sha256": "91cea62abaf302dde4acdcd0f70010195a8f641eb06d0b5d5adf1e3bf5923f0a"
+  },
+  "transitions": [
+    {
+      "path": "Makefile",
+      "from_sha256": "1bcb83eed48dbe0a5198f98e8fc3d59cf16d96bbb8292abe44cb540783f24462",
+      "to_sha256": "b9a18cf90b229f91f49a1d78d51e4b0ff5de345ad42f1b6528d907789aec83f4",
+      "reason": "允许 P0 从绝对路径读取固定摘要的只读 TypeScript 解析器。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_formal_recovery_source_transition_test.go",
+      "from_sha256": "1ce77dc959b7621b690db2bb616d22fa60986a203b2ade581484481acb71f866",
+      "to_sha256": "bd2b5c66f7e5121590520f3e4d91191de9710514572f4c380971bed4389b0581",
+      "reason": "让 officialegress 的 Formal 恢复 transition 承接 ARM64 依赖后继。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_formal_recovery_source_transition_test.go",
+      "from_sha256": "5a8bb698c3f9d8de3fc91da910666a73ad60c19bf571b750958224fc7a780b1e",
+      "to_sha256": "1d0e468e72dcc78c36e9c7a38f20d69182ba96aac16d9e252996cdd2c9d7e645",
+      "reason": "让 service 的 Formal 恢复 transition 独立承接 ARM64 依赖后继。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "c2e3c1d420e2890bd0cf49529304dadb402b75019bda66fafb78487d781661b3",
+      "to_sha256": "58a94e545deaae489c1b7fc562c9b3eff50f53783ab7461e98d23bb838c30890",
+      "reason": "记录 ARM64 干净树复用仓库外锁定解析器的唯一合法入口。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_arm64_typescript_dependency_source_transition_test.go",
+      "sha256": "2bd5b745ce91290050670e0d29896b7d9be70d0ada509f0ff0997059efd4941e",
+      "reason": "在 officialegress 包冻结并变异测试 ARM64 依赖 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_arm64_typescript_dependency_source_transition_test.go",
+      "sha256": "9ec557844b6404ec71f6d603087010182b07d24b0022b2df5a5c74e106c63c8c",
+      "reason": "在 service 包独立重放同一 ARM64 依赖 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-arm64-typescript-dependency/plan.json",
+      "sha256": "000c7d4afd236b1ba4cc60c24a16eaf3d121ae48a4966a71f0e9b499a3675271",
+      "reason": "冻结依赖、预算、网络不变量和零安装边界。"
+    }
+  ],
+  "verification": [
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(Arm64TypescriptDependency|FormalRecovery)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_arm64_typescript_dependency",
+  "identity_sha256": "842edf7c11b840f875cce5f30dad0d927c940c0ba4d5f026ecafca318ea13dcb"
+}
