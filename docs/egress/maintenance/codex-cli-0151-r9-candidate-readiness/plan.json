@@ -1,0 +1,43 @@
+{
+  "schema_version": "codex-cli-0151-r9-candidate-readiness-plan/v1",
+  "change_set": "codex_cli_0151_r9_candidate_readiness",
+  "purpose": "闭合 r9 后未登记的源码变化，并修正凭据前检与 ARM64 连续性误报",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "43649e951c64f19fd349f43965996b1b7ef73f69",
+    "tree": "cd9a2558ce998af418a47519fe8ff2712891a97c",
+    "failed_gate": "make check-egress-spec",
+    "failed_elapsed_seconds": 175.41,
+    "root_causes": [
+      "historical rehearsal successor 后存在四个未登记提交",
+      "0.145.0 的两个组合测试 fixture 被误删",
+      "候选辅助 Job 未在 reservation 前验证管理 JWT",
+      "连续性身份错误绑定 Docker 临时 endpoint 与接口名"
+    ]
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T08:39:46Z",
+    "deadline_at_utc": "2026-08-31T09:24:46Z",
+    "wall_clock_minutes": 45,
+    "same_root_cause_retry_limit": 2
+  },
+  "fix_contract": {
+    "predecessor": "codex-cli-0151-historical-rehearsal-successor-source-transition.json",
+    "restore_0145_fixtures": true,
+    "candidate_admin_jwt_preflight": true,
+    "continuity_binds_stable_network_identity_only": true,
+    "production_validation_relaxed": false,
+    "live_request_limit": 0
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4": "172.25.0.3",
+    "capture_cli_ipv4": "172.30.0.10",
+    "network_changes_allowed": false
+  },
+  "required_outputs": [
+    "officialegress 与 service 独立重放后继 transition",
+    "0.145.0、0.149.1 和 0.151.0 组合 fixture 同时保留",
+    "ARM64 capture-tools 与 check-egress-spec 全量通过"
+  ]
+}

@@ -113,7 +113,13 @@ func validateCodex0151HistoricalRehearsalSuccessorSourceTransition(receipt codex
 			return errors.New("Codex CLI 0.151 历史 rehearsal successor transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151R9CandidateReadinessSourceTransitionSupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 历史 rehearsal successor transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -125,7 +131,13 @@ func validateCodex0151HistoricalRehearsalSuccessorSourceTransition(receipt codex
 			return errors.New("Codex CLI 0.151 历史 rehearsal successor addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151R9CandidateReadinessSourceTransitionSupersedes(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 历史 rehearsal successor addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -144,11 +156,21 @@ func codex0151HistoricalRehearsalSuccessorSourceTransitionSupersedes(path, prior
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.FromSHA256 == priorDigest && transition.ToSHA256 == currentDigest {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			(transition.ToSHA256 == currentDigest ||
+				codex0151R9CandidateReadinessSourceTransitionSupersedes(
+					path,
+					transition.ToSHA256,
+					currentDigest,
+				)) {
 			return true
 		}
 	}
-	return false
+	return codex0151R9CandidateReadinessSourceTransitionSupersedes(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151HistoricalRehearsalSuccessorSourceTransitionIsFrozen(t *testing.T) {

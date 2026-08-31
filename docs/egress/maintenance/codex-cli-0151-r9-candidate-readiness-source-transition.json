@@ -1,0 +1,108 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-r9-candidate-readiness-source-transition/v1",
+  "issued_at_utc": "2026-08-31T08:39:46Z",
+  "base_commit": "43649e951c64f19fd349f43965996b1b7ef73f69",
+  "scope": "codex-cli-0.151-r9-candidate-readiness",
+  "predecessor": {
+    "kind": "codex_cli_0151_historical_rehearsal_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-historical-rehearsal-successor-source-transition.json",
+    "sha256": "382ad7c745fd852e87858a0b41bc602d87e91aa9fa56758a0a349fdbfde2797e"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/catalogdata/runtime/release-catalog.json",
+      "from_sha256": "55aef2c5b6c11ff646f8a276cf176d243cb813243a4bc57687de82b54f1ddb82",
+      "to_sha256": "60fb53ea2c3ac5227866d71f91bac466482d6403626c9114941e040dbdb16773",
+      "reason": "登记 r9 分类来源和候选 Release 图。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_historical_rehearsal_successor_source_transition_test.go",
+      "from_sha256": "3e5f245882082035c42d39702f79b320b12df37c2125223270cbb5e4d8af58ac",
+      "to_sha256": "f47b07100c7202b9cdeef3b0c43d5cf6c9e0638f9865d944e984394e10f4cd14",
+      "reason": "让 officialegress 的历史 rehearsal successor 承接 r9 候选就绪后继。"
+    },
+    {
+      "path": "backend/internal/officialegress/releasecontract/testdata/release-graph.json",
+      "from_sha256": "14b8b4a1e52e69aaf3625cff5a89b81ce2f3cd4b39b8f1416911b72f00a38815",
+      "to_sha256": "bce35dba2d095f74ee4357bf93b0f356f5b785aeab23dd725a3d4df9f8506dad",
+      "reason": "更新组合测试使用的 r9 候选 Release 图，同时保留旧版本画像。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_historical_rehearsal_successor_source_transition_test.go",
+      "from_sha256": "bb1c2960602e3dc4f4302c0d29ecffc5bc6c03f99abe718f516574c6209a6d82",
+      "to_sha256": "2544a4bea24dff232f337e9c54df0913e437dc2626a0590a9d36a0aa89378a57",
+      "reason": "让 service 的历史 rehearsal successor 独立承接 r9 候选就绪后继。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "6205099f4d6a50e8bac392ec09d9368d43d82e7b8f0ea39773d04947c7c013cf",
+      "to_sha256": "2db10a0bda73449cf5122a62c7c7e7da86d0cb2ad7dad21df6401c7c88472001",
+      "reason": "补齐 Job 证据根、ARM64 Go 环境、管理 JWT 前检和 source transition 时点。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "4f411eb90e141a2706ac2ad69e5b145a44f3ebb300b0597947ad18dbe232fa8f",
+      "to_sha256": "40688af442fe2da95d4a81f7a0ac7b18ea6b3a3932f9d122c8e2b60fe9a01b81",
+      "reason": "在 reservation 和首个请求前验证辅助 Job 所需的管理 JWT。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py",
+      "from_sha256": "97b96fcd9e341dc7ecff4c0359b12723dae747ec2f4bc9c0138a5bf8f6769d15",
+      "to_sha256": "7633ad1f101a8320126fb6c76417362bf8571faed9f14e5dcf20ec616a593048",
+      "reason": "连续性身份保留镜像、网络 ID、固定 IP、网关和公网出口，排除 Docker 临时标识。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.schema.json",
+      "from_sha256": "b0cb9dbe48e38e241c365d9745d21756dab4b701ccc2716e20c8bfbe4864aa6d",
+      "to_sha256": "5ea5f530982f407a234fc840199060402bf76a1c385fac371a73c81998314a14",
+      "reason": "冻结 ARM64 环境收据 producer v2。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_arm64_environment_receipt.py",
+      "from_sha256": "bf9a0d2c3187fe254be65665a21fe91205c38ab3a9cd1993b75f7aa80ca3bdc9",
+      "to_sha256": "85702d076edb93cd6e9230343f6b7a585a24529bcf9ff0926f3eb0edb1560d61",
+      "reason": "覆盖 Docker restart 临时身份变化和稳定网络身份漂移边界。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/catalogdata/runtime/release-graphs/bce35dba2d095f74ee4357bf93b0f356f5b785aeab23dd725a3d4df9f8506dad.json",
+      "sha256": "bce35dba2d095f74ee4357bf93b0f356f5b785aeab23dd725a3d4df9f8506dad",
+      "reason": "追加 r9 候选 Release 图，不覆盖历史 Release。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_r9_candidate_readiness_source_transition_test.go",
+      "sha256": "aa6ba46b26991aeb81313a4a287b31557463188c9f8806a8cb0963404b797df1",
+      "reason": "在 officialegress 包冻结并变异测试 r9 候选就绪 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_r9_candidate_readiness_source_transition_test.go",
+      "sha256": "0e28360690fbdefb3d8247e6e6a6e4dce3227842b81961fc662ea0fcfdb690f5",
+      "reason": "在 service 包独立重放同一 r9 候选就绪 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-r9-candidate-readiness/plan.json",
+      "sha256": "763c34c697878f3aa534cf58d2e9674c512ed6bcf95b99ac47f77b80d4ec9ae6",
+      "reason": "冻结失败根因、修复预算和网络不变量。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_candidate_admin_credential_preflight.py",
+      "sha256": "fb5375ac5decf5077b4997a93a5582b1b4798768980beb6c4db663ae86e4ad17",
+      "reason": "覆盖管理 JWT 缺失、权限、格式、有效期和成功路径。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_candidate_admin_credential_preflight tools.official_client_capture.tests.test_codex_upgrade_arm64_environment_receipt",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(R9CandidateReadiness|HistoricalRehearsalSuccessor)' -count=1",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_r9_candidate_readiness",
+  "identity_sha256": "67d7cb5a4c67754432452c44f8a38d95b5fb5c2bf0ede48bc87cd0fdc2552d28"
+}

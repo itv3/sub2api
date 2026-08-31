@@ -1635,6 +1635,9 @@ Campaign 外的待审核 `profile.json`。随后审核：
 
 ### 4.3.1 画像暂存
 
+源码、测试、文档或 Catalog 一旦变化，必须在当次提交生成后继 source transition 并重跑
+`check-egress-spec`；不得累积多个未登记提交后再进入 ARM64 全门禁。
+
 ~~~bash
 export PATH="/root/oauth-capture/state/local/go1.27.0/bin:$PATH"
 export GOPROXY=off
