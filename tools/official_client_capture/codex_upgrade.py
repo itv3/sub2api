@@ -5144,6 +5144,7 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                 "predecessor_package_digest": official["package_digest"],
                 "surface": surface_binding,
             },
+            _successor_manifest=successor_manifest,
         )
         if not reclassification_successor:
             imported_classification = {
@@ -5161,7 +5162,12 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                 "official_diff_sha256",
             ):
                 imported_classification[field] = classification[field]
-            save_stage_result(staging_dir, "classify", imported_classification)
+            save_stage_result(
+                staging_dir,
+                "classify",
+                imported_classification,
+                _successor_manifest=successor_manifest,
+            )
 
         if successor_dir.exists():
             raise ConfigurationError("后继 Campaign 目录在发布前已被占用。")
@@ -5542,10 +5548,30 @@ def save_stage_result(
     stage: str,
     payload: dict[str, Any],
     candidate_id: str | None = None,
+    *,
+    _successor_manifest: dict[str, Any] | None = None,
 ) -> Path:
     """封存阶段结果；同一阶段和候选编号永不覆盖。"""
 
-    manifest = _require_formal_campaign(campaign_dir)
+    if _successor_manifest is None:
+        manifest = _require_formal_campaign(campaign_dir)
+    else:
+        # successor 在未发布暂存区内需要先同时写入 official/classify 导入结果；
+        # 此时历史场景的当前批准绑定尚未形成完整阶段闭环，不能提前走普通重放。
+        stored_manifest = _read_json(
+            campaign_dir / "campaign.json",
+            "后继暂存 Campaign manifest",
+        )
+        if (
+            stored_manifest != _successor_manifest
+            or not isinstance(_successor_manifest.get("predecessor"), dict)
+            or ".successor-" not in campaign_dir.name
+        ):
+            raise ConfigurationError("后继暂存 Campaign manifest 非法。")
+        manifest = _require_formal_campaign(
+            campaign_dir,
+            _successor_manifest,
+        )
     canonical, path = _stage_path(campaign_dir, stage, candidate_id)
     _reject_symlink_components(path.parent, campaign_dir, f"{canonical} 阶段目录")
     if path.exists():

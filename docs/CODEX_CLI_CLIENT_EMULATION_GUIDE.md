@@ -1343,6 +1343,7 @@ inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 
 `successor` 还须成组提供 `--predecessor-stop-ledger-dir/--predecessor-stop-receipt`、
 `--recovery-timing-ledger-dir/--recovery-timing-receipt` 与
 `--recovery-arm64-environment-root/--recovery-arm64-environment-receipt`；工具会验证新演练来自同一 preflight。
+新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`；不得再追加同阶段 `stage_started`。
 
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；

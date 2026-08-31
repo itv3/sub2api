@@ -2890,8 +2890,44 @@ class CodexUpgradeTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            predecessor_dir, predecessor_manifest, _ = (
-                self._create_classified_campaign(root / "predecessor")
+            predecessor_root = root / "predecessor"
+            # 模拟 Formal 创建后规格章节发生合法维护、批准场景已按当前章节重做；
+            # successor 必须在导入阶段闭环形成前仍能验证当前 rehearsal。
+            with mock.patch.object(
+                codex_upgrade,
+                "source_spec_section_sha256",
+                return_value="0" * 64,
+            ):
+                predecessor_dir, predecessor_manifest = self._create_campaign(
+                    predecessor_root
+                )
+                self._seal_official_stage(
+                    predecessor_root,
+                    predecessor_dir,
+                    predecessor_manifest,
+                )
+            target, migration, scenario, profile, assertion_profile, _ = (
+                self._write_classification_manifests(predecessor_root)
+            )
+            return_code, _, stderr = self._approve_classification(
+                predecessor_dir,
+                (target, migration, scenario, profile, assertion_profile),
+            )
+            self.assertEqual(return_code, 0, stderr)
+            frozen_scenario = json.loads(
+                (
+                    predecessor_dir
+                    / predecessor_manifest["inputs"][
+                        "target_discovery_scenarios"
+                    ]["path"]
+                ).read_text(encoding="utf-8")
+            )
+            approved_scenario = json.loads(
+                scenario.read_text(encoding="utf-8")
+            )
+            self.assertNotEqual(
+                frozen_scenario["source_spec"]["sha256"],
+                approved_scenario["source_spec"]["sha256"],
             )
             predecessor_timing = predecessor_manifest["control_receipts"][
                 "upgrade_timing"

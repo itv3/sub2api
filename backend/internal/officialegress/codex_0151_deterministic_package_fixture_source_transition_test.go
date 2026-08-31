@@ -110,7 +110,13 @@ func validateCodex0151DeterministicPackageFixtureSourceTransition(receipt codex0
 			return errors.New("Codex CLI 0.151 确定性包夹具 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151HistoricalRehearsalSuccessorSourceTransitionSupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 确定性包夹具 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -122,7 +128,13 @@ func validateCodex0151DeterministicPackageFixtureSourceTransition(receipt codex0
 			return errors.New("Codex CLI 0.151 确定性包夹具 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151HistoricalRehearsalSuccessorSourceTransitionSupersedes(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 确定性包夹具 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -141,11 +153,21 @@ func codex0151DeterministicPackageFixtureSourceTransitionSupersedes(path, priorD
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.FromSHA256 == priorDigest && transition.ToSHA256 == currentDigest {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			(transition.ToSHA256 == currentDigest ||
+				codex0151HistoricalRehearsalSuccessorSourceTransitionSupersedes(
+					path,
+					transition.ToSHA256,
+					currentDigest,
+				)) {
 			return true
 		}
 	}
-	return false
+	return codex0151HistoricalRehearsalSuccessorSourceTransitionSupersedes(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151DeterministicPackageFixtureSourceTransitionIsFrozen(t *testing.T) {

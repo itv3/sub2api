@@ -1,0 +1,37 @@
+{
+  "schema_version": "codex-cli-0151-historical-rehearsal-successor-plan/v1",
+  "change_set": "codex_cli_0151_historical_rehearsal_successor",
+  "purpose": "让历史 Formal 在导入阶段闭环形成前验证当前批准场景的恢复 rehearsal",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "c79fa7e4ba033f760f06ce7ab9136d2aa94f40b8",
+    "tree": "711936886f84dc84720bc97133416453641fbc22",
+    "failed_operation": "successor r8 to r9",
+    "failed_elapsed_seconds": 13.99,
+    "frozen_target_scenario_sha256": "3d0f0000ab06e90630b3066059d80406ddb99d185246828009c4e0f7fc222ce8",
+    "approved_target_scenario_sha256": "d8ac8c4084aee994ba4ff8efc0bdb3d80082a58715d60f110af6fb110bda8b3b"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T06:54:05Z",
+    "deadline_at_utc": "2026-08-31T07:24:05Z",
+    "wall_clock_minutes": 30,
+    "same_root_cause_retry_limit": 2
+  },
+  "fix_contract": {
+    "scope": "unpublished_successor_staging_only",
+    "final_normal_replay_required": true,
+    "production_validation_relaxed": false,
+    "live_request_limit": 0
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4": "172.25.0.3",
+    "capture_cli_ipv4": "172.30.0.10",
+    "network_changes_allowed": false
+  },
+  "required_outputs": [
+    "successor 暂存区只能使用逐字一致的在盘 manifest",
+    "official 和 classify 导入结果形成闭环后执行普通重放",
+    "r9 同时绑定旧停线与新恢复控制链"
+  ]
+}
