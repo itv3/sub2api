@@ -1570,6 +1570,10 @@ Formal Campaign 冻结的 target 执行契约逐摘要一致；不一致时必�
 `source` discovery 只有源码树和指纹完全一致时才可继承；`dynamic` discovery 绑定本轮真实
 证据，必须重新分类。摘要相同不能替代源码、wire、场景覆盖和跨清单完整性证明。
 
+`rule-migration/v1` 中 `entries[].classification` 表示规则迁移结论；
+`discovery_classifications[].classification` 只表示本轮扫描形态的终态处置。后者标为 `change`
+不等于对应规则必然变化，规则结论仍以 `entries` 为准；不得从 discovery 数量生成新规则。
+
 ### 4.2.2 画像与五份清单
 
 在 `official_sealed` 状态执行 `prepare-profile`，把官方取证形成的完整 Snapshot 规范化为
