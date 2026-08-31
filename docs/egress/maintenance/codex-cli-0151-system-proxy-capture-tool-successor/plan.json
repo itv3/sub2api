@@ -1,0 +1,52 @@
+{
+  "schema_version": "codex-cli-0151-system-proxy-capture-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_system_proxy_capture_tool_successor",
+  "purpose": "修复 0.151 模型目录 MITM 补采未显式启用系统代理路由且失败日志随临时目录删除的问题",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "e3cf0961b0f35f258a2a9cf8e57889240477388a",
+    "tree": "bd711ea2c797f17e2dfa7e13a179d2812e42f172",
+    "failed_campaign": "c0151-formal-20260831t0048z-r7",
+    "failed_attempt": "20260831T005018Z-c2cddeda8212dc69"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T01:45:00Z",
+    "deadline_at_utc": "2026-08-31T03:15:00Z",
+    "wall_clock_minutes": 90,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留失败 Campaign、attempt、环境恢复收据和全部历史 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "0.151 MITM 模型目录补采显式启用 respect_system_proxy",
+    "relay 和默认路径保持官方默认代理条件",
+    "临时重试日志清理前回传到 attempt 日志",
+    "Framework 与 Codex P0 增加代理路由兼容性门禁",
+    "ARM64 固定网络下的全量离线回归、独立 transition 重放和新 P0"
+  ]
+}

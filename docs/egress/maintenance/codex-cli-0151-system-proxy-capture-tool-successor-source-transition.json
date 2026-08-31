@@ -1,0 +1,85 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-system-proxy-capture-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-31T01:48:13Z",
+  "base_commit": "e3cf0961b0f35f258a2a9cf8e57889240477388a",
+  "scope": "codex-cli-0.151-system-proxy-capture-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_evidence_label_preflight_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor-source-transition.json",
+    "sha256": "debd3ef1ba753d548190bdd0e8f62975c8f047a9eb0c4118ab42a6877cfb787e"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "b001f4f22926765cd2ca918686f23801d0c44da677836c2180823abbc83fc11c",
+      "to_sha256": "23b8826f9a4222a263b9f388d20ec85b84284b9adfd71a9722cf5f4fde969e68",
+      "reason": "让 officialegress 后继链承接系统代理取证工具摘要，并独立重放新 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "b3888319a829bdbf02953753dfb42eba8af63387af565fa581a6480a10445d11",
+      "to_sha256": "6a569031e968f839c3bc5f948d443c001b280b0107324d3fb371987673fb75e2",
+      "reason": "让 service 后继链独立承接同一系统代理取证工具摘要。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "fa0f44f5509e2d31c350f3b6ef893bafaadfaad35a55647c5e608161cc07b2ba",
+      "to_sha256": "5025a988e5dee9dcb6fc653c238c3c3803f0f2fe6588d5e243d7b83e5f3e6f77",
+      "reason": "要求 P0 验证模型目录代理路由，并在临时清理前回传失败原因。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "from_sha256": "6e9db8b6600c2b108bb7aef7d8b1c408c20c2448f26e2e45af4df7b6dc81f05a",
+      "to_sha256": "f836ec63336f2f4c178a5617e6208e22a6573d7416938d6bb389e31856cc4eb3",
+      "reason": "补充代理取证兼容性和失败日志持久化的公共执行约束。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
+      "from_sha256": "6ff00b0cc9d3388ce7b67733312a200b3a270eab98e5950d2f210618a2e928cb",
+      "to_sha256": "a431a562e347e0d7faf7106456e171facdab09edeb4367ca91630bdc30cc30f1",
+      "reason": "让 0.151 official-core 的 MITM 模型目录补采显式启用系统代理并回传失败日志。"
+    },
+    {
+      "path": "tools/official_client_capture/drive_codex_model_catalog.py",
+      "from_sha256": "0d7dc732143fcc7908c2f6c60cbd0228454a820a4663900d926a7755f83446ea",
+      "to_sha256": "d997c7f0f3a9a2abd7867b1216c1a5058c22ba51c15bb82a6ca4c619c2fcd7f9",
+      "reason": "仅在显式 MITM 模式为 0.151 app-server 启用 respect_system_proxy。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_model_catalog_prewarm.py",
+      "from_sha256": "55ef9c9aff721356d687b57e551fe2b9cf6c5978596decca62e2afee0f9e2610",
+      "to_sha256": "111124b4e41ab5c79d3637bb977eab7630b0d3653d057d7562345173ebef9abd",
+      "reason": "覆盖 0.151 显式系统代理、relay 默认不变、失败日志回传和非法组合失败关闭。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_system_proxy_capture_tool_successor_test.go",
+      "sha256": "831d49a2917282857e2e075771ad7e1d39f97edd017b27a5824e831855086bdb",
+      "reason": "在 officialegress 包冻结并变异测试系统代理取证工具后继。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_system_proxy_capture_tool_successor_test.go",
+      "sha256": "b8def6b7002949dc50eb6b4c072b12406d5a57ceba119e01a66d4c11f2146acd",
+      "reason": "在 service 包独立重放同一系统代理取证工具后继。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-system-proxy-capture-tool-successor/plan.json",
+      "sha256": "2ec654382e5bc152844e3321bad974929f4c144568ed27dcb240e1854b04fd79",
+      "reason": "冻结零 live 请求预算、ARM64 固定网络和失败 Campaign 只读边界。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_system_proxy_capture_tool_successor",
+  "identity_sha256": "fc4980d2b63aedcfc2918ed928f72eac2bf070e0fbe233b42e0cdd073a8c4964"
+}

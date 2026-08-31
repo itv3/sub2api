@@ -39,8 +39,14 @@ class ModelCatalogPrewarmError(RuntimeError):
 def build_online_model_catalog_command(
     codex_bin: str,
     codex_version: str,
+    *,
+    respect_system_proxy: bool = False,
 ) -> list[str]:
-    """构造保留内置 OpenAI provider 的最小 app-server 命令。"""
+    """构造保留内置 OpenAI provider 的最小 app-server 命令。
+
+    0.151 的模型目录客户端默认不读取系统代理。只有 MITM 补采显式声明时才启用
+    ``respect_system_proxy``；字节中继和默认路径继续保持官方默认条件。
+    """
 
     if not re.fullmatch(r"\d+\.\d+\.\d+", codex_version):
         raise ModelCatalogPrewarmError("Codex 版本必须是三段数字。")
@@ -62,6 +68,8 @@ def build_online_model_catalog_command(
     command = [codex_bin, "app-server", "--strict-config", "--stdio"]
     for value in values:
         command.extend(["-c", value])
+    if respect_system_proxy:
+        command.extend(["--enable", "respect_system_proxy"])
     return command
 
 
@@ -229,6 +237,7 @@ def run_prewarm(
     output: Path,
     timeout: int,
     mitm_models_http: Path | None = None,
+    respect_system_proxy: bool = False,
 ) -> dict[str, Any]:
     """保持启动刷新 worker 存活，并与原始 HTTP 200 交叉核验。"""
 
@@ -236,13 +245,21 @@ def run_prewarm(
         raise ModelCatalogPrewarmError("Codex 版本必须是三段数字。")
     if not model.strip() or timeout <= 0:
         raise ModelCatalogPrewarmError("模型或超时参数非法。")
+    if respect_system_proxy and mitm_models_http is None:
+        raise ModelCatalogPrewarmError(
+            "系统代理路由只允许用于显式 MITM 模型目录补采。"
+        )
 
     environment = dict(os.environ)
     environment.pop("OPENAI_API_KEY", None)
     environment.pop("SUB2API_API_KEY", None)
     deadline = time.monotonic() + timeout
     client = AppServerClient(
-        build_online_model_catalog_command(codex_bin, codex_version),
+        build_online_model_catalog_command(
+            codex_bin,
+            codex_version,
+            respect_system_proxy=respect_system_proxy,
+        ),
         environment,
     )
     try:
@@ -302,6 +319,11 @@ def main() -> None:
         type=Path,
         help="等待该 MITM JSONL 出现目标模型 HTTP 200 后再关闭 app-server。",
     )
+    parser.add_argument(
+        "--respect-system-proxy",
+        action="store_true",
+        help="仅在 MITM 补采时启用 0.151 的系统代理路由。",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=120)
     arguments = parser.parse_args()
@@ -314,6 +336,7 @@ def main() -> None:
         output=arguments.output,
         timeout=arguments.timeout,
         mitm_models_http=arguments.mitm_models_http,
+        respect_system_proxy=arguments.respect_system_proxy,
     )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
 

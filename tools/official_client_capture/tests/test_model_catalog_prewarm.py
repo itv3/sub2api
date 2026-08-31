@@ -80,12 +80,48 @@ class ModelCatalogPrewarmTest(unittest.TestCase):
         self.assertNotIn('>>"$output_dir/model-prewarm-driver.log"', source)
         self.assertIn("timeout 30 python3", source)
         self.assertIn("--timeout 20", source)
+        self.assertNotIn("--respect-system-proxy", source)
         rendered = source.format(
             capture_root="/capture",
             campaign_id="c1491-r14-contract",
             repo_root="/repo",
             capture_codex_bin="/opt/codex-0.149.1/bin/codex",
             target_version="0.149.1",
+            model="gpt-5.5",
+        )
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=rendered,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_0151_MITM_补采显式启用系统代理并回传失败原因(self) -> None:
+        """0.151 模型目录路由必须显式过代理，临时日志删除前须写入 attempt 日志。"""
+
+        scenario_path = (
+            Path(__file__).parents[1] / "codex_upgrade_scenarios_0_151_0.json"
+        )
+        payload = json.loads(scenario_path.read_text(encoding="utf-8"))
+        job = next(
+            item for item in payload["capture_jobs"] if item["id"] == "official-core"
+        )
+        source = job["steps"][1]["argv"][5]
+        self.assertIn("--respect-system-proxy", source)
+        self.assertIn('if test "$driver_status" -ne 0; then', source)
+        self.assertIn('tail -n 40 "$driver_log"', source)
+        failure_index = source.index('if test "$driver_status" -ne 0; then')
+        self.assertLess(
+            source.index('tail -n 40 "$driver_log"', failure_index),
+            source.index("sleep 2", failure_index),
+        )
+        rendered = source.format(
+            capture_root="/capture",
+            campaign_id="c0151-system-proxy-contract",
+            capture_codex_bin="/opt/codex-0.151.0/bin/codex",
+            target_version="0.151.0",
             model="gpt-5.5",
         )
         syntax = subprocess.run(
@@ -174,7 +210,17 @@ class ModelCatalogPrewarmTest(unittest.TestCase):
         )
         self.assertIn("features.plugins=false", command)
         self.assertIn("features.apps=false", command)
+        self.assertNotIn("respect_system_proxy", command)
         self.assertNotIn("turn/start", command)
+
+    def test_MITM_预热命令可显式启用系统代理路由(self) -> None:
+        command = build_online_model_catalog_command(
+            "/opt/codex-0.151.0/bin/codex",
+            "0.151.0",
+            respect_system_proxy=True,
+        )
+        self.assertIn("--enable", command)
+        self.assertIn("respect_system_proxy", command)
 
     def test_驱动只执行_initialize_且不创建_thread_或_turn(self) -> None:
         client = mock.Mock()
@@ -426,6 +472,23 @@ class ModelCatalogPrewarmTest(unittest.TestCase):
                     )
             self.assertFalse(output.exists())
             client.close.assert_called_once_with()
+
+    def test_系统代理路由不能用于非_MITM_预热(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relay = root / "relay"
+            relay.mkdir()
+            with self.assertRaisesRegex(ModelCatalogPrewarmError, "只允许用于显式 MITM"):
+                run_prewarm(
+                    codex_bin="/opt/codex-0.151.0/bin/codex",
+                    codex_version="0.151.0",
+                    model="gpt-5.5",
+                    expected_lite=False,
+                    relay_dir=relay,
+                    output=root / "model-catalog-prewarm.json",
+                    timeout=1,
+                    respect_system_proxy=True,
+                )
 
     def test_等待_relay_响应超时后失败关闭(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

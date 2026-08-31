@@ -1332,6 +1332,8 @@ inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 
 并创建新的 preflight 与 Formal Campaign。禁止把失败阶段记成 `stage_completed`，也禁止用旧 Campaign
 的冻结 job 定义重跑已经变化的产出工具。
 
+模型目录补采的临时重试日志必须在清理前回传到 attempt 日志；只剩返回码而无原始错误视为工具阻断。
+
 原台账的 producer 绝对路径必须保持不变；工具摘要变化只接受维护 transition 自摘要、前序文件摘要及
 该工具 `from_sha256 → to_sha256` 精确边全部可重放的已登记后继。未知摘要、路径替换或不连续边一律失败关闭，
 不得覆盖 `ledger.json` 或伪造 checkpoint 来承接新工具。历史 checkpoint 保留生成时的 producer 原字节，
@@ -1441,7 +1443,7 @@ DMIT 归档只读复用，不登录或修改 DMIT 主机。ARM64 固定出站边
 |---|---|
 | 端口与恢复 | 实际调用容器可访问发布端口；hosts、CA、模型映射和 relay 按 before／after 完整恢复 |
 | 隔离 | 每个 attempt 使用独立、权限为 `0700` 的 `HOME／CODEX_HOME`，不读取其他账号或前序缓存 |
-| 模型目录 | Main／Lite 仅以 initialize-only 各请求一次；禁止 `thread/start`、turn、Responses 或 WS 预热 |
+| 模型目录 | Main／Lite 仅以 initialize-only 各请求一次；禁止 `thread/start`、turn、Responses 或 WS 预热；MITM 补采须显式验证目标版本的系统代理路由开关 |
 | 出站与 TLS | DNS 冻结精确 IP 并在 CLI 计时前预连接，不得静默回退其他地址 |
 | 运行坐标 | reservation 前确认 ID 不超过 128 字符，失败证据完成归档和收据重定位后才补跑 |
 | 同源环境 | 工具、候选、finalizer、目标架构依赖摘要一致，完整环境烟测稳定通过 |
