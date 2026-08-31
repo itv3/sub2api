@@ -626,6 +626,8 @@ ready_for_operator_release
   已有官方事实则由客户端受管 `successor` 绑定当前执行合同和新演练收据后继续。
 - 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复 P0 使用新 Ledger，`successor` 必须同时
   绑定旧停线 checkpoint、新计时／ARM64 收据和新演练。新 Ledger 不得删除或改写旧耗时与 live 请求总数。
+- 证据 producer 换版时，新事实只能由新版本生成；已登记的旧摘要必须保留原算法只读重放，禁止用新算法
+  改写旧结论，未登记旧摘要继续失败关闭。
 - 任一阶段失败或摘要漂移时保留旧制品和收据，按状态机回到最近合法身份；不得覆盖、跳过门禁或手工清除
   阻断。升级完成状态只按 §5.3.1 的两个公式判定。
 - 同一根因连续失败两次即按 §5.3.5 停线。独立工具修复、离线回归和新的干净 P0 全部通过前，禁止
@@ -708,6 +710,8 @@ Token issuer、invocation、状态命名空间和连接身份必须独立。
    原始证据、Approval／Acceptance、promotion／activation／rollback 收据及其重放夹具继续只读保留。
 5. 生成不可覆盖的 RemovalReceipt 和机器退休收据并完成公共门禁；需要部署时继续 §5.6，不得以退休
    收据代替生产激活事实。
+
+“删除旧版本”只指退出运行 Catalog 和生产投影；只读历史夹具不构成版本恢复，也不得重新进入 Runtime Catalog。
 
 只要仍有 `retained_legacy`、未知消费者、未处置出站或回滚依赖，就不得签发 RemovalReceipt。服务 API
 Key、其他 Persona、业务认证、平滑升级或已演练回滚的代码不能因名称相似而随官方 OAuth 兼容层删除。

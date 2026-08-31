@@ -1,0 +1,39 @@
+{
+  "schema_version": "codex-cli-0151-arm64-environment-producer-replay-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_arm64_environment_producer_replay_tool_successor",
+  "purpose": "让已登记的 ARM64 v1 环境收据按原算法只读重放，同时保持新事实只能由 v2 生成",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "102d91678cd2e003bceca115ccfd968cad87721a",
+    "tree": "6e80591d78c43d50d57ac270a82f80e1370c94e1",
+    "failed_operation": "replay r9 ARM64 P0 receipt while creating r10 successor",
+    "root_cause": "ARM64 环境收据 producer 升到 v2 后未保留已登记 v1 摘要对应的旧连续性算法"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T09:35:22Z",
+    "deadline_at_utc": "2026-08-31T10:20:22Z",
+    "wall_clock_minutes": 45,
+    "same_root_cause_retry_limit": 2
+  },
+  "fix_contract": {
+    "new_facts_current_producer_only": true,
+    "registered_v1_read_only_replay": true,
+    "legacy_algorithm_preserved": true,
+    "unknown_producer_fails_closed": true,
+    "retired_0145_runtime_profile_restored": false,
+    "production_validation_relaxed": false,
+    "live_request_limit": 0
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4": "172.25.0.3",
+    "capture_cli_ipv4": "172.30.0.10",
+    "network_changes_allowed": false
+  },
+  "required_outputs": [
+    "r9 v1 P0 收据按 v1 原算法逐字重放",
+    "新 facts 和 receipt 继续只能由 v2 生成",
+    "0.145.0 运行画像保持退役；只读历史测试夹具不得进入 Runtime Catalog",
+    "ARM64 capture-tools 与 check-egress-spec 全量通过"
+  ]
+}

@@ -24,6 +24,10 @@ FACTS_SCHEMA = "codex-upgrade-arm64-environment-facts/v1"
 RECEIPT_SCHEMA = "codex-upgrade-arm64-environment-receipt/v1"
 PRODUCER_SCHEMA = "codex-upgrade-arm64-environment-producer/v1"
 PRODUCER_VERSION = "2"
+# v1 只用于重放已封存历史收据；新 facts 和新收据仍只能由 v2 生成。
+LEGACY_REPLAY_PRODUCERS = {
+    "1": "97b96fcd9e341dc7ecff4c0359b12723dae747ec2f4bc9c0138a5bf8f6769d15",
+}
 PUBLIC_EGRESS_URL = "https://api.ipify.org"
 EXPECTED_PUBLIC_EGRESS = "179.255.100.158"
 ROOT_MAX_USED_PERCENT = 69
@@ -103,6 +107,43 @@ def _expect(value: Any, fields: set[str], label: str) -> dict[str, Any]:
             f"多余={sorted(actual - fields)}"
         )
     return value
+
+
+def _current_producer() -> dict[str, str]:
+    producer = Path(__file__).resolve()
+    return {
+        "schema_version": PRODUCER_SCHEMA,
+        "tool": str(producer),
+        "tool_sha256": _sha256_file(producer),
+        "version": PRODUCER_VERSION,
+    }
+
+
+def _validated_producer_version(
+    value: Any,
+    *,
+    allow_legacy_replay: bool,
+) -> str:
+    """验证当前 producer，或只读承接已登记的历史 producer。"""
+
+    producer = _expect(
+        value,
+        {"schema_version", "tool", "tool_sha256", "version"},
+        "producer",
+    )
+    current = _current_producer()
+    if producer == current:
+        return PRODUCER_VERSION
+    version = producer.get("version")
+    if (
+        allow_legacy_replay
+        and producer.get("schema_version") == PRODUCER_SCHEMA
+        and producer.get("tool") == current["tool"]
+        and isinstance(version, str)
+        and LEGACY_REPLAY_PRODUCERS.get(version) == producer.get("tool_sha256")
+    ):
+        return version
+    raise Arm64EnvironmentReceiptError("ARM64 事实采集器身份漂移")
 
 
 def _safe_id(value: Any, label: str) -> str:
@@ -468,7 +509,11 @@ def _validate_container(value: Any, expected_name: str) -> dict[str, Any]:
     return container
 
 
-def validate_facts(facts: dict[str, Any]) -> dict[str, Any]:
+def validate_facts(
+    facts: dict[str, Any],
+    *,
+    allow_legacy_replay: bool = False,
+) -> dict[str, Any]:
     """严格校验原始事实并返回用于前后连续性比较的稳定身份。"""
 
     _expect(
@@ -523,19 +568,10 @@ def validate_facts(facts: dict[str, Any]) -> dict[str, Any]:
     normalized = [
         _validate_container(item, name) for item, name in zip(containers, expected_names, strict=True)
     ]
-    collector = _expect(
+    producer_version = _validated_producer_version(
         facts.get("collector"),
-        {"schema_version", "tool", "tool_sha256", "version"},
-        "facts.collector",
+        allow_legacy_replay=allow_legacy_replay,
     )
-    producer = Path(__file__).resolve()
-    if (
-        collector.get("schema_version") != PRODUCER_SCHEMA
-        or collector.get("tool") != str(producer)
-        or collector.get("tool_sha256") != _sha256_file(producer)
-        or collector.get("version") != PRODUCER_VERSION
-    ):
-        raise Arm64EnvironmentReceiptError("ARM64 事实采集器身份漂移")
     # Docker restart／compose recreate 会更换 container_id、EndpointID 和容器内接口名，
     # 但不会改变受管网络本身。候选抓包按设计会执行这两类操作；若把这些临时值纳入
     # 连续性身份，每次正常恢复都会被误判为网络污染。连续性只绑定真正不可变的镜像、
@@ -548,29 +584,52 @@ def validate_facts(facts: dict[str, Any]) -> dict[str, Any]:
             "gateway": value["gateway"],
         }
 
-    continuity_identity = {
-        "host": host,
-        "containers": [
-            {
-                "name": item["name"],
-                "image_id": item["image_id"],
-                "selected_network": stable_network(item["selected_network"]),
-                "network_bindings": [
-                    stable_network(binding)
-                    for binding in item["network_bindings"]
-                ],
-                "default_route": {
-                    "gateway": item["default_route"]["gateway"],
-                },
-                "public_egress": {
-                    "url": item["public_egress"]["url"],
-                    "ip_address": item["public_egress"]["ip_address"],
-                },
-            }
-            for item in normalized
-        ],
-    }
+    if producer_version == "1":
+        # v1 历史收据必须按生成时的临时身份算法逐字重放，
+        # 不得用 v2 稳定网络身份重写当时结论。
+        continuity_identity = {
+            "host": host,
+            "containers": [
+                {
+                    "name": item["name"],
+                    "container_id": item["container_id"],
+                    "image_id": item["image_id"],
+                    "selected_network": item["selected_network"],
+                    "network_bindings": item["network_bindings"],
+                    "default_route": item["default_route"],
+                    "public_egress": {
+                        "url": item["public_egress"]["url"],
+                        "ip_address": item["public_egress"]["ip_address"],
+                    },
+                }
+                for item in normalized
+            ],
+        }
+    else:
+        continuity_identity = {
+            "host": host,
+            "containers": [
+                {
+                    "name": item["name"],
+                    "image_id": item["image_id"],
+                    "selected_network": stable_network(item["selected_network"]),
+                    "network_bindings": [
+                        stable_network(binding)
+                        for binding in item["network_bindings"]
+                    ],
+                    "default_route": {
+                        "gateway": item["default_route"]["gateway"],
+                    },
+                    "public_egress": {
+                        "url": item["public_egress"]["url"],
+                        "ip_address": item["public_egress"]["ip_address"],
+                    },
+                }
+                for item in normalized
+            ],
+        }
     return {
+        "producer_version": producer_version,
         "continuity_identity_sha256": _sha256_bytes(_canonical(continuity_identity)),
         "resource_gate": {
             "used_percent": filesystem["used_percent"],
@@ -580,12 +639,24 @@ def validate_facts(facts: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
+def _build_receipt(
+    root: Path,
+    facts_relative: str,
+    *,
+    replay_producer: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     root = _private_root(root)
     facts_path = _relative(root, facts_relative, "facts")
     facts, raw = _load_json(facts_path, "facts")
-    validation = validate_facts(facts)
-    producer = Path(__file__).resolve()
+    validation = validate_facts(
+        facts,
+        allow_legacy_replay=replay_producer is not None,
+    )
+    producer = _current_producer() if replay_producer is None else replay_producer
+    if facts.get("collector") != producer:
+        raise Arm64EnvironmentReceiptError("facts 与 receipt producer 身份不一致")
+    if validation["producer_version"] != producer.get("version"):
+        raise Arm64EnvironmentReceiptError("facts 与 receipt producer 版本不一致")
     return {
         "schema_version": RECEIPT_SCHEMA,
         "status": "passed",
@@ -600,13 +671,14 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
             "sha256": _sha256_bytes(raw),
             "bytes": len(raw),
         },
-        "producer": {
-            "schema_version": PRODUCER_SCHEMA,
-            "tool": str(producer),
-            "tool_sha256": _sha256_file(producer),
-            "version": PRODUCER_VERSION,
-        },
+        "producer": producer,
     }
+
+
+def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
+    """只使用当前 producer 生成新收据。"""
+
+    return _build_receipt(root, facts_relative)
 
 
 def collect(root: Path, output_relative: str, *, phase: str, subject_id: str) -> dict[str, Any]:
@@ -634,7 +706,13 @@ def replay(root: Path, receipt_relative: str) -> dict[str, Any]:
     facts = receipt.get("facts")
     if not isinstance(facts, dict) or not isinstance(facts.get("path"), str):
         raise Arm64EnvironmentReceiptError("receipt.facts 缺失")
-    expected = build_receipt(root, facts["path"])
+    producer = receipt.get("producer")
+    _validated_producer_version(producer, allow_legacy_replay=True)
+    expected = _build_receipt(
+        root,
+        facts["path"],
+        replay_producer=producer,
+    )
     if _canonical(expected) != raw:
         raise Arm64EnvironmentReceiptError("ARM64 环境收据重放结果不一致")
     return receipt

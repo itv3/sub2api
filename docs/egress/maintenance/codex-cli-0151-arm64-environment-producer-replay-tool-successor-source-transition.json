@@ -1,0 +1,74 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-31T09:35:22Z",
+  "base_commit": "102d91678cd2e003bceca115ccfd968cad87721a",
+  "scope": "codex-cli-0.151-arm64-environment-producer-replay-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_r9_candidate_readiness_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-r9-candidate-readiness-source-transition.json",
+    "sha256": "7c2fd13e6b0c87305bab379ad2d68b073c6f181d0e7e1a45d04fb3e02aa4aa25"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_r9_candidate_readiness_source_transition_test.go",
+      "from_sha256": "aa6ba46b26991aeb81313a4a287b31557463188c9f8806a8cb0963404b797df1",
+      "to_sha256": "43c29886254d6a8d261091f66558354d59086707e4fb679816d5891911bf751d",
+      "reason": "让 officialegress 的 r9 transition 只承接 ARM64 环境 producer 重放工具后继的精确摘要边。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_r9_candidate_readiness_source_transition_test.go",
+      "from_sha256": "0e28360690fbdefb3d8247e6e6a6e4dce3227842b81961fc662ea0fcfdb690f5",
+      "to_sha256": "6671867cef531273c3dc9a6a9c777b8cf7af5cde27c262c29bedfc206209c46d",
+      "reason": "让 service 的 r9 transition 独立承接同一 producer 重放工具后继。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "from_sha256": "d053fb4841683e372da3b24961f9be0ba30c57cf85178a6d468ae13bb6e1c9e2",
+      "to_sha256": "0b8f2adc69bc55c2efd75fee51624714b43f7bef5eb51b7319bfb0890f0df3b9",
+      "reason": "明确 producer 换版的旧算法只读重放边界，并区分退休运行画像与历史测试夹具。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py",
+      "from_sha256": "7633ad1f101a8320126fb6c76417362bf8571faed9f14e5dcf20ec616a593048",
+      "to_sha256": "28f15f366b9fc1761179256f5cb7d06f7f45e76ddf467383565469d1965a8053",
+      "reason": "只允许已登记 v1 producer 按原连续性算法重放，新 facts 与新收据仍只能由 v2 生成。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_arm64_environment_receipt.py",
+      "from_sha256": "85702d076edb93cd6e9230343f6b7a585a24529bcf9ff0926f3eb0edb1560d61",
+      "to_sha256": "6315b39c068752a306acadba3eb387814229ec599e91c6ac89ec668c885dc257",
+      "reason": "覆盖已登记 v1 原算法重放、当前 producer 独占新生成和未知旧摘要失败关闭。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
+      "sha256": "70ed5cb073b055aba50a4b21355740dbd4ad9f4918c4df3295fd53ebe35e8277",
+      "reason": "在 officialegress 包冻结并变异测试本次工具后继 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
+      "sha256": "3dbb42cea9bf7fa3f99aacea7065e31289e73c1a8030362b5bf1815e6e3b84e7",
+      "reason": "在 service 包独立重放同一工具后继 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor/plan.json",
+      "sha256": "04a087420d255da13b09b8f61837ef7948a350ed8f7736e95deb93ca64ecc8d8",
+      "reason": "冻结失败根因、修复边界、预算和网络不变量。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade_arm64_environment_receipt",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(Arm64EnvironmentProducerReplayToolSuccessor|R9CandidateReadiness)' -count=1",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_arm64_environment_producer_replay_tool_successor",
+  "identity_sha256": "2296024303a9c2b630e5d45e838e09c8f723daf6cbf45ad0d6142a4bea775eba"
+}
