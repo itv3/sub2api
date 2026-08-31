@@ -1489,6 +1489,8 @@ ARM64 的 Go 固定使用 `/root/oauth-capture/state/local/go1.27.0/bin`；构�
 依赖、语法、二进制、bubblewrap 和 zstd 探针，不执行 Job，也不发送官方请求。
 
 ```bash
+install -d -m 0700 "$JOB_REHEARSAL_ROOT"
+test ! -L "$JOB_REHEARSAL_ROOT"
 python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt collect \
   --campaign-dir "$PREFLIGHT_CAMPAIGN" --evidence-root "$JOB_REHEARSAL_ROOT" \
   --output facts.json
