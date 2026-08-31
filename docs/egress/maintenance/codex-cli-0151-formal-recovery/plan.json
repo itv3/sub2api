@@ -1,0 +1,52 @@
+{
+  "schema_version": "codex-cli-0151-formal-recovery-plan/v1",
+  "change_set": "codex_cli_0151_formal_recovery",
+  "purpose": "闭合 0.151 候选画像入库后的历史摘要链，并修复产出工具变化后的恢复预检与后继绑定",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "a7ff0ad3955af68e8878b552d6a58ae73fda1f62",
+    "tree": "f62e7a828b50ff38741953cb46c822f84046dc2b",
+    "failed_campaign": "c0151-formal-20260831t0220z-r8",
+    "failed_stage": "VC-4"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T05:15:56Z",
+    "deadline_at_utc": "2026-08-31T06:45:56Z",
+    "wall_clock_minutes": 90,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "保留全部 Campaign、attempt、官方证据、计时台账和历史 transition"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "当前工具可在 VC-4 建立 recovery preflight_only 并完成完整 Job 演练",
+    "successor 强制绑定当前执行合同和新 Job 演练收据",
+    "历史 0.149.1 terminal receipt 从首次入库提交重放 Catalog",
+    "0.151 候选画像保留历史 Snapshot 与候选 previous 语义",
+    "ARM64 全量离线门禁通过后新建后继 Formal Campaign"
+  ]
+}

@@ -596,6 +596,53 @@ def validate_codex_01491_repo_artifact(
         raise RuntimeError(f"{label} 摘要漂移：{expected_path}")
 
 
+def validate_codex_01491_historical_artifact(
+    artifact: object,
+    expected_path: str,
+    label: str,
+) -> None:
+    """从终态收据首次入库的 Git 提交重放会被后继换版更新的制品。"""
+
+    if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
+        raise RuntimeError(f"{label} 坐标字段非法")
+    if artifact.get("path") != expected_path or not SHA256_RE.fullmatch(
+        str(artifact.get("sha256", ""))
+    ):
+        raise RuntimeError(f"{label} 坐标非法")
+    current_path = ROOT / expected_path
+    if (
+        current_path.is_file()
+        and not current_path.is_symlink()
+        and sha256(current_path.read_bytes()) == artifact["sha256"]
+    ):
+        return
+    receipt_relative = CODEX_01491_TERMINAL_STATE.relative_to(ROOT).as_posix()
+    history = subprocess.run(
+        [
+            "git",
+            "log",
+            "--diff-filter=A",
+            "--format=%H",
+            "--",
+            receipt_relative,
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    if len(history) != 1 or not GIT_COMMIT_RE.fullmatch(history[0]):
+        raise RuntimeError(f"{label} 无法定位唯一历史提交")
+    archived = subprocess.run(
+        ["git", "show", f"{history[0]}:{expected_path}"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    if sha256(archived) != artifact["sha256"]:
+        raise RuntimeError(f"{label} 历史摘要漂移：{expected_path}")
+
+
 def validate_codex_01491_terminal_state(
     receipt: dict[str, object],
 ) -> list[dict[str, str]]:
@@ -660,9 +707,12 @@ def validate_codex_01491_terminal_state(
         ),
     }
     for key, expected_path in runtime_paths.items():
-        validate_codex_01491_repo_artifact(
-            runtime_catalog.get(key), expected_path, f"0.149.1 {key}"
+        validator = (
+            validate_codex_01491_historical_artifact
+            if key == "catalog"
+            else validate_codex_01491_repo_artifact
         )
+        validator(runtime_catalog.get(key), expected_path, f"0.149.1 {key}")
 
     validate_codex_01491_repo_artifact(
         receipt.get("catalog_promotion"),

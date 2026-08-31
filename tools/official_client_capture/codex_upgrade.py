@@ -143,6 +143,7 @@ PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA = (
     "codex-upgrade-predecessor-import/v3"
 )
 PREDECESSOR_RUNTIME_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v4"
+PREDECESSOR_REHEARSAL_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v5"
 COMPARISON_SCHEMA = "codex-upgrade-comparison/v2"
 ACCEPTANCE_SCHEMA = "codex-upgrade-acceptance/v2"
 CAMPAIGN_MODES = frozenset({"preflight_only", "formal"})
@@ -2546,6 +2547,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "旧 Campaign 的外部部署文件保持只读。"
         ),
     )
+    successor.add_argument(
+        "--job-rehearsal-root",
+        type=Path,
+        help=(
+            "可选：产出侧工具变化后，由当前 preflight_only Campaign 生成的"
+            "完整 Job 演练证据根；必须与 --job-rehearsal-receipt 同时提供。"
+        ),
+    )
+    successor.add_argument(
+        "--job-rehearsal-receipt",
+        type=Path,
+        help=(
+            "可选：按后继当前执行合同生成并重放通过的完整 Job 演练收据；"
+            "提供后将替换前序 Formal 的旧演练绑定。"
+        ),
+    )
 
     classify = subparsers.add_parser(
         "classify", help="生成差异草案或封存已审核的目标规则迁移"
@@ -3637,6 +3654,8 @@ def _job_rehearsal_contract_from_arguments(
 def _job_rehearsal_contract_from_manifest(
     campaign_dir: Path,
     manifest: Mapping[str, Any],
+    *,
+    target_scenario_override: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """从已封存 Formal Campaign 复算完整 Job 演练合同。"""
 
@@ -3646,7 +3665,7 @@ def _job_rehearsal_contract_from_manifest(
     scenario_reference = inputs.get("target_discovery_scenarios")
     if not isinstance(scenario_reference, Mapping):
         raise ConfigurationError("Campaign 缺少 target 场景清单绑定。")
-    target_scenario = _read_json(
+    frozen_target_scenario = _read_json(
         _campaign_file(campaign_dir, str(scenario_reference.get("path", ""))),
         "Campaign target 场景清单",
     )
@@ -3668,7 +3687,7 @@ def _job_rehearsal_contract_from_manifest(
         or not isinstance(tool_identity, Mapping)
     ):
         raise ConfigurationError("Campaign 缺少 Job 演练所需身份。")
-    try:
+    def build(target_scenario: Mapping[str, Any]) -> dict[str, Any]:
         return codex_upgrade_job_rehearsal_receipt.build_execution_contract(
             target_version=str(manifest.get("target_version", "")),
             target_sha256=str(manifest.get("target_sha256", "")),
@@ -3682,8 +3701,111 @@ def _job_rehearsal_contract_from_manifest(
             target_scenario=target_scenario,
             extra_jobs=extra_jobs,
         )
+
+    try:
+        if target_scenario_override is not None:
+            return build(target_scenario_override)
+        frozen_contract = build(frozen_target_scenario)
+        controls = manifest.get("control_receipts")
+        rehearsal = (
+            controls.get("job_rehearsal")
+            if isinstance(controls, Mapping)
+            else None
+        )
+        bound_contract_sha256 = (
+            rehearsal.get("execution_contract_sha256")
+            if isinstance(rehearsal, Mapping)
+            else None
+        )
+        if (
+            bound_contract_sha256
+            == codex_upgrade_job_rehearsal_receipt.execution_contract_sha256(
+                frozen_contract
+            )
+            or not isinstance(manifest.get("predecessor"), Mapping)
+        ):
+            return frozen_contract
+
+        # 同版本后继可保留历史 Formal 场景字节，同时由已批准的当前场景
+        # 证明执行合同等价。新演练绑定若指向当前批准场景，就按该场景复算。
+        classification_path = campaign_dir / "classification" / "result.json"
+        if classification_path.is_file() and not classification_path.is_symlink():
+            classification = _read_json(
+                classification_path,
+                "后继 Campaign 分类结果",
+            )
+            approved_reference = classification.get("scenario_manifest")
+            if isinstance(approved_reference, dict):
+                historical_binding = (
+                    _successor_uses_reclassified_historical_plan_binding(
+                        campaign_dir,
+                        dict(manifest),
+                        {"scenario_manifest": approved_reference},
+                    )
+                )
+                if historical_binding is not None:
+                    approved_scenario = _read_json(
+                        _campaign_file(
+                            campaign_dir,
+                            str(approved_reference.get("path", "")),
+                        ),
+                        "后继 Campaign 当前批准场景",
+                    )
+                    approved_contract = build(approved_scenario)
+                    if bound_contract_sha256 == (
+                        codex_upgrade_job_rehearsal_receipt.execution_contract_sha256(
+                            approved_contract
+                        )
+                    ):
+                        return approved_contract
+        return frozen_contract
     except codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError as error:
         raise ConfigurationError(f"Campaign Job 执行合同非法：{error}") from error
+
+
+def _job_rehearsal_control_from_receipt(
+    rehearsal_root: Path,
+    rehearsal_path: Path,
+    expected_contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """重放完整 Job 演练并生成可写入 Campaign 的不可变绑定。"""
+
+    rehearsal_relative = _control_receipt_relative(
+        rehearsal_root,
+        rehearsal_path,
+        "ARM64 完整 Job 离线演练收据",
+    )
+    try:
+        rehearsal = codex_upgrade_job_rehearsal_receipt.replay(
+            rehearsal_root, rehearsal_relative
+        )
+        codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
+            rehearsal, dict(expected_contract)
+        )
+    except (
+        OSError,
+        codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError,
+    ) as error:
+        raise ConfigurationError(
+            f"ARM64 完整 Job 离线演练收据未通过：{error}"
+        ) from error
+    resolved_rehearsal = rehearsal_root.resolve(strict=True)
+    rehearsal_file = resolved_rehearsal / rehearsal_relative
+    preflight = rehearsal["preflight_campaign"]
+    return {
+        "evidence_root": str(resolved_rehearsal),
+        "receipt": {
+            "path": rehearsal_relative,
+            "sha256": file_sha256(rehearsal_file),
+            "bytes": rehearsal_file.stat().st_size,
+        },
+        "preflight_campaign_id": preflight["campaign_id"],
+        "preflight_campaign_manifest_sha256": preflight["manifest_sha256"],
+        "execution_contract_sha256": rehearsal["execution_contract_sha256"],
+        "runtime_identity_sha256": rehearsal["runtime_identity_sha256"],
+        "job_count": rehearsal["job_count"],
+        "job_set_sha256": rehearsal["job_set_sha256"],
+    }
 
 
 def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -3720,7 +3842,11 @@ def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
             baseline_version=arguments.baseline_version,
             target_version=arguments.target_version,
             campaign_purpose=arguments.campaign_purpose,
-            required_phase="VC-0",
+            # Formal 只能在 VC-0 新建。preflight_only 不会发送请求或推进
+            # Campaign 阶段，允许在后续 active 阶段为工具修复重跑离线 P0。
+            required_phase=(
+                "VC-0" if arguments.campaign_mode == "formal" else None
+            ),
         )
     except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
         raise ConfigurationError(f"UpgradeTimingLedger 未通过：{error}") from error
@@ -3775,45 +3901,11 @@ def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
         rehearsal_path = getattr(arguments, "job_rehearsal_receipt", None)
         assert isinstance(rehearsal_root, Path)
         assert isinstance(rehearsal_path, Path)
-        rehearsal_relative = _control_receipt_relative(
+        controls["job_rehearsal"] = _job_rehearsal_control_from_receipt(
             rehearsal_root,
             rehearsal_path,
-            "ARM64 完整 Job 离线演练收据",
+            _job_rehearsal_contract_from_arguments(arguments),
         )
-        try:
-            rehearsal = codex_upgrade_job_rehearsal_receipt.replay(
-                rehearsal_root, rehearsal_relative
-            )
-            expected_contract = _job_rehearsal_contract_from_arguments(arguments)
-            codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
-                rehearsal, expected_contract
-            )
-        except (
-            OSError,
-            codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError,
-        ) as error:
-            raise ConfigurationError(
-                f"ARM64 完整 Job 离线演练收据未通过：{error}"
-            ) from error
-        resolved_rehearsal = rehearsal_root.resolve(strict=True)
-        rehearsal_file = resolved_rehearsal / rehearsal_relative
-        preflight = rehearsal["preflight_campaign"]
-        controls["job_rehearsal"] = {
-            "evidence_root": str(resolved_rehearsal),
-            "receipt": {
-                "path": rehearsal_relative,
-                "sha256": file_sha256(rehearsal_file),
-                "bytes": rehearsal_file.stat().st_size,
-            },
-            "preflight_campaign_id": preflight["campaign_id"],
-            "preflight_campaign_manifest_sha256": preflight["manifest_sha256"],
-            "execution_contract_sha256": rehearsal[
-                "execution_contract_sha256"
-            ],
-            "runtime_identity_sha256": rehearsal["runtime_identity_sha256"],
-            "job_count": rehearsal["job_count"],
-            "job_set_sha256": rehearsal["job_set_sha256"],
-        }
     return controls
 
 
@@ -4452,6 +4544,72 @@ def _successor_runtime_configuration(
     return successor
 
 
+def _successor_job_rehearsal_transition(
+    arguments: argparse.Namespace,
+    staging_dir: Path,
+    successor_manifest: dict[str, Any],
+    *,
+    target_scenario_override: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """校验后继当前执行合同，并按需替换前序完整 Job 演练绑定。"""
+
+    rehearsal_root = getattr(arguments, "job_rehearsal_root", None)
+    rehearsal_receipt = getattr(arguments, "job_rehearsal_receipt", None)
+    if (rehearsal_root is None) != (rehearsal_receipt is None):
+        raise ConfigurationError(
+            "后继 --job-rehearsal-root 与 --job-rehearsal-receipt 必须同时提供。"
+        )
+    controls = successor_manifest.get("control_receipts")
+    predecessor_control = (
+        controls.get("job_rehearsal") if isinstance(controls, dict) else None
+    )
+    if not isinstance(predecessor_control, dict):
+        raise ConfigurationError("前序 Formal Campaign 缺少完整 Job 演练绑定。")
+    expected_contract = _job_rehearsal_contract_from_manifest(
+        staging_dir,
+        successor_manifest,
+        target_scenario_override=target_scenario_override,
+    )
+    if rehearsal_root is None or rehearsal_receipt is None:
+        try:
+            replayed_control = _job_rehearsal_control_from_receipt(
+                Path(str(predecessor_control.get("evidence_root", ""))),
+                Path(
+                    str(
+                        predecessor_control.get("receipt", {}).get("path", "")
+                        if isinstance(predecessor_control.get("receipt"), dict)
+                        else ""
+                    )
+                ),
+                expected_contract,
+            )
+        except ConfigurationError as error:
+            raise ConfigurationError(
+                "后继当前执行合同与前序完整 Job 演练不一致；先用当前工具"
+                "创建 preflight_only Campaign 并完成离线演练，再向 successor "
+                "同时提供 --job-rehearsal-root 与 --job-rehearsal-receipt。"
+            ) from error
+        if replayed_control != predecessor_control:
+            raise ConfigurationError("前序完整 Job 演练绑定无法逐字重建。")
+        return None
+
+    assert isinstance(rehearsal_root, Path)
+    assert isinstance(rehearsal_receipt, Path)
+    successor_control = _job_rehearsal_control_from_receipt(
+        rehearsal_root,
+        rehearsal_receipt,
+        expected_contract,
+    )
+    if successor_control == predecessor_control:
+        raise ConfigurationError("后继完整 Job 演练绑定没有发生变化。")
+    controls["job_rehearsal"] = successor_control
+    return {
+        "reason": "current_execution_contract_rehearsal",
+        "predecessor": predecessor_control,
+        "successor": successor_control,
+    }
+
+
 def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
     """创建同版本后继 Campaign，并按原因选择承接边界。
 
@@ -4633,6 +4791,24 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                     classification_bindings,
                 )
             )
+        rehearsal_scenario_override: Mapping[str, Any] | None = None
+        if historical_source_spec_binding is not None and not reclassification_successor:
+            approved_scenario_reference = classification_bindings[
+                "scenario_manifest"
+            ]
+            rehearsal_scenario_override = _read_json(
+                _campaign_file(
+                    staging_dir,
+                    approved_scenario_reference["path"],
+                ),
+                "后继 Campaign 当前批准场景",
+            )
+        job_rehearsal_transition = _successor_job_rehearsal_transition(
+            arguments,
+            staging_dir,
+            successor_manifest,
+            target_scenario_override=rehearsal_scenario_override,
+        )
         _rebuild_successor_plan(
             staging_dir,
             successor_dir,
@@ -4651,12 +4827,16 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         classification_path = _stage_path(predecessor_dir, "classify")[1]
         import_receipt: dict[str, Any] = {
             "schema_version": (
-                PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
-                if reclassification_successor
+                PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+                if job_rehearsal_transition is not None
                 else (
-                    PREDECESSOR_RUNTIME_IMPORT_SCHEMA
-                    if runtime_configuration is not None
-                    else PREDECESSOR_IMPORT_SCHEMA
+                    PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
+                    if reclassification_successor
+                    else (
+                        PREDECESSOR_RUNTIME_IMPORT_SCHEMA
+                        if runtime_configuration is not None
+                        else PREDECESSOR_IMPORT_SCHEMA
+                    )
                 )
             ),
             "created_at_utc": _utc_now(),
@@ -4701,6 +4881,10 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             },
             "abandoned_candidate_attempt": abandoned_attempt,
         }
+        if job_rehearsal_transition is not None:
+            import_receipt["job_rehearsal_transition"] = (
+                job_rehearsal_transition
+            )
         if runtime_configuration is not None:
             import_receipt["configuration_transition"].update(
                 {
@@ -4774,6 +4958,7 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         "official_recapture_required": False,
         "codex_account_id": arguments.codex_account_id,
         "runtime_configuration_rebound": runtime_configuration is not None,
+        "job_rehearsal_rebound": job_rehearsal_transition is not None,
         "next_command": status["next_command"],
     }
 
@@ -5346,9 +5531,15 @@ def _validate_predecessor_import_receipt(
         PREDECESSOR_IMPORT_SCHEMA,
         PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA,
         PREDECESSOR_RUNTIME_IMPORT_SCHEMA,
+        PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
     }:
         expected_receipt_fields.add("configuration_transition")
-    if receipt_schema == PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA:
+    if receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA:
+        expected_receipt_fields.add("job_rehearsal_transition")
+    if receipt_schema == PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA or (
+        receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+        and receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS
+    ):
         expected_receipt_fields.add("import_mode")
     unsigned_receipt = dict(receipt)
     receipt_digest = unsigned_receipt.pop("receipt_digest", None)
@@ -5360,6 +5551,7 @@ def _validate_predecessor_import_receipt(
             PREDECESSOR_IMPORT_SCHEMA,
             PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA,
             PREDECESSOR_RUNTIME_IMPORT_SCHEMA,
+            PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
         }
         or not _is_rfc3339_timestamp(receipt.get("created_at_utc"))
         or receipt.get("reason") not in SUCCESSOR_REASONS
@@ -5370,9 +5562,10 @@ def _validate_predecessor_import_receipt(
         or _fingerprint(unsigned_receipt) != receipt_digest
     ):
         raise ConfigurationError("前序导入收据身份、时间或摘要非法。")
-    reclassification_import = (
-        receipt_schema == PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
-    )
+    reclassification_import = receipt_schema in {
+        PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA,
+        PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+    } and receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS
     if reclassification_import:
         if (
             receipt.get("reason") not in RECLASSIFICATION_SUCCESSOR_REASONS
@@ -5382,7 +5575,7 @@ def _validate_predecessor_import_receipt(
         ):
             raise ConfigurationError("分类纠正后继的导入模式或阶段边界非法。")
     elif receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS:
-        raise ConfigurationError("分类纠正后继必须使用 official-only v3 收据。")
+        raise ConfigurationError("分类纠正后继必须使用 official-only 受管收据。")
 
     manifest_predecessor = manifest.get("predecessor")
     predecessor_binding = receipt.get("predecessor_campaign")
@@ -5415,6 +5608,37 @@ def _validate_predecessor_import_receipt(
         != file_sha256(predecessor_dir / "campaign.json")
     ):
         raise ConfigurationError("前序 Campaign 清单身份或摘要漂移。")
+
+    predecessor_controls = predecessor_manifest.get("control_receipts")
+    successor_controls = manifest.get("control_receipts")
+    predecessor_rehearsal = (
+        predecessor_controls.get("job_rehearsal")
+        if isinstance(predecessor_controls, dict)
+        else None
+    )
+    successor_rehearsal = (
+        successor_controls.get("job_rehearsal")
+        if isinstance(successor_controls, dict)
+        else None
+    )
+    if not isinstance(predecessor_rehearsal, dict) or not isinstance(
+        successor_rehearsal, dict
+    ):
+        raise ConfigurationError("前序或后继 Campaign 缺少完整 Job 演练绑定。")
+    if receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA:
+        expected_rehearsal_transition = {
+            "reason": "current_execution_contract_rehearsal",
+            "predecessor": predecessor_rehearsal,
+            "successor": successor_rehearsal,
+        }
+        if (
+            receipt.get("job_rehearsal_transition")
+            != expected_rehearsal_transition
+            or predecessor_rehearsal == successor_rehearsal
+        ):
+            raise ConfigurationError("后继完整 Job 演练过渡收据非法。")
+    elif successor_rehearsal != predecessor_rehearsal:
+        raise ConfigurationError("后继未登记完整 Job 演练绑定变化。")
 
     invariant_fields = (
         "campaign_mode",
@@ -5452,8 +5676,16 @@ def _validate_predecessor_import_receipt(
         "live_attestation_compose_dir",
         "live_attestation_compose_files",
     )
+    runtime_configuration_changed = any(
+        str(predecessor_configuration.get(field, "") or "")
+        != str(successor_configuration.get(field, "") or "")
+        for field in runtime_fields
+    )
     allowed_configuration_fields = {"codex_account_id"}
-    if receipt_schema == PREDECESSOR_RUNTIME_IMPORT_SCHEMA:
+    if receipt_schema == PREDECESSOR_RUNTIME_IMPORT_SCHEMA or (
+        receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+        and runtime_configuration_changed
+    ):
         allowed_configuration_fields.update(runtime_fields)
     predecessor_fixed_configuration = dict(predecessor_configuration)
     successor_fixed_configuration = dict(successor_configuration)
@@ -5474,9 +5706,12 @@ def _validate_predecessor_import_receipt(
                 "reason": "operator_selected_active_account",
             }
         }
-        if receipt_schema == PREDECESSOR_RUNTIME_IMPORT_SCHEMA:
+        if receipt_schema == PREDECESSOR_RUNTIME_IMPORT_SCHEMA or (
+            receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+            and runtime_configuration_changed
+        ):
             if receipt.get("reason") != "candidate_runtime_identity_correction":
-                raise ConfigurationError("v4 后继收据原因不是运行时身份纠正。")
+                raise ConfigurationError("后继收据原因不是运行时身份纠正。")
             successor_runtime_configuration = {
                 field: str(successor_configuration.get(field, "") or "")
                 for field in runtime_fields
@@ -5500,10 +5735,10 @@ def _validate_predecessor_import_receipt(
                 )
             except ConfigurationError as error:
                 raise ConfigurationError(
-                    "v4 后继 Campaign 的 compose 坐标非法。"
+                    "后继 Campaign 的 compose 坐标非法。"
                 ) from error
             if validated_runtime_configuration != successor_runtime_configuration:
-                raise ConfigurationError("v4 后继 Campaign 的 compose 坐标漂移。")
+                raise ConfigurationError("后继 Campaign 的 compose 坐标漂移。")
             expected_transition.update(
                 {
                     field: {

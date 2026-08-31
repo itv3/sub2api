@@ -2,7 +2,7 @@
 """基于冻结画像对候选抓包执行逐规则独立断言。
 
 本工具只读取证据归档，不导入候选 Go 画像。冻结预期位于
-``candidate_rule_expectations_0_145_0.json``，抓包事实来自统一 manifest 所引用的
+``candidate_rule_expectations_0_149_1.json``，抓包事实来自统一 manifest 所引用的
 pcap、relay 原始字节或结构化 trace。成功输出由统一升级编排器复算并纳入逐规则
 正式验收。
 """
@@ -44,12 +44,12 @@ PROFILE_SCHEMA_VERSION = "codex-candidate-rule-expectations/v1"
 CAPTURE_MANIFEST_SCHEMA_VERSION = "codex-candidate-capture-manifest/v1"
 OBSERVATION_SCHEMA_VERSION = "codex-candidate-observation/v1"
 ASSERTION_SCHEMA_VERSION = "codex-candidate-rule-assertion/v1"
-CODEX_VERSION = "0.145.0"
+CODEX_VERSION = "0.149.1"
 CHECKER_RELATIVE_PATH = (
     "tools/official_client_capture/candidate_rule_assertion.py"
 )
 DEFAULT_PROFILE_RELATIVE_PATH = (
-    "tools/official_client_capture/candidate_rule_expectations_0_145_0.json"
+    "tools/official_client_capture/candidate_rule_expectations_0_149_1.json"
 )
 # 2026-08-11（R8）：合并 17 项 selector 修正、双轨 track selector、A04 压缩
 # 分流与 Wham 原始字节 selector；逐项依据由主手册第二部分规则和批准画像承载。
@@ -65,7 +65,7 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 2026-08-24 主手册 active 升级为 0.149.1 后再次重绑第二部分摘要；0.145
 # 基线的规则与判据载荷仍保持不变。
 FROZEN_PROFILE_SHA256 = (
-    "20441c49c10212147ecbe6bd824e8f0b5e690239754ceb0218ff014c5cc037fd"
+    "523a3a9f201188a1a8744de4e0216d4bc569d8edbb79a26d41923cb22c749e97"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 RULE_ID_RE = re.compile(r"^SPEC-[A-Z0-9]+-[0-9]{3}$")

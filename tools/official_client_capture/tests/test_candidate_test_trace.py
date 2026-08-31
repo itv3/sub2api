@@ -30,11 +30,10 @@ class CandidateTestTraceTest(unittest.TestCase):
     def test_frozen_input_digests_match_checked_in_assets(self) -> None:
         tool_root = Path(__file__).resolve().parents[1]
         # 两侧冻结的是不同东西，不能再共用一份摘要：
-        # - candidate_rule_assertion 冻结 0.145.0 基线画像——它是 classify 的迁移基线
-        #   （codex_upgrade.py 的 base_path），升级期间保持不动；
+        # - candidate_rule_assertion 冻结当前 production active（0.149.1）的画像；
         # - candidate_test_trace 冻结的映射与画像都要与 Campaign 目标同版本，否则
         #   load_mapping／load_profile 的 codex_version 校验直接拒绝。
-        baseline_profile = tool_root / "candidate_rule_expectations_0_145_0.json"
+        baseline_profile = tool_root / "candidate_rule_expectations_0_149_1.json"
         target_profile = tool_root / "candidate_rule_expectations_0_151_0.json"
         target_mapping = tool_root / "candidate_test_fact_map_0_151_0.json"
 
@@ -61,14 +60,14 @@ class CandidateTestTraceTest(unittest.TestCase):
         include_fact: bool = True,
         include_raw: bool = True,
         cached: bool = False,
-        codex_version: str = "0.145.0",
+        codex_version: str = "0.149.1",
     ) -> dict[str, Path | str]:
         source_root = root / "source"
         evidence_root = root / "evidence"
         test_file = source_root / "backend/internal/service/candidate_acceptance_test.go"
         source_file = source_root / "backend/internal/service/official_egress_codex_engine.go"
-        profile = source_root / "tools/official_client_capture/candidate_rule_expectations_0_145_0.json"
-        mapping = source_root / "tools/official_client_capture/candidate_test_fact_map_0_145_0.json"
+        profile = source_root / "tools/official_client_capture/candidate_rule_expectations_0_149_1.json"
+        mapping = source_root / "tools/official_client_capture/candidate_test_fact_map_0_149_1.json"
         test_file.parent.mkdir(parents=True)
         source_file.parent.mkdir(parents=True, exist_ok=True)
         profile.parent.mkdir(parents=True)
@@ -362,7 +361,7 @@ class CandidateTestTraceTest(unittest.TestCase):
             with self.assertRaisesRegex(CandidateTestTraceError, "不是允许的抽象事实"):
                 load_mapping(
                     fixture["mapping"],  # type: ignore[arg-type]
-                    expected_codex_version="0.145.0",
+                    expected_codex_version="0.149.1",
                     expected_sha256=file_sha256(
                         fixture["mapping"]  # type: ignore[arg-type]
                     ),

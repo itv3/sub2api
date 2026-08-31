@@ -1335,6 +1335,10 @@ inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 
 场景、画像和断言，但仍不得改变目标版本、官方身份或已封存官方证据语义。后面三项发生变化时
 必须按版本 Campaign 重新执行相应阶段。
 
+若后继由产出侧工具变化触发，先按 §4.0.5 用当前工具建立恢复用 `preflight_only` 并完成完整 Job
+演练，再在 `successor` 命令追加 `--job-rehearsal-root <root> --job-rehearsal-receipt <receipt>`。
+工具会按后继当前执行合同重放收据并替换旧绑定；缺少、部分提供或合同不一致均失败关闭。
+
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；
 新增或未分类工具默认属于产出侧。被校验的工具树必须就是实际执行的工具树。
@@ -1487,6 +1491,10 @@ python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt rep
 `--job-rehearsal-root "$JOB_REHEARSAL_ROOT" --job-rehearsal-receipt "$JOB_REHEARSAL_ROOT/receipt.json"`。
 Formal 会再次独立重放收据，并拒绝目标场景、Job 集、工具树、容器、Codex／code-mode-host 路径或运行镜像漂移。
 
+恢复例外只有一个：Formal 已进入 `VC-1～VC-6` 后发生产出侧工具变化时，可在当前 active 阶段新建
+`preflight_only` 重做上述离线演练，再由 `successor` 绑定新收据；不得发送官方请求或推进阶段。
+普通 Formal `plan` 仍只允许 `VC-0`。
+
 从官方 GitHub Release 取得 ARM64 制品时同样不得把 DNS 轮询当作隐式重试。下载前必须在
 `capture-cli` 内用 `codex_upgrade_official_asset_receipt.py` 逐一 TLS 预连接解析所得的全部 IPv4，
 把唯一选中的成功地址、证书摘要、Release metadata、asset 大小和 SHA-256 封存并离线重放；实际
@@ -1494,6 +1502,7 @@ Formal 会再次独立重放收据，并拒绝目标场景、Job 集、工具树
 禁止改网络、改路由或转用未经登记的镜像站。
 
 时间、归档复用、重试和门禁补跑统一遵守 Framework §5.3.5；`UpgradeTimingLedger` 从 DOC-PRE 首项开始。
+每个事件的 `live-request-count` 是本事件新增量，不是累计值；累计值由 Ledger 自行求和。
 创建运行目录前，ARM64 根文件系统须同时满足使用率低于 70% 且可用空间不少于 30 GiB。达到水位后仅按
 manifest 清理未被收据引用的可再生缓存、worktree、镜像层和 staging，禁止删除证据或无界递归扫描。
 
@@ -1766,7 +1775,9 @@ usage 必须绑定本次 Campaign／attempt／`run_nonce`，并位于 attempt �
 - `candidate-frozen-aux` 还必须在修改环境前确认隔离分组只含目标账号，并已启用 Live 与图片生成；
   `--live-attestation-compose-files` 中每个 compose 文件都按 `-f` 参数解释，允许兼容历史首个裸绝对
   路径，但拒绝相对路径、符号链接、其他 compose 选项和 shell `eval`。只读前检失败不得执行恢复
-  钩子或伪造 `restoration_failed`，首个真实修改前才允许武装恢复。
+  钩子或伪造 `restoration_failed`，首个真实修改前才允许武装恢复。全部 compose 文件合并解析后必须
+  同时指向同一 candidate 镜像且 `candidate_release_mode=previous`，任一文件仍指向其他镜像或 mode
+  都在 A11 重建前失败关闭。
 - Campaign job 的有效参数以冻结 job definition 和 attempt `argv` 为准；脚本默认值或外部同名
   环境变量被 job 覆盖时不得据其推断实际执行条件。
 - 固定镜像 digest，只替换应用容器并保留回滚点；运行期间不执行 `pull`、`compose down` 或

@@ -1,0 +1,205 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-formal-recovery-source-transition/v1",
+  "issued_at_utc": "2026-08-31T05:15:56Z",
+  "base_commit": "a7ff0ad3955af68e8878b552d6a58ae73fda1f62",
+  "scope": "codex-cli-0.151-formal-recovery",
+  "predecessor": {
+    "kind": "codex_cli_0151_system_proxy_capture_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-system-proxy-capture-tool-successor-source-transition.json",
+    "sha256": "d26684249366a59ad9f0d81b93d2c724fe3a66b889db583323e608b6553450a0"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/catalogdata/runtime/release-catalog.json",
+      "from_sha256": "88470ee5918ff558d0c32136499fa7e6d595834c5b7a084a02785e0e51585c3d",
+      "to_sha256": "55aef2c5b6c11ff646f8a276cf176d243cb813243a4bc57687de82b54f1ddb82",
+      "reason": "把已批准的 0.151 画像登记为 candidate previous，同时保持 0.149.1 active。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
+      "from_sha256": "1d2ecea92a9952f75007669cda6553bfbd27c6983e36435ece5de8c573a1870c",
+      "to_sha256": "123a55c011292d39d1d1449a2144cb4b71087abd96a3056880905c469d9ad767",
+      "reason": "让历史 0.149.1 terminal artifact 通过精确后继链验证当前候选 Catalog。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_system_proxy_capture_tool_successor_test.go",
+      "from_sha256": "831d49a2917282857e2e075771ad7e1d39f97edd017b27a5824e831855086bdb",
+      "to_sha256": "b9e5497a42094f4b9d7b1aec7a0c575873054799554c0d6578412bf851954373",
+      "reason": "让 officialegress 的系统代理后继承接本次 Formal 恢复 transition。"
+    },
+    {
+      "path": "backend/internal/officialegress/compiler_static_url_closure_test.go",
+      "from_sha256": "274799ed7352a5ddb73d76184b441cc5ca4ec61db54abcf9769633ea5ea6ac97",
+      "to_sha256": "797307dc2adc2125967be63e9e779fe163978b278c51c5f2efe4e21453bde5da",
+      "reason": "按画像 Header 槽位生成 routing hint，覆盖 0.151 previous 静态端点。"
+    },
+    {
+      "path": "backend/internal/officialegress/profilecontract/testdata/snapshot-catalog.json",
+      "from_sha256": "f2a38b220a5edb0ee3c2e4f734da7a9d4d91bf80d0d5c2f7805f8dbfb5d87c37",
+      "to_sha256": "4e8c51a7fcfc6057e9e695848b877cf6cd66c1a97b869ce7bc6f63255ce199c2",
+      "reason": "追加 0.151 测试画像并保留 0.145、0.147 和 0.149.1 历史夹具。"
+    },
+    {
+      "path": "backend/internal/officialegress/releasecontract/testdata/release-graph.json",
+      "from_sha256": "057264d864aea27ebafecf504e95b8c948f25ac20f11fdabbfd2385d35c85465",
+      "to_sha256": "14b8b4a1e52e69aaf3625cff5a89b81ce2f3cd4b39b8f1416911b72f00a38815",
+      "reason": "冻结 Active 0.149.1 与 candidate Previous 0.151.0 的发布图夹具。"
+    },
+    {
+      "path": "backend/internal/officialegress/version_route_receipts_test.go",
+      "from_sha256": "404c059d0234182c767ae927bf9705343a6f7ecbf0b4e9518199c9d7202964b2",
+      "to_sha256": "d839884529c680fc6bf2c0701e8e7b814789f3c9daa672337b2f8ebc0314d0fb",
+      "reason": "对当前 Active 与 Previous 动态验证 WHAM 版本 route，移除历史版本硬编码。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_system_proxy_capture_tool_successor_test.go",
+      "from_sha256": "b8def6b7002949dc50eb6b4c072b12406d5a57ceba119e01a66d4c11f2146acd",
+      "to_sha256": "76b28f55a279317fc8e29322396abdcbc853ff18d8413e8ea1db1a658fa10c4a",
+      "reason": "让 service 的系统代理后继独立承接本次 Formal 恢复 transition。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_codex_files.go",
+      "from_sha256": "2421f642b3e3ecf167cce207c9a9c9a8d1167a1c907d476ab6e2941629263df4",
+      "to_sha256": "f2cc2ec726b18510cb4103c260f8cd85ab1e103ee5d00b9357c7e5955aad05ee",
+      "reason": "实现 0.151 Files C2PA 元数据条件分支及 retry 稳定身份。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_codex_files_test.go",
+      "from_sha256": "6b7816e4062c60b259abf77b66c4c282e03de17b90dd9163d8e5621cc448a53b",
+      "to_sha256": "18bcf5755e3294e044d31e91a78fe6ca4486ec547238a7d02eeafc8a2839999b",
+      "reason": "覆盖 C2PA 正例、负例、重试和 0.149.1 回归边界。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "5025a988e5dee9dcb6fc653c238c3c3803f0f2fe6588d5e243d7b83e5f3e6f77",
+      "to_sha256": "c2e3c1d420e2890bd0cf49529304dadb402b75019bda66fafb78487d781661b3",
+      "reason": "补齐 0.151 规则、ARM64 离线构建、工具变化恢复和 Job 后继绑定步骤。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "from_sha256": "f836ec63336f2f4c178a5617e6208e22a6573d7416938d6bb389e31856cc4eb3",
+      "to_sha256": "c326a4e43f04692dace778410cc95f155687dab80d577231a18955be100ce9d4",
+      "reason": "明确产出工具变化后的 recovery preflight、rehearsal 与 successor 顺序。"
+    },
+    {
+      "path": "tools/check_ledger_completeness.py",
+      "from_sha256": "b9481a9b6acaa7c1b26943ca51dd8e5f98fb8b8e039aeab597d7bdbc3bd169c0",
+      "to_sha256": "5ea82d4f334fab130617ab1d422ab2df155950dbc4d396c77b0f457491b0ff9d",
+      "reason": "从历史 terminal receipt 首次入库提交重放当时 Catalog，避免后继 Catalog 误击穿。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_rule_assertion.py",
+      "from_sha256": "3c4af6be2e6c862b9150898c75151b7cc72569694472956aed928ded1245fa3e",
+      "to_sha256": "c8b64d11343aef1b7f2422b1ad4da111e8b8aa41e4436cc8bf7d4ad327f4f5c0",
+      "reason": "把候选独立断言器的生产基线重绑到 0.149.1。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_rule_expectations_0_149_1.json",
+      "from_sha256": "90641bb30f8ad56a9ff99eabb22965141814694a042bebb1324cdb8d306dc487",
+      "to_sha256": "523a3a9f201188a1a8744de4e0216d4bc569d8edbb79a26d41923cb22c749e97",
+      "reason": "重绑当前第二部分规则章节摘要，不改变 0.149.1 判据载荷。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "from_sha256": "52c5143452082cd83d13ea92bac441df5b3f775beccd4978e390760c8300cbc1",
+      "to_sha256": "b455754ff570ed963058b4f381de2cab0b56f958bb29cf49683c67b76a036a1e",
+      "reason": "冻结 0.151 候选测试事实映射和断言画像摘要。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "33016a16fcbb93eaf6fde54a2fd3982ddc856dd7dbe4d8d1f69128b9e1979f55",
+      "to_sha256": "ac9d51ce5fa01bc067371f5cf1198b6290eb241438c0b35d00b4fb08bfe1f585",
+      "reason": "允许 VC-4 recovery preflight，并让 successor 强制重放当前 Job 演练合同。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_149_1.json",
+      "from_sha256": "fae060c223a5b2be282027cf1a249052108cabe533f1ab79ec26b08d24934836",
+      "to_sha256": "fd48330392864434b29fb1d7d4562bbc41b25acb464ae3bea2b0dffe1a007bd6",
+      "reason": "重绑 0.149.1 历史场景的当前规则章节摘要。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
+      "from_sha256": "a431a562e347e0d7faf7106456e171facdab09edeb4367ca91630bdc30cc30f1",
+      "to_sha256": "de6c0345ef0aa96a18fe5ce43410163821a839008ea5c2bd3043edf5405e4e72",
+      "reason": "重绑 0.151 场景的当前规则章节摘要，保留已批准 Job 执行合同。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_candidate_rule_assertion.py",
+      "from_sha256": "d8931d2229997220c60a97fde68f02077201a984d376552e8e60e047bfeaf100",
+      "to_sha256": "882ca6cc0d4c138dda1093e3a46d0e6d2fbe4dc2c426db538f1c0d1f9b247b26",
+      "reason": "把候选断言器单测迁移到 0.149.1 生产基线。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_candidate_test_trace.py",
+      "from_sha256": "290e022cd74d8a2c427b28b1add1ff5397824ce019a2ad6a7ade95200e3305bd",
+      "to_sha256": "48df30afb6defecac81523d614e97abcd2eaab3ec0d675ad69f65777cb08ebb6",
+      "reason": "区分 0.149.1 生产断言基线与 0.151 候选 trace 画像，并修复冻结摘要回归。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "3df8d26a1264bacb899188fa2d69954968a90f91aab4aff11151c7193c45841f",
+      "to_sha256": "b4a1d1183d383e1316a5466ecf380b27784619eb9b15d9365cef3dcbad46cc7a",
+      "reason": "覆盖 VC-4 recovery preflight、rehearsal 重绑、历史场景等价和 terminal receipt 重放。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/catalogdata/runtime/profiles/0.151.0/dbc65378c80a2ad843ce1ba6253a2e47f0dd5d8bc812bb536a2d24ddb7a59e39.json",
+      "sha256": "f99ffb49b17f34b4c017280acb60618f4f8b12564c6fde9a846b8a4d0156313d",
+      "reason": "纳入批准的 0.151.0 不可变 Snapshot。"
+    },
+    {
+      "path": "backend/internal/officialegress/catalogdata/runtime/release-graphs/14b8b4a1e52e69aaf3625cff5a89b81ce2f3cd4b39b8f1416911b72f00a38815.json",
+      "sha256": "14b8b4a1e52e69aaf3625cff5a89b81ce2f3cd4b39b8f1416911b72f00a38815",
+      "reason": "纳入 Active 0.149.1 与 candidate Previous 0.151.0 发布图。"
+    },
+    {
+      "path": "backend/internal/officialegress/catalogdata/runtime/snapshot-catalogs/af1b4a7513b02556d4a3245a709e1e153969892a3d8ab6e1abebff6c3284b450.json",
+      "sha256": "af1b4a7513b02556d4a3245a709e1e153969892a3d8ab6e1abebff6c3284b450",
+      "reason": "纳入保留 0.147/0.149.1 历史资产并追加 0.151 的 SnapshotCatalog。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_formal_recovery_source_transition_test.go",
+      "sha256": "1ce77dc959b7621b690db2bb616d22fa60986a203b2ade581484481acb71f866",
+      "reason": "在 officialegress 包冻结并变异测试本次 Formal 恢复 transition。"
+    },
+    {
+      "path": "backend/internal/officialegress/profilecontract/testdata/snapshots/0.151.0/dbc65378c80a2ad843ce1ba6253a2e47f0dd5d8bc812bb536a2d24ddb7a59e39.json",
+      "sha256": "f99ffb49b17f34b4c017280acb60618f4f8b12564c6fde9a846b8a4d0156313d",
+      "reason": "向 profilecontract 夹具追加同字节 0.151 Snapshot。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_formal_recovery_source_transition_test.go",
+      "sha256": "5a8bb698c3f9d8de3fc91da910666a73ad60c19bf571b750958224fc7a780b1e",
+      "reason": "在 service 包独立重放并变异测试同一 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-formal-recovery/plan.json",
+      "sha256": "a5d89b130590660624283f7339adc9a0c75c6ee921472b03eb90b7b18946cb2b",
+      "reason": "冻结本变更集预算、ARM64 网络、零 live 请求与恢复终点。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_rule_expectations_0_151_0.json",
+      "sha256": "b58ff72be915d77893cb21fa5422f0633872d016dd996fc410f0bf21615f4cca",
+      "reason": "纳入 0.151 候选逐规则断言画像。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "sha256": "9bd4431ac4f099e6771e888c59fd27b0c2ff6a2e7eecf2ad7da74116136ad94e",
+      "reason": "纳入 0.151 候选测试事实映射。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_formal_recovery",
+  "identity_sha256": "fff5d9baccf57a6a084f0b7f0230046cdcb1f23a1975e08513cb04e70fffa718"
+}

@@ -27,8 +27,8 @@ from tools.official_client_capture.candidate_rule_assertion import (
 
 
 TOOL_ROOT = Path(__file__).resolve().parents[1]
-PROFILE_PATH = TOOL_ROOT / "candidate_rule_expectations_0_145_0.json"
-RULE_MANIFEST_PATH = TOOL_ROOT / "codex_upgrade_rules_0_145_0.json"
+PROFILE_PATH = TOOL_ROOT / "candidate_rule_expectations_0_149_1.json"
+RULE_MANIFEST_PATH = TOOL_ROOT / "codex_upgrade_rules_0_149_1.json"
 
 
 def write_manifest(
@@ -39,7 +39,7 @@ def write_manifest(
         json.dumps(
             {
                 "schema_version": "codex-candidate-capture-manifest/v1",
-                "codex_version": "0.145.0",
+                "codex_version": "0.149.1",
                 "capture_id": "unit-test-capture",
                 "status": "complete",
                 "artifacts": artifacts,
@@ -443,7 +443,7 @@ class CandidateRuleAssertionTest(unittest.TestCase):
         return evidence_root, manifest, evidence
 
     def _models_fixture(
-        self, root: Path, *, version: str = "0.145.0"
+        self, root: Path, *, version: str = "0.149.1"
     ) -> tuple[Path, Path]:
         evidence_root = root / "evidence"
         evidence = evidence_root / "candidate/A09/models.bin"
@@ -452,10 +452,10 @@ class CandidateRuleAssertionTest(unittest.TestCase):
             (
                 "GET /backend-api/codex/models?client_version="
                 f"{version} HTTP/1.1\r\n"
-                "version: 0.145.0\r\n"
+                "version: 0.149.1\r\n"
                 "accept: */*\r\n"
                 "originator: codex_exec\r\n"
-                "user-agent: codex_exec/0.145.0\r\n"
+                "user-agent: codex_exec/0.149.1\r\n"
                 "host: chatgpt.com\r\n\r\n"
             ).encode("ascii")
         )
@@ -519,7 +519,7 @@ class CandidateRuleAssertionTest(unittest.TestCase):
             )
             self.assertEqual(
                 checks[1]["actual"]["values"][0]["query_pairs"],
-                [["client_version", "0.145.0"]],
+                [["client_version", "0.149.1"]],
             )
 
     def test_wrong_version_fails_semantically(self) -> None:
@@ -672,7 +672,7 @@ class CandidateRuleAssertionTest(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": "codex-candidate-capture-manifest/v1",
-                        "codex_version": "0.145.0",
+                        "codex_version": "0.149.1",
                         "capture_id": "frame-label-derived",
                         "status": "complete",
                         "artifacts": [
@@ -725,7 +725,7 @@ class CandidateRuleAssertionTest(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": "codex-candidate-capture-manifest/v1",
-                        "codex_version": "0.145.0",
+                        "codex_version": "0.149.1",
                         "capture_id": "frame-label-derived-missing",
                         "status": "complete",
                         "artifacts": [

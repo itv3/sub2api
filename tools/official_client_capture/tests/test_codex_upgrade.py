@@ -19,6 +19,7 @@ from tools.official_client_capture import codex_upgrade
 from tools.official_client_capture import codex_upgrade_gate_receipt
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
 from tools.official_client_capture import codex_upgrade_receipt_finalizer
+from tools.official_client_capture import codex_upgrade_timing_ledger
 from tools.official_client_capture.codex_upgrade import (
     build_coverage,
     compare_inventory,
@@ -219,6 +220,41 @@ class CodexUpgradeTest(unittest.TestCase):
             ):
                 codex_upgrade.create_campaign(arguments)
 
+    def test_recovery_preflight_accepts_current_active_phase(self) -> None:
+        """恢复态离线 P0 可在 VC-4 重跑，但不会推进正式 Campaign。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments = self._campaign_arguments(
+                root / "recovery-preflight",
+                campaign_mode="preflight_only",
+            )
+            ledger_root = arguments.timing_ledger_dir
+            for index, phase in enumerate(("VC-0", "VC-1", "VC-2", "VC-3")):
+                codex_upgrade_timing_ledger.append_event(
+                    ledger_root,
+                    event_id=f"complete-{index}-{phase.lower()}",
+                    phase=phase,
+                    event_type="stage_completed",
+                )
+                next_phase = f"VC-{index + 1}"
+                codex_upgrade_timing_ledger.append_event(
+                    ledger_root,
+                    event_id=f"start-{index + 1}-{next_phase.lower()}",
+                    phase=next_phase,
+                    event_type="stage_started",
+                )
+            checkpoint = "receipts/recovery-vc4.json"
+            codex_upgrade_timing_ledger.checkpoint(ledger_root, checkpoint)
+            arguments.timing_receipt = ledger_root / checkpoint
+
+            manifest = codex_upgrade.create_campaign(arguments)
+            self.assertEqual(manifest["campaign_mode"], "preflight_only")
+            self.assertEqual(
+                codex_upgrade.campaign_status(arguments.campaign_dir)["status"],
+                "preflight_complete",
+            )
+
     def test_campaign_loader_rejects_missing_invalid_and_tampered_mode(self) -> None:
         for mutation, update_digest, message in (
             ("missing", True, "campaign_mode"),
@@ -314,13 +350,14 @@ class CodexUpgradeTest(unittest.TestCase):
         self.assertEqual(scenario["codex_version"], "0.145.0")
 
         source_spec = scenario["source_spec"]
-        source_spec_path = repo_root / source_spec["path"]
+        frozen_profile = json.loads(
+            (
+                tool_root / "candidate_rule_expectations_0_145_0.json"
+            ).read_text(encoding="utf-8")
+        )
         self.assertEqual(
             source_spec["sha256"],
-            codex_upgrade.source_spec_section_sha256(
-                source_spec_path,
-                source_spec["fragment"],
-            ),
+            frozen_profile["source_spec_sha256"],
         )
 
         rule_binding = scenario["rule_manifest"]
@@ -978,10 +1015,22 @@ class CodexUpgradeTest(unittest.TestCase):
         *,
         version: str,
         name: str,
+        historical_source_binding: bool = False,
     ) -> Path:
         spec_path = Path(__file__).resolve().parents[3] / "docs" / (
             "CODEX_CLI_CLIENT_EMULATION_GUIDE.md"
         )
+        source_spec_sha256 = codex_upgrade.source_spec_section_sha256(
+            spec_path, "第二章"
+        )
+        if historical_source_binding:
+            frozen_profile = Path(__file__).resolve().parents[1] / (
+                "candidate_rule_expectations_"
+                f"{version.replace('.', '_')}.json"
+            )
+            source_spec_sha256 = json.loads(
+                frozen_profile.read_text(encoding="utf-8")
+            )["source_spec_sha256"]
         scenario_manifest = root / name
         self._write_json(
             scenario_manifest,
@@ -996,9 +1045,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 "source_spec": {
                     "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
                     "fragment": "第二章",
-                    "sha256": codex_upgrade.source_spec_section_sha256(
-                        spec_path, "第二章"
-                    ),
+                    "sha256": source_spec_sha256,
                 },
                 "rule_manifest": {
                     "path": str(
@@ -1145,6 +1192,7 @@ class CodexUpgradeTest(unittest.TestCase):
             tuple(required_rules),
             version="0.145.0",
             name="scenarios.json",
+            historical_source_binding=True,
         )
         target_rule_manifest = root / "target-rules.json"
         self._write_json(
@@ -2694,6 +2742,132 @@ class CodexUpgradeTest(unittest.TestCase):
                 predecessor_classification["package_digest"],
             )
             self.assertFalse((successor_dir / "official" / "attempts").exists())
+
+    def test_successor_rebinds_current_job_rehearsal_after_tool_change(
+        self,
+    ) -> None:
+        """产出侧工具变化后必须用当前合同的新演练收据建立后继。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            predecessor_dir, predecessor_manifest, _ = (
+                self._create_classified_campaign(root / "predecessor")
+            )
+            current_identity = codex_upgrade._tool_identity()
+            entries = [dict(item) for item in current_identity["entries"]]
+            entries.append(
+                {
+                    "path": "synthetic-output-tool.py",
+                    "sha256": "f" * 64,
+                }
+            )
+            entries.sort(key=lambda item: item["path"])
+            successor_identity = {
+                **current_identity,
+                "entry_count": len(entries),
+                "files_sha256": codex_upgrade._fingerprint(
+                    {"entries": entries}
+                ),
+                "entries": entries,
+                **codex_upgrade._tool_identity_sides(entries),
+            }
+            successor_contract_manifest = json.loads(
+                json.dumps(predecessor_manifest)
+            )
+            successor_contract_manifest["tool_identity"] = successor_identity
+            successor_contract_manifest["configuration"]["codex_account_id"] = 91
+            contract = codex_upgrade._job_rehearsal_contract_from_manifest(
+                predecessor_dir,
+                successor_contract_manifest,
+            )
+            rehearsal_root = root / "control" / "successor-rehearsal"
+
+            with mock.patch.object(
+                codex_upgrade,
+                "_tool_identity",
+                return_value=successor_identity,
+            ):
+                rehearsal_receipt = create_job_rehearsal_receipt(
+                    rehearsal_root,
+                    contract=contract,
+                    preflight_campaign_id="recovery-preflight-fixture",
+                )
+                rejected_dir = root / "successor-without-rehearsal"
+                return_code, _, stderr = self._run_main(
+                    [
+                        "successor",
+                        "--predecessor-campaign-dir",
+                        str(predecessor_dir),
+                        "--campaign-dir",
+                        str(rejected_dir),
+                        "--campaign-id",
+                        "upgrade-0146-successor-rejected",
+                        "--codex-account-id",
+                        "91",
+                        "--reason",
+                        "candidate_runtime_identity_correction",
+                    ]
+                )
+                self.assertEqual(return_code, 1)
+                self.assertIn("当前执行合同", stderr)
+                self.assertFalse(rejected_dir.exists())
+
+                successor_dir = root / "successor-with-rehearsal"
+                return_code, stdout, stderr = self._run_main(
+                    [
+                        "successor",
+                        "--predecessor-campaign-dir",
+                        str(predecessor_dir),
+                        "--campaign-dir",
+                        str(successor_dir),
+                        "--campaign-id",
+                        "upgrade-0146-successor-rebound",
+                        "--codex-account-id",
+                        "91",
+                        "--reason",
+                        "candidate_runtime_identity_correction",
+                        "--job-rehearsal-root",
+                        str(rehearsal_root),
+                        "--job-rehearsal-receipt",
+                        str(rehearsal_receipt),
+                    ]
+                )
+                self.assertEqual(return_code, 0, stderr)
+                self.assertTrue(json.loads(stdout)["job_rehearsal_rebound"])
+                successor_manifest = codex_upgrade.load_campaign_manifest(
+                    successor_dir
+                )
+
+            predecessor_control = predecessor_manifest["control_receipts"][
+                "job_rehearsal"
+            ]
+            successor_control = successor_manifest["control_receipts"][
+                "job_rehearsal"
+            ]
+            self.assertNotEqual(successor_control, predecessor_control)
+            self.assertEqual(
+                successor_control["execution_contract_sha256"],
+                codex_upgrade_job_rehearsal_receipt.execution_contract_sha256(
+                    contract
+                ),
+            )
+            import_receipt = json.loads(
+                (successor_dir / "predecessor-import.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                import_receipt["schema_version"],
+                codex_upgrade.PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+            )
+            self.assertEqual(
+                import_receipt["job_rehearsal_transition"],
+                {
+                    "reason": "current_execution_contract_rehearsal",
+                    "predecessor": predecessor_control,
+                    "successor": successor_control,
+                },
+            )
 
     def test_successor_rebinds_live_attestation_compose_coordinates_immutably(
         self,

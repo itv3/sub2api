@@ -69,7 +69,13 @@ func validateCodex01491TerminalArtifact(artifact codex01491TerminalArtifact) err
 		return errors.New("0.149.1 终态制品坐标非法")
 	}
 	raw, err := os.ReadFile(codex01491TerminalRepoPath(artifact.Path))
-	if err != nil || upstreamMergeFrameworkDigest(raw) != artifact.SHA256 {
+	currentDigest := upstreamMergeFrameworkDigest(raw)
+	if err != nil || (currentDigest != artifact.SHA256 &&
+		!codex0151FormalRecoverySourceTransitionSupersedes(
+			artifact.Path,
+			artifact.SHA256,
+			currentDigest,
+		)) {
 		return errors.New("0.149.1 终态制品摘要不一致：" + artifact.Path)
 	}
 	return nil

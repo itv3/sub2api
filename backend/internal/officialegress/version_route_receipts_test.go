@@ -21,34 +21,16 @@ func TestVersionRouteReceiptBindsCurrentProfilesThatContainEndpoint(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range []string{"0.147.0", "0.149.1"} {
-		targetBundle := versionRouteResolveBundleByVersion(t, resolver, version)
+	for _, mode := range []ReleaseMode{ReleaseModeActive, ReleaseModePrevious} {
+		targetBundle := versionRouteResolveBundle(t, resolver, mode)
 		plan, err := targetBundle.ResolveEndpointPlan(
 			SinkCodexQuotaWHAM, "GET", target, WireProtocolHTTP,
 		)
 		if err != nil || plan.EndpointID() != "wham_settings_user" {
-			t.Fatalf("%s 画像未生成 settings/user EndpointPlan：plan=%+v err=%v", version, plan, err)
+			t.Fatalf("%s/%s 画像未生成 settings/user EndpointPlan：plan=%+v err=%v",
+				mode, targetBundle.Version(), plan, err)
 		}
 	}
-}
-
-func versionRouteResolveBundleByVersion(
-	t *testing.T,
-	resolver *BundleResolver,
-	version string,
-) ReleaseBundle {
-	t.Helper()
-	for _, mode := range []ReleaseMode{ReleaseModeActive, ReleaseModePrevious} {
-		release, err := DefaultReleaseCatalog().Resolve(mode)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if release.Version() == version {
-			return versionRouteResolveBundle(t, resolver, mode)
-		}
-	}
-	t.Fatalf("ReleaseCatalog 缺少版本 %s", version)
-	return ReleaseBundle{}
 }
 
 func TestVersionRouteReceiptFailsClosedOnMutations(t *testing.T) {

@@ -233,7 +233,14 @@ func staticClosureEgressPlan(
 	}
 	semanticBody := staticClosureSemanticBody(t, plan.template.endpoint)
 	routingHint := CodexRoutingHintFacts{}
-	if bundle.Version() == "0.149.1" && officialCodexRoutingHintEndpoint(plan.EndpointID()) {
+	requiresRoutingHint := false
+	for _, slot := range plan.template.endpoint.Headers {
+		if strings.EqualFold(strings.TrimSpace(slot.Name), "x-codex-routing-hint") {
+			requiresRoutingHint = true
+			break
+		}
+	}
+	if requiresRoutingHint {
 		routingHint, err = ParseOfficialCodexRoutingHintFacts(plan.EndpointID(), semanticBody)
 		if err != nil {
 			t.Fatal(err)
