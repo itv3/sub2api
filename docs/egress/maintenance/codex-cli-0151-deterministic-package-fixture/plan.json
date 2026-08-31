@@ -1,0 +1,35 @@
+{
+  "schema_version": "codex-cli-0151-deterministic-package-fixture-plan/v1",
+  "change_set": "codex_cli_0151_deterministic_package_fixture",
+  "purpose": "消除合成 tar.gz 时间戳导致的 ARM64 跨秒摘要漂移",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "9ef01aee9105a66bc61f03f886392119c64ec147",
+    "tree": "ad8b8a3d4a681f1c5999c87802497a472941f56d",
+    "failed_gate": "make test-capture-tools",
+    "failed_test": "test_successor_rebinds_controls_after_predecessor_ledger_stops",
+    "failed_elapsed_seconds": 114.65
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T06:20:54Z",
+    "deadline_at_utc": "2026-08-31T06:35:54Z",
+    "wall_clock_minutes": 15,
+    "same_root_cause_retry_limit": 2
+  },
+  "fix_contract": {
+    "gzip_mtime": 0,
+    "production_validation_relaxed": false,
+    "live_request_limit": 0
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus_ipv4": "172.25.0.3",
+    "capture_cli_ipv4": "172.30.0.10",
+    "network_changes_allowed": false
+  },
+  "required_outputs": [
+    "相同合成包在跨秒执行时摘要一致",
+    "恢复 successor 仍拒绝真实 package 摘要漂移",
+    "ARM64 全量捕获工具门禁通过"
+  ]
+}

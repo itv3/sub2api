@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import gzip
 import hashlib
 import io
 import json
@@ -1225,17 +1226,30 @@ class CodexUpgradeTest(unittest.TestCase):
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        with tarfile.open(package_path, mode="w:gz") as archive:
-            for name, content, mode in (
-                ("codex-package.json", package_metadata, 0o644),
-                ("bin/codex", binary_bytes, 0o755),
-                ("bin/codex-code-mode-host", code_mode_host_bytes, 0o755),
-            ):
-                member = tarfile.TarInfo(name)
-                member.size = len(content)
-                member.mode = mode
-                member.mtime = 0
-                archive.addfile(member, io.BytesIO(content))
+        # 恢复 preflight 必须与前序 Campaign 得到相同的合成包摘要；
+        # 固定 gzip 时间，避免慢速 ARM64 跨秒执行时产生不同字节。
+        with package_path.open("wb") as package_file:
+            with gzip.GzipFile(
+                fileobj=package_file,
+                mode="wb",
+                filename="",
+                mtime=0,
+            ) as compressed:
+                with tarfile.open(fileobj=compressed, mode="w") as archive:
+                    for name, content, mode in (
+                        ("codex-package.json", package_metadata, 0o644),
+                        ("bin/codex", binary_bytes, 0o755),
+                        (
+                            "bin/codex-code-mode-host",
+                            code_mode_host_bytes,
+                            0o755,
+                        ),
+                    ):
+                        member = tarfile.TarInfo(name)
+                        member.size = len(content)
+                        member.mode = mode
+                        member.mtime = 0
+                        archive.addfile(member, io.BytesIO(content))
         timing_root = root / "control" / "UpgradeTimingLedger"
         timing_receipt = create_timing_checkpoint(
             timing_root,
@@ -3009,6 +3023,26 @@ class CodexUpgradeTest(unittest.TestCase):
                     "head_sequence"
                 ],
                 10,
+            )
+
+    def test_campaign_fixture_package_is_independent_of_wall_clock(self) -> None:
+        """合成包不得因前序和恢复 preflight 跨秒而改变摘要。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(gzip.time, "time", return_value=1_000):
+                first = self._campaign_arguments(
+                    root / "first",
+                    campaign_mode="preflight_only",
+                )
+            with mock.patch.object(gzip.time, "time", return_value=2_000):
+                second = self._campaign_arguments(
+                    root / "second",
+                    campaign_mode="preflight_only",
+                )
+            self.assertEqual(
+                first.target_package_sha256,
+                second.target_package_sha256,
             )
 
     def test_successor_rebinds_live_attestation_compose_coordinates_immutably(

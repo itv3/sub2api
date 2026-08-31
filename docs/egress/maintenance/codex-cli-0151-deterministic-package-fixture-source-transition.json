@@ -1,0 +1,61 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-deterministic-package-fixture-source-transition/v1",
+  "issued_at_utc": "2026-08-31T06:20:54Z",
+  "base_commit": "9ef01aee9105a66bc61f03f886392119c64ec147",
+  "scope": "codex-cli-0.151-deterministic-package-fixture",
+  "predecessor": {
+    "kind": "codex_cli_0151_stopped_ledger_recovery_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+    "sha256": "9da261eaae555c192aa963bbefc756617341a1a5879993087cb2233ec595a445"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_stopped_ledger_recovery_source_transition_test.go",
+      "from_sha256": "b0500ed0780f3d6110935943615ce4162d5835100be3afc7486972f1bbfa86e1",
+      "to_sha256": "f5aad8fc9b1a5e9cf0ae0d700346ecd30b34bcfaa954c7d8d58011c0d9779864",
+      "reason": "让 officialegress 的停线恢复 transition 承接确定性包夹具后继。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_stopped_ledger_recovery_source_transition_test.go",
+      "from_sha256": "512f8162c5ecec8de00ac1552e8d52c6c5f191741c2a8cf03b3eb40586fcae12",
+      "to_sha256": "f6049d57e57e0f8f6a1a0d7191152054cdaaafb8513f971a287eb4c564ecef0b",
+      "reason": "让 service 的停线恢复 transition 独立承接确定性包夹具后继。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "a4074100b278b817a6c20a2c6859435649f250c64aee11f0d6ac423b37da39bf",
+      "to_sha256": "349b024d590e3d3f540e9fa0033027c95d76bfa08992ec0cb9e284c69dd80396",
+      "reason": "固定合成包 gzip 时间并覆盖跨秒摘要稳定性。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_deterministic_package_fixture_source_transition_test.go",
+      "sha256": "b92954e5b3466366808982c1e84de174a86b9ec9a2e40c3244835ab0e3375424",
+      "reason": "在 officialegress 包冻结并变异测试确定性包夹具 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_deterministic_package_fixture_source_transition_test.go",
+      "sha256": "dc66a00b49e893137f0e2b360896ce919448007bb30d406e1fe982671a912ddb",
+      "reason": "在 service 包独立重放同一确定性包夹具 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-deterministic-package-fixture/plan.json",
+      "sha256": "184099b93a8feaf96eca84ed458f09e8e39df2189eea8c0a316a8c9a1112f3fd",
+      "reason": "冻结失败事实、修复预算和网络不变量。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade.CodexUpgradeTest.test_campaign_fixture_package_is_independent_of_wall_clock tools.official_client_capture.tests.test_codex_upgrade.CodexUpgradeTest.test_successor_rebinds_controls_after_predecessor_ledger_stops",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(DeterministicPackageFixture|StoppedLedgerRecovery)' -count=1",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_deterministic_package_fixture",
+  "identity_sha256": "ea8f16061e1d931c4db75d72b0acca3dd267d026fd15c0a428cfdcd03f0c2077"
+}
