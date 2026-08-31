@@ -55,8 +55,9 @@ Codex 行为”，第三部分说明“Sub2API 如何实现 Codex 方言”，�
 
 # 第二部分 Codex CLI 客户端规则画像
 
-本部分定义规则成立所需的证据标准、观测边界和当前 active 基线的 53 个编号项。它回答“什么
-行为可以成为客户端规则”；目标版本如何执行取证并生成新规则，只由第四部分规定。
+本部分定义规则成立所需的证据标准、观测边界和 53 个编号项。当前生产 active 仍为 0.149.1；
+本次 0.151.0 候选在相同规则全集上增加 ARM64 身份事实和 Files C2PA 条件分支，只有完成第四部分
+生产激活后才能把文首 active／previous 改为 0.151.0／0.149.1。
 
 ## 2.1 规则证据与准入标准
 
@@ -64,7 +65,7 @@ Codex 行为”，第三部分说明“Sub2API 如何实现 Codex 方言”，�
 
 | 类型 | 材料 | 可以证明 |
 |---|---|---|
-| L1 | `local-analysis/sources/codex-cli-0.149.1/codex-rs/` 官方 stable 源码 | 调用链、条件和内部机制 |
+| L1 | `local-analysis/sources/codex-cli-<version>/codex-rs/` 官方 stable 源码 | 调用链、条件和内部机制 |
 | L2 | `tools/spec_source_deps/` 锁定依赖源码 | 指定依赖版本与 feature 下的行为 |
 | P／R | pcap、等长脱敏原始字节 | TLS、连接、HTTP／WS 和 Body 的实际输出 |
 | J／M／L4 | 解码摘要、manifest、测试和合成输入 | 摘要绑定与辅助验证，不能单独定义官方规则 |
@@ -97,6 +98,12 @@ Main 与 WS Lite 主采样分别绑定 run `codex-0_149_1-20260824T-http-main-r2
 [`K83 production activation receipt`](egress/maintenance/CODEX_CLI_0145_TO_0147_K83_PRODUCTION_ACTIVATION_RECEIPT.json)
 证明；它们现在是 previous 与历史生产证据，不表示本次修改或部署了 Vircs。各规则保留的早期 run ID
 是未变化规则的原始证据，不代表 active 版本仍为旧版本。
+
+0.151.0 候选绑定官方 tag `rust-v0.151.0`（commit
+`78c290807ce710180111df227df3b7a4fe845452`）、`aarch64-unknown-linux-musl` 包和 ARM64 二进制
+SHA-256 `56f026015ccc3ebc12895282200d89c216892bf6fa15fa7f228e6e0c6ad6ce76`。正式证据位于 Campaign
+`c0151-formal-20260831t0220z-r8` 的 attempt `20260831T022126Z-901dd6612631b7bf`；29 个 Job、
+权限、秘密扫描、环境恢复及 `172.30.0.10／172.25.0.3 → 179.255.100.158` 出口门禁均已封存。
 
 所有证据必须绑定官方源码、依赖、二进制、平台、配置、账号、抓包运行号和摘要。只有能够重新
 解析的材料可以作为规则依据；R 类材料只允许等长脱敏，未脱敏材料不得离开采集机。
@@ -496,6 +503,8 @@ images、alpha-search、legacy compact、realtime 和条件 header 等只在各�
   （TUI）、`audit-ep019-wham-consume-safe-20260730a`（`codex_exec` originator、
   `unknown` 终端标识）均为 R。
 - **实现**：按入口和进程状态生成 suffix；不得把一次首次 models 结果硬编码为固定值。
+- **0.151.0 ARM64 候选**：exec／TUI 的版本均改为 `0.151.0`，平台前缀为
+  `(Ubuntu 24.4.0; aarch64)`；suffix 的可选性和生成规则不变。
 - **状态**：✅ 源码充分；抓包充分。
 
 ### SPEC-HDR-006 accept 按传输和端点变化
@@ -656,8 +665,11 @@ images、alpha-search、legacy compact、realtime 和条件 header 等只在各�
   文件上传 PUT 使用服务端返回的区域 `*.oaiusercontent.com` URL。
 - **Files 规则**：`POST /backend-api/files` 的基础 Body 为 `file_name, file_size, use_case`；hosted
   connector 调用必须再同时发送 `codex_connector_id, codex_action_name, codex_model`，三者必须全有
-  或全无。随后 PUT 必须逐字使用 create 响应返回的完整 URL，最后以空对象 POST
-  `/backend-api/files/{file_id}/uploaded`；`status=retry` 复用 finalize invocation 轮询。成功响应含
+  或全无。随后 PUT 必须逐字使用 create 响应返回的完整 URL。0.149.1 最后以空对象 POST
+  `/backend-api/files/{file_id}/uploaded`；0.151.0 在 create 响应没有
+  `pdf_c2pa_reservation=true` 时仍发送空对象，条件成立时只发送
+  `pdf_c2pa_create_request`，其值与本次 create 请求 JSON 等值。`status=retry` 复用 finalize invocation
+  轮询。成功响应含
   `file_size_bytes` 时以它为最终大小，缺失时回退到请求大小。
 - **源码**：[L1] `model-provider-info/src/lib.rs:377-380`、
   `login/src/auth/manager.rs:194`、`core/src/realtime_conversation.rs:1161-1169`、
@@ -667,7 +679,8 @@ images、alpha-search、legacy compact、realtime 和条件 header 等只在各�
 - **实测**：`oauth-ep002-allhosts`、`oauth-ep002-refresh`（P）；
   `audit-ep012-sideband-synth-20260730a`、
   `audit-ep002-file-upload-full2-20260730a`（R）；0.149.1 hosted 三元字段与大小优先级由官方源码测试、
-  Sub2API 三跳集成测试及缺字段负例共同闭环。
+  Sub2API 三跳集成测试及缺字段负例共同闭环。0.151.0 的 C2PA 正反样本由 Formal r8 的
+  `official-relay-file-upload-c2pa-negative／positive` 两个 Job 闭环。
 - **实现**：使用配置或服务端返回 URL；不得硬编码单一区域上传 host。create 与 uploaded 分别冻结
   Body attestation，uploaded 的 retry 只复用自身 invocation，避免把 hosted create 条件扩散到空 Body。
 - **状态**：✅ 源码部分；抓包充分。
