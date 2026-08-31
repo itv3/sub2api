@@ -1636,6 +1636,9 @@ Campaign 外的待审核 `profile.json`。随后审核：
 ### 4.3.1 画像暂存
 
 ~~~bash
+export PATH="/root/oauth-capture/state/local/go1.27.0/bin:$PATH"
+export GOPROXY=off
+export GOFLAGS=-mod=readonly
 python3 tools/official_client_capture/codex_upgrade.py stage-profile \
   --campaign-dir /绝对路径/campaign \
   --output /绝对路径/新的候选-runtime-catalog
