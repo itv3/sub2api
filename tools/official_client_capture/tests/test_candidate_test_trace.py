@@ -35,8 +35,8 @@ class CandidateTestTraceTest(unittest.TestCase):
         # - candidate_test_trace 冻结的映射与画像都要与 Campaign 目标同版本，否则
         #   load_mapping／load_profile 的 codex_version 校验直接拒绝。
         baseline_profile = tool_root / "candidate_rule_expectations_0_145_0.json"
-        target_profile = tool_root / "candidate_rule_expectations_0_149_1.json"
-        target_mapping = tool_root / "candidate_test_fact_map_0_149_1.json"
+        target_profile = tool_root / "candidate_rule_expectations_0_151_0.json"
+        target_mapping = tool_root / "candidate_test_fact_map_0_151_0.json"
 
         self.assertEqual(
             candidate_rule_assertion.FROZEN_PROFILE_SHA256,
@@ -413,8 +413,8 @@ class CandidateTestTraceTest(unittest.TestCase):
     def test_default_mapping_digest_and_fact_universe_are_frozen(self) -> None:
         tool_root = Path(__file__).resolve().parents[1]
         _, tests = load_mapping(
-            tool_root / "candidate_test_fact_map_0_149_1.json",
-            expected_codex_version="0.149.1",
+            tool_root / "candidate_test_fact_map_0_151_0.json",
+            expected_codex_version="0.151.0",
             expected_sha256=candidate_test_trace.FROZEN_MAPPING_SHA256,
         )
         fact_ids = {
@@ -422,11 +422,14 @@ class CandidateTestTraceTest(unittest.TestCase):
             for test in tests
             for fact in test.facts
         }
-        self.assertEqual(len(tests), 11)
-        self.assertEqual(len(fact_ids), 31)
+        self.assertEqual(len(tests), 12)
+        self.assertEqual(len(fact_ids), 34)
         self.assertIn("a07.oauth-fallback", fact_ids)
         self.assertIn("a08.connection-lifecycle", fact_ids)
         self.assertIn("a14.file-upload-url-chain", fact_ids)
+        self.assertIn("a14.file-upload-c2pa-negative", fact_ids)
+        self.assertIn("a14.file-upload-c2pa-positive", fact_ids)
+        self.assertIn("a14.file-upload-c2pa-positive-retry", fact_ids)
         record_types = {
             fact.record_type
             for test in tests

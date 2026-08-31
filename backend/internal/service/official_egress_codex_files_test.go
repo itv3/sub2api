@@ -261,6 +261,96 @@ func TestUploadOfficialCodexFileExecutesProfileDrivenThreeStepFlow(t *testing.T)
 		"create_upload_url_sha256": createUploadURLSHA256,
 		"put_url_sha256":           putURLSHA256,
 	})
+	candidateTraceLogFact(t, "a14.file-upload-c2pa-negative", "A14", "file_upload_chain", map[string]any{
+		"c2pa_condition":                  "negative",
+		"body_mode":                       "empty_object",
+		"embedded_create_request_matches": false,
+		"attempt_count":                   finalizeAttempts.Load(),
+	})
+}
+
+func TestUploadOfficialCodexFileC2PAReservationReusesCreateBodyOnRetry(t *testing.T) {
+	var wireMu sync.Mutex
+	wires := make([]officialCodexFileWireRequest, 0, 4)
+	var finalizeAttempts atomic.Int32
+	const returnedUploadURL = "https://region.oaiusercontent.com/files/file_c2pa/raw?sig=c2pa"
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, readErr := io.ReadAll(request.Body)
+		require.NoError(t, readErr)
+		wireMu.Lock()
+		wires = append(wires, officialCodexFileWireRequest{
+			Method: request.Method, RequestURI: request.RequestURI,
+			Host: request.Host, Header: request.Header.Clone(),
+			ContentLength: request.ContentLength, Body: body,
+		})
+		wireMu.Unlock()
+
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/backend-api/files":
+			writer.Header().Set("content-type", "application/json")
+			_, _ = fmt.Fprintf(
+				writer,
+				`{"file_id":"file_c2pa","upload_url":%q,"pdf_c2pa_reservation":true}`,
+				returnedUploadURL,
+			)
+		case request.Method == http.MethodPut && request.URL.Path == "/files/file_c2pa/raw":
+			writer.WriteHeader(http.StatusCreated)
+		case request.Method == http.MethodPost && request.URL.Path == "/backend-api/files/file_c2pa/uploaded":
+			writer.Header().Set("content-type", "application/json")
+			if finalizeAttempts.Add(1) == 1 {
+				_, _ = io.WriteString(writer, `{"status":"retry"}`)
+				return
+			}
+			_, _ = io.WriteString(writer, `{"status":"success","download_url":"https://download.example/file_c2pa"}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	upstream := newOfficialCodexFileTestUpstream(t, server)
+	runtimeState, err := newOfficialEgressTransitionRuntimeWithExecutor(
+		officialegress.DefaultGuard(),
+		upstream,
+		officialegress.ExecutorID(t.Name()),
+		officialegress.ReleaseModePrevious,
+	)
+	require.NoError(t, err)
+	service := &OpenAIGatewayService{httpUpstream: upstream, officialEgress: runtimeState}
+	_, err = service.UploadOfficialCodexFile(
+		context.Background(),
+		officialCodexFileTestAccount(),
+		OfficialCodexFileUploadInput{
+			FileName: "report.pdf", FileSizeBytes: 8,
+			Contents: bytes.NewReader([]byte("%PDF-1.4")),
+		},
+	)
+	require.NoError(t, err)
+
+	wireMu.Lock()
+	actualWires := append([]officialCodexFileWireRequest(nil), wires...)
+	wireMu.Unlock()
+	require.Len(t, actualWires, 4)
+	require.Equal(t, []byte(`{"file_name":"report.pdf","file_size":8,"use_case":"codex"}`), actualWires[0].Body)
+	expectedUploadedBody := []byte(
+		`{"pdf_c2pa_create_request":{"file_name":"report.pdf","file_size":8,"use_case":"codex"}}`,
+	)
+	require.Equal(t, expectedUploadedBody, actualWires[2].Body)
+	require.Equal(t, expectedUploadedBody, actualWires[3].Body)
+	require.Equal(t, int32(2), finalizeAttempts.Load())
+	candidateTraceLogFact(t, "a14.file-upload-c2pa-positive", "A14", "file_upload_chain", map[string]any{
+		"c2pa_condition":                  "positive",
+		"body_mode":                       "pdf_c2pa_create_request",
+		"embedded_create_request_matches": true,
+	})
+	candidateTraceLogFact(t, "a14.file-upload-c2pa-positive-retry", "A14", "file_upload_chain", map[string]any{
+		"c2pa_condition":                  "positive_retry",
+		"body_mode":                       "pdf_c2pa_create_request",
+		"embedded_create_request_matches": true,
+		"attempt_count":                   finalizeAttempts.Load(),
+		"retry_body_reused":               bytes.Equal(actualWires[2].Body, actualWires[3].Body),
+	})
 }
 
 func TestUploadOfficialCodexHostedFileIncludesContextAndFallsBackToRequestSize(t *testing.T) {
@@ -460,7 +550,7 @@ func TestOfficialCodexFileFinalizeStopsAtProfileTimeout(t *testing.T) {
 		t.Fatal("达到画像总超时后不应继续 sleep")
 		return nil
 	}
-	_, err = call.finalize("file_123", "hello.txt", 5)
+	_, err = call.finalize("file_123", "hello.txt", 5, nil, false)
 	require.ErrorContains(t, err, "30s 内尚未就绪")
 	require.Len(t, upstream.snapshot(), 1)
 }

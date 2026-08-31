@@ -34,10 +34,10 @@ OBSERVATION_SCHEMA_VERSION = "codex-candidate-observation/v1"
 RECEIPT_SCHEMA_VERSION = "codex-candidate-test-trace-receipt/v1"
 FACT_PREFIX = "CANDIDATE_TRACE_FACT "
 DEFAULT_MAPPING_RELATIVE_PATH = (
-    "tools/official_client_capture/candidate_test_fact_map_0_149_1.json"
+    "tools/official_client_capture/candidate_test_fact_map_0_151_0.json"
 )
 DEFAULT_PROFILE_RELATIVE_PATH = (
-    "tools/official_client_capture/candidate_rule_expectations_0_149_1.json"
+    "tools/official_client_capture/candidate_rule_expectations_0_151_0.json"
 )
 # 冻结映射内容完成后由离线测试固定；任何修改都必须显式更新并重新审核。
 #
@@ -56,8 +56,10 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 映射只更新这两份源码快照，不改变测试、事实或规则语义。
 # 2026-08-24：目标升级到 0.149.1；冻结映射重算同一组验收测试与生产源码摘要，
 # 规则和事实宇宙保持不变。
+# 2026-08-31：目标升级到 0.151.0；新增 Files C2PA 正、负和 retry 三类候选事实，
+# 并绑定同源文件上传实现与测试摘要。
 FROZEN_MAPPING_SHA256 = (
-    "d0f36acace6a872c2a339680418396c3e2a11148bd44e8faca42da880a6455e8"
+    "9bd4431ac4f099e6771e888c59fd27b0c2ff6a2e7eecf2ad7da74116136ad94e"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。
@@ -88,8 +90,10 @@ FROZEN_MAPPING_SHA256 = (
 # 规则与判据载荷不变。
 # 2026-08-24：断言画像升级为 0.149.1，加入 routing hint 的 HTTP、WS 与 legacy
 # compact 线序，并重绑当前第二部分摘要；42 条验收规则数量不变。
+# 2026-08-31：断言画像升级为 0.151.0，加入 Files C2PA 条件分支的三条检查，
+# 规则总数仍为 42。
 FROZEN_PROFILE_SHA256 = (
-    "90641bb30f8ad56a9ff99eabb22965141814694a042bebb1324cdb8d306dc487"
+    "b58ff72be915d77893cb21fa5422f0633872d016dd996fc410f0bf21615f4cca"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")

@@ -1444,6 +1444,9 @@ upgrade ID、基线、目标版本和用途与计划一致；ARM64 收据必须�
 本环境后续 Codex 升级的 P0、取证、Candidate、Kilo、门禁、canary 和部署验证均只在 ARM64 执行。
 DMIT 归档只读复用，不登录或修改 DMIT 主机。ARM64 固定出站边界如下：
 
+ARM64 的 Go 固定使用 `/root/oauth-capture/state/local/go1.27.0/bin`；构建和 Go 门禁统一设置
+`GOPROXY=off`、`GOFLAGS=-mod=readonly`，不得临时下载或切换工具链。
+
 | 对象 | 强制出站网络坐标 | 公网出口 | 禁止变化 |
 |---|---|---|---|
 | `sub2apiplus` | `proxy-network`：`172.25.0.3`，网关 `172.25.0.1` | `179.255.100.158` | compose 网络、地址、默认出站路由、NAT／iptables |
@@ -1530,6 +1533,7 @@ Formal Campaign 冻结的 target 执行契约逐摘要一致；不一致时必�
 | 5 | `classify`（不传批准清单） | 生成官方差异和 `classification/draft/<revision>/` 五份草案 |
 
 第 3 步必须显式提供 `CAMPAIGN_DIR` 和 `ATTEMPT_ID`；目标版本证据标签声明不存在时立即回到 P0 修复，不能临时手写 manifest。
+每个 official Job 结束后、生成 assertion bundle 前，统一把证据目录／文件权限收口为 `0700／0600`。
 
 ### 4.1.2 规则整理
 
@@ -1616,6 +1620,8 @@ python3 tools/official_client_capture/codex_upgrade.py stage-profile \
 `--output` 必须位于 Campaign 外、为尚不存在的绝对路径。工具从五份批准清单生成候选
 RuntimeCatalog 和 `catalog-stage-receipt.json`，不修改仓库或生产 selector。收据必须证明：
 
+执行前必须先创建 `--output` 的父目录并设为 `0700`；`--output` 本身仍须不存在。
+
 - Campaign、classification、target version 和 profile digest 与批准事实一致；
 - `active_unchanged=true`、`production_selector_changed=false`、
   `candidate_release_mode=previous`；
@@ -1632,6 +1638,8 @@ RuntimeCatalog 和 `catalog-stage-receipt.json`，不修改仓库或生产 selec
    wire fixture、execution verification 和 canary acceptance；
 4. 生产 Active 不变，目标 Release 仅作为 `previous` 候选供第四步显式选择；
 5. 在途 invocation 保持原 Bundle，新 invocation 才解析新 selector，fallback 和连接池不得跨 Bundle。
+6. 同批纳入目标版本的 test fact map、批准断言画像，并更新 trace 工具的默认路径与两个冻结摘要；
+   三者版本或摘要不一致时禁止构建 candidate。
 
 版本新增 route 可在确实不含该端点的单个 Release 中零匹配，但 Compiler 端点集合必须等于
 Active／Previous 并集，且每条 runtime-bindable route 在并集中至少有一个 binding。只有现有

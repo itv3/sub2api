@@ -47,8 +47,10 @@ type OfficialCodexUploadedFile struct {
 }
 
 type officialCodexFileCreateResponse struct {
-	FileID    *string `json:"file_id"`
-	UploadURL *string `json:"upload_url"`
+	FileID             *string `json:"file_id"`
+	UploadURL          *string `json:"upload_url"`
+	PDFC2PAReservation bool    `json:"pdf_c2pa_reservation"`
+	createRequestJSON  json.RawMessage
 }
 
 type officialCodexFileUploadedResponse struct {
@@ -79,12 +81,16 @@ type officialCodexFileUploadCall struct {
 }
 
 type officialCodexFileCreateSemanticBody struct {
-	UseCase          string `json:"use_case"`
-	FileSize         uint64 `json:"file_size"`
 	FileName         string `json:"file_name"`
+	FileSize         uint64 `json:"file_size"`
+	UseCase          string `json:"use_case"`
 	CodexConnectorID string `json:"codex_connector_id,omitempty"`
 	CodexActionName  string `json:"codex_action_name,omitempty"`
 	CodexModel       string `json:"codex_model,omitempty"`
+}
+
+type officialCodexFileUploadedSemanticBody struct {
+	PDFC2PACreateRequest json.RawMessage `json:"pdf_c2pa_create_request,omitempty"`
 }
 
 func marshalOfficialCodexFileSemanticBody(payload any) ([]byte, error) {
@@ -159,7 +165,13 @@ func (s *OpenAIGatewayService) UploadOfficialCodexFile(
 	if err := call.uploadBlob(*created.UploadURL, input.FileSizeBytes, input.Contents); err != nil {
 		return nil, err
 	}
-	return call.finalize(*created.FileID, input.FileName, input.FileSizeBytes)
+	return call.finalize(
+		*created.FileID,
+		input.FileName,
+		input.FileSizeBytes,
+		created.createRequestJSON,
+		created.PDFC2PAReservation,
+	)
 }
 
 func newOfficialCodexFileUploadCall(
@@ -221,10 +233,14 @@ func (c *officialCodexFileUploadCall) create(
 		body.CodexActionName = hostedUpload.ActionName
 		body.CodexModel = hostedUpload.Model
 	}
+	createRequestJSON, err := marshalOfficialCodexFileSemanticBody(body)
+	if err != nil {
+		return nil, fmt.Errorf("编码 Codex 文件 create 请求：%w", err)
+	}
 	responseBody, err := c.executeJSON(
 		codexEndpointID(c.profile.Files.CreateEndpointID),
 		officialCodexEndpointURLInput{},
-		body,
+		json.RawMessage(createRequestJSON),
 	)
 	if err != nil {
 		return nil, err
@@ -236,6 +252,9 @@ func (c *officialCodexFileUploadCall) create(
 	if payload.FileID == nil || payload.UploadURL == nil {
 		return nil, errors.New("Codex 文件 create 响应缺少 file_id 或 upload_url")
 	}
+	// uploaded 的 C2PA 分支必须绑定同一次 create，而不是重新从调用参数
+	// 构造近似对象。保留本次 JSON 还能保证 hosted 三元字段与 create 完全一致。
+	payload.createRequestJSON = append(json.RawMessage(nil), createRequestJSON...)
 	return &payload, nil
 }
 
@@ -324,13 +343,22 @@ func (c *officialCodexFileUploadCall) finalize(
 	fileID string,
 	fallbackFileName string,
 	fileSizeBytes uint64,
+	createRequestJSON json.RawMessage,
+	pdfC2PAReservation bool,
 ) (*OfficialCodexUploadedFile, error) {
 	startedAt := c.now()
+	finalizeBody := officialCodexFileUploadedSemanticBody{}
+	if pdfC2PAReservation {
+		if len(createRequestJSON) == 0 {
+			return nil, errors.New("Codex 文件 C2PA uploaded 缺少本次 create 请求")
+		}
+		finalizeBody.PDFC2PACreateRequest = append(json.RawMessage(nil), createRequestJSON...)
+	}
 	for {
 		responseBody, err := c.executeJSON(
 			codexEndpointID(c.profile.Files.UploadedEndpointID),
 			officialCodexEndpointURLInput{PathValues: map[string]string{"file_id": fileID}},
-			struct{}{},
+			finalizeBody,
 		)
 		if err != nil {
 			return nil, err
