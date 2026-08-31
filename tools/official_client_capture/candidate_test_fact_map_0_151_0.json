@@ -16,7 +16,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_codex_0145_profile.go",
-          "sha256": "e7c1892dc32542f1c4e5bcc9cd9537cdd400667c638c593eb9e19e7f6f56e7c3"
+          "sha256": "02ec8fcbb8a567b3c6adb0861bfe4bb7d1803362325d531b1e2b47f3430c8377"
         },
         {
           "path": "backend/internal/service/official_egress_codex_engine.go",
@@ -200,7 +200,7 @@
         },
         {
           "path": "backend/internal/service/openai_ws_forwarder_payload.go",
-          "sha256": "7c53e7dae5b4c152e5878fb315f759db7030265077be6890716ab201120b39ba"
+          "sha256": "a155daaaa2ae2e4e3744f54bb3bf0bc7751aabbc24c52ef4301b355999274650"
         }
       ],
       "facts": [
@@ -248,7 +248,7 @@
         },
         {
           "path": "backend/internal/service/official_egress_openai_ws.go",
-          "sha256": "8ccd28fc1fb21d7d2abcd32914b3ac1c25d5b834cd13904121f4d81225f4d363"
+          "sha256": "69f4ae554f120d6d5847d7caf39871062a149789a760b6c175d98556767d64fd"
         }
       ],
       "facts": [
@@ -342,7 +342,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/openai_gateway_forward.go",
-          "sha256": "a66ce368dbf7f3acb43d65544ba126643a83bacbec6587bc38df3fcf9167da82"
+          "sha256": "8620ec8084f8712c8ab8b7ac52664373b77dd42a14879a9d8c0f32ae1d0e8c97"
         },
         {
           "path": "backend/internal/service/official_egress_integration.go",
@@ -374,7 +374,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_codex_0145_profile.go",
-          "sha256": "e7c1892dc32542f1c4e5bcc9cd9537cdd400667c638c593eb9e19e7f6f56e7c3"
+          "sha256": "02ec8fcbb8a567b3c6adb0861bfe4bb7d1803362325d531b1e2b47f3430c8377"
         },
         {
           "path": "backend/internal/service/official_egress_codex_engine.go",
@@ -405,7 +405,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/openai_alpha_search.go",
-          "sha256": "3ca21570d15382b873f287fd36c889ac40d5fed503003d52263dec0407dbeac4"
+          "sha256": "4dc961146e1a56d43dbd23b5faa4550f1719a1106e106a4119da5a4e5cb14ff3"
         }
       ],
       "facts": [
@@ -435,7 +435,7 @@
         },
         {
           "path": "backend/internal/service/official_egress_codex_0145_profile.go",
-          "sha256": "e7c1892dc32542f1c4e5bcc9cd9537cdd400667c638c593eb9e19e7f6f56e7c3"
+          "sha256": "02ec8fcbb8a567b3c6adb0861bfe4bb7d1803362325d531b1e2b47f3430c8377"
         },
         {
           "path": "backend/internal/service/official_egress_codex_engine.go",
@@ -478,7 +478,7 @@
         },
         {
           "path": "backend/internal/service/official_egress_codex_0145_profile.go",
-          "sha256": "e7c1892dc32542f1c4e5bcc9cd9537cdd400667c638c593eb9e19e7f6f56e7c3"
+          "sha256": "02ec8fcbb8a567b3c6adb0861bfe4bb7d1803362325d531b1e2b47f3430c8377"
         }
       ],
       "facts": [
@@ -677,7 +677,7 @@
       "source_files": [
         {
           "path": "backend/internal/repository/http_upstream.go",
-          "sha256": "3dc55ac374fe38e4e4309b6e700f1d4d78c7776bc87995d9f687e8678c9fcde9"
+          "sha256": "1abc4573b99df318470244cd3f3004e2ad30ddb69a59eb9c3089e02a136c6eae"
         }
       ],
       "facts": [

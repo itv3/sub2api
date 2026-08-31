@@ -29,6 +29,7 @@ FACT_ID = "a07.transport-fallback"
 class CandidateTestTraceTest(unittest.TestCase):
     def test_frozen_input_digests_match_checked_in_assets(self) -> None:
         tool_root = Path(__file__).resolve().parents[1]
+        source_root = tool_root.parents[1]
         # 两侧冻结的是不同东西，不能再共用一份摘要：
         # - candidate_rule_assertion 冻结当前 production active（0.149.1）的画像；
         # - candidate_test_trace 冻结的映射与画像都要与 Campaign 目标同版本，否则
@@ -49,6 +50,25 @@ class CandidateTestTraceTest(unittest.TestCase):
             candidate_test_trace.FROZEN_MAPPING_SHA256,
             file_sha256(target_mapping),
         )
+        mapping = json.loads(target_mapping.read_text(encoding="utf-8"))
+        checked: set[str] = set()
+        for test in mapping["tests"]:
+            files = [
+                {
+                    "path": test["test_file"],
+                    "sha256": test["test_file_sha256"],
+                },
+                *test["source_files"],
+            ]
+            for source in files:
+                if source["path"] in checked:
+                    continue
+                checked.add(source["path"])
+                self.assertEqual(
+                    source["sha256"],
+                    file_sha256(source_root / source["path"]),
+                    source["path"],
+                )
 
     def _fixture(
         self,

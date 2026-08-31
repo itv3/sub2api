@@ -59,7 +59,7 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 2026-08-31：目标升级到 0.151.0；新增 Files C2PA 正、负和 retry 三类候选事实，
 # 并绑定同源文件上传实现与测试摘要。
 FROZEN_MAPPING_SHA256 = (
-    "9bd4431ac4f099e6771e888c59fd27b0c2ff6a2e7eecf2ad7da74116136ad94e"
+    "ba82e3e15dbbf603d14200f27e47752e47d0ff27ee384f429edd58fc9eb85fdb"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。

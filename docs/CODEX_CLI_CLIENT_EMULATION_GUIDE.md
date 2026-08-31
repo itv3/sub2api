@@ -1254,7 +1254,7 @@ P0 还必须执行以下机器预检；临时画像和合成证据只验证工�
 | 当前基线 | 在干净 HEAD 执行 `make test-capture-tools`、`make check-egress-spec`，记录命令、源码摘要、退出码和测试通过／失败／跳过数量 |
 | 目标版本坐标 | 用真实 baseline／target 坐标试运行 `plan` 加载；对空值、错误值和正确值做 mutation，禁止缺失坐标静默回退当前画像 |
 | 双版本与画像生成 | 用临时批准资产验证 `prepare-profile`／`stage-profile`、Active 不变、Active／Previous endpoint 并集和版本新增 route 的 fail-close 门禁 |
-| 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本；目标版本证据标签声明必须逐 Job 精确覆盖正式清单，禁止遗留版本硬编码 |
+| 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本；逐项复算 test fact map 的测试／源码 SHA-256；目标版本证据标签声明必须逐 Job 精确覆盖正式清单，禁止遗留版本硬编码 |
 | 执行身份 | 逐字核对受管工具树与实际执行副本；确认候选源码、测试树、目标架构和镜像构建输入可形成同源摘要链 |
 | 官方证据 | 按 Framework §5.3.5 冻结并验证唯一 `reuse／recapture` 决定 |
 | ARM64 执行 | 逐项通过 §4.0.5 的网络、运行时、模型目录、坐标、依赖、时间和存储门禁 |
@@ -1751,6 +1751,9 @@ usage 必须绑定本次 Campaign／attempt／`run_nonce`，并位于 attempt �
 之间。两条入口统一使用 Campaign 已冻结的 `lite_model`；主轨 `model` 只用于官方／候选场景任务，
 不得被 seal 隐式复用于 Kilo。历史 Campaign 未记录 `lite_model` 时只读重放才允许回退主轨模型。
 两条请求之后不得再发送本 attempt 的客户端验证请求。
+Kilo Responses 的 `@ai-sdk/openai` provider 必须显式设置 `options.websocket=true`；首次 `seal`
+前必须同时核验 Compatible 入站为 `POST/200`、Responses 入站为 `GET/101`，以及两条 usage 的
+`openai_ws_mode` 分别为 `false/true`。任一项不符即放弃本 attempt，禁止先建立 client checkpoint。
 
 ### 4.4.3 四阶段封存
 

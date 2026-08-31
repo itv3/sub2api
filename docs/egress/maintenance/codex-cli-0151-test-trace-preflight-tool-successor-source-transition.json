@@ -1,0 +1,69 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-test-trace-preflight-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-31T13:37:55Z",
+  "base_commit": "4c495cd72d4abdb89c0d5073a2d4f3e68899eb31",
+  "scope": "codex-cli-0.151-test-trace-preflight-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_arm64_environment_producer_replay_tool_successor",
+    "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition.json",
+    "sha256": "217642ab257708b226e0fd71b4582643694ce834d22e4ffbbc5e0e00f6d13185"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
+      "from_sha256": "70ed5cb073b055aba50a4b21355740dbd4ad9f4918c4df3295fd53ebe35e8277",
+      "to_sha256": "32eb73ce99ee58c8e4be71d2431a4e54c02ac1c32e2d2cedbd509da70dbcc30a",
+      "reason": "让当前 ARM64 producer 后继只承接本次 test trace P0 修复的精确摘要边。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "2db10a0bda73449cf5122a62c7c7e7da86d0cb2ad7dad21df6401c7c88472001",
+      "to_sha256": "c3348ad333f5add6b51755a004c93109b9c5b1263454ccec33af05fe8b7701e3",
+      "reason": "固定 Kilo WS/101 事实和 test fact map 逐文件 P0 预检。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "from_sha256": "9bd4431ac4f099e6771e888c59fd27b0c2ff6a2e7eecf2ad7da74116136ad94e",
+      "to_sha256": "ba82e3e15dbbf603d14200f27e47752e47d0ff27ee384f429edd58fc9eb85fdb",
+      "reason": "把 6 个陈旧源码摘要改为最终候选树的真实摘要。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "from_sha256": "b455754ff570ed963058b4f381de2cab0b56f958bb29cf49683c67b76a036a1e",
+      "to_sha256": "2cad8075c4ba224e0a586544651b95b50b259e55ef2418b35ffef32044fa8640",
+      "reason": "将 trace 生成器绑定到修正后的 0.151 冻结 map。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_candidate_test_trace.py",
+      "from_sha256": "48df30afb6defecac81523d614e97abcd2eaab3ec0d675ad69f65777cb08ebb6",
+      "to_sha256": "73a307a382a8646a7f11a4720e1a5a7750aed999b3c7f3f749c1af740556c7f7",
+      "reason": "在真实请求前逐项复算 map 中全部测试与生产源码摘要。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_test_trace_preflight_tool_successor_test.go",
+      "sha256": "7d4ac0d6919f29c0aefdd92c8a43fd8e8b2f6b4d768da6145d9b95d53914dd7c",
+      "reason": "冻结并变异测试本次 test trace P0 后继 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor/plan.json",
+      "sha256": "84027fe16132d669a9170660c72769db472e42f29614036198089d8ddc7f351f",
+      "reason": "记录根因、最小修复、验证集合和固定网络边界。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_candidate_test_trace",
+    "go test ./internal/officialegress -run 'TestCodex0151(TestTracePreflightToolSuccessor|Arm64EnvironmentProducerReplayToolSuccessor)' -count=1",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_test_trace_preflight_tool_successor",
+  "identity_sha256": "c896d97bcbf58ed0116d8d52d596badc53948c841a6290bce1ddc9a49164eb76"
+}

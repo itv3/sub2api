@@ -113,7 +113,11 @@ func validateCodex0151Arm64EnvironmentProducerReplayToolSuccessor(receipt codex0
 			return errors.New("Codex CLI 0.151 ARM64 环境 producer 重放工具后继 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151TestTracePreflightToolSuccessorSupersedes(
+				transition.Path, transition.ToSHA256, currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 ARM64 环境 producer 重放工具后继 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -125,7 +129,11 @@ func validateCodex0151Arm64EnvironmentProducerReplayToolSuccessor(receipt codex0
 			return errors.New("Codex CLI 0.151 ARM64 环境 producer 重放工具后继 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151TestTracePreflightToolSuccessorSupersedes(
+				addition.Path, addition.SHA256, currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 ARM64 环境 producer 重放工具后继 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -140,6 +148,11 @@ func validateCodex0151Arm64EnvironmentProducerReplayToolSuccessor(receipt codex0
 
 // codex0151Arm64EnvironmentProducerReplayToolSuccessorSupersedes 只承接本次精确摘要边。
 func codex0151Arm64EnvironmentProducerReplayToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151TestTracePreflightToolSuccessorSupersedes(
+		path, priorDigest, currentDigest,
+	) {
+		return true
+	}
 	receipt, err := loadCodex0151Arm64EnvironmentProducerReplayToolSuccessor()
 	if err != nil {
 		return false

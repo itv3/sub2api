@@ -1,0 +1,20 @@
+{
+  "schema_version": "codex-cli-0151-test-trace-preflight-plan/v1",
+  "root_cause": "0.151 test fact map 的 6 个源码摘要与最终候选树不一致，P0 只校验了 map 自身摘要，未逐项复算其测试和源码文件。",
+  "changes": [
+    "修正 6 个源码摘要并更新冻结 map 摘要",
+    "P0 单测逐项复算 map 中全部测试和源码文件",
+    "指南固定 Kilo WS/101 与 test fact map 预检"
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_candidate_test_trace",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "make check-egress-spec"
+  ],
+  "network_invariants": {
+    "sub2apiplus_ip": "172.25.0.3",
+    "capture_cli_ip": "172.30.0.10",
+    "public_egress": "179.255.100.158",
+    "network_changes_allowed": false
+  }
+}
