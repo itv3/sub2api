@@ -23,7 +23,7 @@ from typing import Any
 FACTS_SCHEMA = "codex-upgrade-arm64-environment-facts/v1"
 RECEIPT_SCHEMA = "codex-upgrade-arm64-environment-receipt/v1"
 PRODUCER_SCHEMA = "codex-upgrade-arm64-environment-producer/v1"
-PRODUCER_VERSION = "1"
+PRODUCER_VERSION = "2"
 PUBLIC_EGRESS_URL = "https://api.ipify.org"
 EXPECTED_PUBLIC_EGRESS = "179.255.100.158"
 ROOT_MAX_USED_PERCENT = 69
@@ -436,6 +436,10 @@ def _validate_container(value: Any, expected_name: str) -> dict[str, Any]:
         raise Arm64EnvironmentReceiptError(f"{expected_name} 网络绑定为空")
     if bindings != sorted(bindings, key=lambda item: item.get("name", "") if isinstance(item, dict) else ""):
         raise Arm64EnvironmentReceiptError(f"{expected_name} 网络绑定未排序")
+    if selected not in bindings:
+        raise Arm64EnvironmentReceiptError(
+            f"{expected_name} 固定网络没有对应的完整网络绑定"
+        )
     route = _expect(
         container.get("default_route"), {"interface", "gateway"}, f"{expected_name}.default_route"
     )
@@ -532,16 +536,32 @@ def validate_facts(facts: dict[str, Any]) -> dict[str, Any]:
         or collector.get("version") != PRODUCER_VERSION
     ):
         raise Arm64EnvironmentReceiptError("ARM64 事实采集器身份漂移")
+    # Docker restart／compose recreate 会更换 container_id、EndpointID 和容器内接口名，
+    # 但不会改变受管网络本身。候选抓包按设计会执行这两类操作；若把这些临时值纳入
+    # 连续性身份，每次正常恢复都会被误判为网络污染。连续性只绑定真正不可变的镜像、
+    # 网络 ID、地址、网关和公网出口；完整临时值仍保留在 facts 中供审计。
+    def stable_network(value: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": value["name"],
+            "network_id": value["network_id"],
+            "ipv4_address": value["ipv4_address"],
+            "gateway": value["gateway"],
+        }
+
     continuity_identity = {
         "host": host,
         "containers": [
             {
                 "name": item["name"],
-                "container_id": item["container_id"],
                 "image_id": item["image_id"],
-                "selected_network": item["selected_network"],
-                "network_bindings": item["network_bindings"],
-                "default_route": item["default_route"],
+                "selected_network": stable_network(item["selected_network"]),
+                "network_bindings": [
+                    stable_network(binding)
+                    for binding in item["network_bindings"]
+                ],
+                "default_route": {
+                    "gateway": item["default_route"]["gateway"],
+                },
                 "public_egress": {
                     "url": item["public_egress"]["url"],
                     "ip_address": item["public_egress"]["ip_address"],

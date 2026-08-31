@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import fcntl
 import glob
 import hashlib
@@ -240,6 +241,8 @@ NETWORK_PACKAGES = {
     "webpki-roots",
 }
 MAX_JSON_BYTES = 128 * 1024 * 1024
+ADMIN_TOKEN_MAX_BYTES = 16 * 1024
+ADMIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
 
 
 @dataclass(frozen=True)
@@ -263,6 +266,64 @@ class Job:
     model_id: str = ""
     expected_use_responses_lite: bool = False
     required_model_receipt: bool = False
+
+
+def _validate_candidate_admin_credential(jobs: Iterable[Job]) -> None:
+    """在 reservation 前验证辅助场景所需的短期管理凭据。"""
+
+    if not any(job.job_id == "candidate-frozen-aux" for job in jobs):
+        return
+    inline = os.environ.get("ADMIN_BEARER_TOKEN", "")
+    token_file = os.environ.get("ADMIN_BEARER_TOKEN_FILE", "")
+    if inline and token_file:
+        raise ConfigurationError(
+            "ADMIN_BEARER_TOKEN 与 ADMIN_BEARER_TOKEN_FILE 只能提供一个。"
+        )
+    if token_file:
+        path = Path(token_file)
+        if (
+            not path.is_absolute()
+            or path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_uid != os.geteuid()
+            or stat.S_IMODE(path.stat().st_mode) not in {0o400, 0o600}
+            or path.stat().st_size <= 0
+            or path.stat().st_size > ADMIN_TOKEN_MAX_BYTES
+        ):
+            raise ConfigurationError(
+                "ADMIN_BEARER_TOKEN_FILE 必须是当前用户持有的 0400/0600 绝对路径普通文件。"
+            )
+        try:
+            token = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as error:
+            raise ConfigurationError("无法读取管理 token 文件。") from error
+    else:
+        token = inline.strip()
+    if not token or not ADMIN_TOKEN_RE.fullmatch(token):
+        raise ConfigurationError(
+            "candidate-frozen-aux 缺少合法管理凭据；请设置 ADMIN_BEARER_TOKEN_FILE。"
+        )
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ConfigurationError("管理 token 不是三段式 JWT。")
+    try:
+        payload_raw = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_raw))
+    except (ValueError, UnicodeError, json.JSONDecodeError) as error:
+        raise ConfigurationError("管理 token 载荷无法解码。") from error
+    expires_at = payload.get("exp") if isinstance(payload, dict) else None
+    if not isinstance(expires_at, int) or isinstance(expires_at, bool):
+        raise ConfigurationError("管理 token 缺少整数 exp。")
+    minimum_text = os.environ.get("ADMIN_TOKEN_MIN_TTL_SECONDS", "1800")
+    if not re.fullmatch(r"[0-9]+", minimum_text):
+        raise ConfigurationError("ADMIN_TOKEN_MIN_TTL_SECONDS 必须是非负整数。")
+    minimum = int(minimum_text)
+    if expires_at - int(time.time()) < minimum:
+        expiry = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires_at))
+        raise ConfigurationError(
+            f"管理 token 剩余有效期不足 {minimum} 秒（到期时间 {expiry}）。"
+        )
 
 
 @dataclass(frozen=True)
@@ -9223,6 +9284,10 @@ def _run_capture_attempt(
         binary_verification = None
 
     planned_jobs = list(jobs)
+    if phase == "candidate":
+        # 辅助场景排在多个耗时 Job 之后；凭据缺失或即将过期必须在 reservation
+        # 和首个真实请求之前失败，不能等十几分钟后才发现。
+        _validate_candidate_admin_credential(planned_jobs)
     prior_results: list[dict[str, Any]] = []
     if getattr(arguments, "rerun_failed", False):
         prior_results = _prior_complete_results(

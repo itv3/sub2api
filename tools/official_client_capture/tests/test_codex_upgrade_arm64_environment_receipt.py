@@ -79,6 +79,44 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
                 ):
                     receipt.build_receipt(root, "p0-facts.json")
 
+    def test_continuity_ignores_docker_restart_ephemeral_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path, facts = self._fixture(root)
+            before = receipt.validate_facts(facts)["continuity_identity_sha256"]
+
+            container = next(
+                item for item in facts["containers"] if item["name"] == "sub2apiplus"
+            )
+            container["container_id"] = "f" * 64
+            container["default_route"]["interface"] = "eth9"
+            container["selected_network"]["endpoint_id"] = "e" * 64
+            for binding in container["network_bindings"]:
+                binding["endpoint_id"] = (
+                    "e" * 64 if binding["name"] == "proxy-network" else "d" * 64
+                )
+            self._rewrite(path, facts)
+
+            after = receipt.validate_facts(facts)["continuity_identity_sha256"]
+            self.assertEqual(before, after)
+
+    def test_continuity_still_binds_network_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            _, facts = self._fixture(root)
+            before = receipt.validate_facts(facts)["continuity_identity_sha256"]
+
+            container = next(
+                item for item in facts["containers"] if item["name"] == "sub2apiplus"
+            )
+            container["selected_network"]["network_id"] = "c" * 64
+            container["network_bindings"][0]["network_id"] = "c" * 64
+
+            after = receipt.validate_facts(facts)["continuity_identity_sha256"]
+            self.assertNotEqual(before, after)
+
     def test_replay_rejects_tampered_facts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -111,6 +149,10 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
         self.assertEqual(
             schema["properties"]["schema_version"]["const"],
             receipt.RECEIPT_SCHEMA,
+        )
+        self.assertEqual(
+            schema["properties"]["producer"]["properties"]["version"]["const"],
+            receipt.PRODUCER_VERSION,
         )
 
 

@@ -1691,7 +1691,12 @@ profile ID／digest。证据机和低资源生产机不承担 Go／Node 编译�
 
 ### 4.4.1 Candidate 身份冻结
 
+运行前必须新签剩余有效期不少于 30 分钟的管理 JWT，保存为宿主机 `0400` 普通文件并设置
+`ADMIN_BEARER_TOKEN_FILE`；禁止复用过期 token。编排器须在创建 reservation 前完成格式、权限和
+有效期检查，缺失或过期时立即失败，不得先执行其他候选 Job。
+
 ~~~bash
+export ADMIN_BEARER_TOKEN_FILE=/root/oauth-capture/state/<upgrade-id>/admin-token
 python3 tools/official_client_capture/codex_upgrade.py capture-candidate run \
   --campaign-dir /绝对路径/campaign \
   --candidate-id <candidate-id> \
