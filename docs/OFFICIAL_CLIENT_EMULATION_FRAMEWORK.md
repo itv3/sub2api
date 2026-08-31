@@ -624,6 +624,8 @@ ready_for_operator_release
 - `VC-1` 以后发现产出侧工具变化时，旧 Formal 不得用新工具续跑。允许在当前 active 阶段新建只离线
   运行的 `preflight_only`，重做 P0 和完整 Job 演练；它不推进阶段。新 Formal `plan` 仍只允许 `VC-0`，
   已有官方事实则由客户端受管 `successor` 绑定当前执行合同和新演练收据后继续。
+- 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复 P0 使用新 Ledger，`successor` 必须同时
+  绑定旧停线 checkpoint、新计时／ARM64 收据和新演练。新 Ledger 不得删除或改写旧耗时与 live 请求总数。
 - 任一阶段失败或摘要漂移时保留旧制品和收据，按状态机回到最近合法身份；不得覆盖、跳过门禁或手工清除
   阻断。升级完成状态只按 §5.3.1 的两个公式判定。
 - 同一根因连续失败两次即按 §5.3.5 停线。独立工具修复、离线回归和新的干净 P0 全部通过前，禁止

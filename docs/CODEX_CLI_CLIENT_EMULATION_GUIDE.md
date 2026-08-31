@@ -1339,6 +1339,11 @@ inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 
 演练，再在 `successor` 命令追加 `--job-rehearsal-root <root> --job-rehearsal-receipt <receipt>`。
 工具会按后继当前执行合同重放收据并替换旧绑定；缺少、部分提供或合同不一致均失败关闭。
 
+旧 Ledger 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger 和 ARM64 收据。
+`successor` 还须成组提供 `--predecessor-stop-ledger-dir/--predecessor-stop-receipt`、
+`--recovery-timing-ledger-dir/--recovery-timing-receipt` 与
+`--recovery-arm64-environment-root/--recovery-arm64-environment-receipt`；工具会验证新演练来自同一 preflight。
+
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；
 新增或未分类工具默认属于产出侧。被校验的工具树必须就是实际执行的工具树。
@@ -1498,7 +1503,7 @@ Formal 会再次独立重放收据，并拒绝目标场景、Job 集、工具树
 
 恢复例外只有一个：Formal 已进入 `VC-1～VC-6` 后发生产出侧工具变化时，可在当前 active 阶段新建
 `preflight_only` 重做上述离线演练，再由 `successor` 绑定新收据；不得发送官方请求或推进阶段。
-普通 Formal `plan` 仍只允许 `VC-0`。
+普通 Formal `plan` 仍只允许 `VC-0`。旧 Ledger 已停线时按 §4.0.2 建立受管恢复计时链，不得伪造 active。
 
 从官方 GitHub Release 取得 ARM64 制品时同样不得把 DNS 轮询当作隐式重试。下载前必须在
 `capture-cli` 内用 `codex_upgrade_official_asset_receipt.py` 逐一 TLS 预连接解析所得的全部 IPv4，

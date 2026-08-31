@@ -1,0 +1,85 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-stopped-ledger-recovery-source-transition/v1",
+  "issued_at_utc": "2026-08-31T06:03:23Z",
+  "base_commit": "1e9fd6dee680d393e9116407657a7d63dac80e89",
+  "scope": "codex-cli-0.151-stopped-ledger-recovery",
+  "predecessor": {
+    "kind": "codex_cli_0151_arm64_typescript_dependency_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-arm64-typescript-dependency-source-transition.json",
+    "sha256": "8c831db2f33016adbc820e23384fb29b3f7599d80e642ee5add70199e312964d"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_arm64_typescript_dependency_source_transition_test.go",
+      "from_sha256": "2bd5b745ce91290050670e0d29896b7d9be70d0ada509f0ff0997059efd4941e",
+      "to_sha256": "655c88d388df3520c03189464867d04c31c3857d14dc2c753c6281930737f911",
+      "reason": "让 officialegress 的 ARM64 依赖 transition 承接停线 Ledger 恢复后继。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_arm64_typescript_dependency_source_transition_test.go",
+      "from_sha256": "9ec557844b6404ec71f6d603087010182b07d24b0022b2df5a5c74e106c63c8c",
+      "to_sha256": "5583bae40a346073c859e5f72ac33808f5e39d36db908a77cc9e1be27214ef76",
+      "reason": "让 service 的 ARM64 依赖 transition 独立承接停线 Ledger 恢复后继。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "58a94e545deaae489c1b7fc562c9b3eff50f53783ab7461e98d23bb838c30890",
+      "to_sha256": "efeb347285ee3d3fa74fd7e3471455fcf3f0b92b52ad7f252d3709d8eacee9f1",
+      "reason": "补充旧 Ledger 停线后的受管恢复命令边界。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "from_sha256": "c326a4e43f04692dace778410cc95f155687dab80d577231a18955be100ce9d4",
+      "to_sha256": "d053fb4841683e372da3b24961f9be0ba30c57cf85178a6d468ae13bb6e1c9e2",
+      "reason": "规定旧停线 checkpoint 与新恢复 P0 控制链必须同时保留。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "ac9d51ce5fa01bc067371f5cf1198b6290eb241438c0b35d00b4fb08bfe1f585",
+      "to_sha256": "955e61bc012e25575f8c93462a5fc988267736cc7a6cd886774ab92959a1ec1f",
+      "reason": "新增 v6 predecessor import，验证停线事实、新恢复 P0 和同一 preflight 演练。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/control_receipt_fixtures.py",
+      "from_sha256": "0e139cd8f5a61a4d89e483dbd5bc59a0d11759d171192b1ddf3406b9dc156c8b",
+      "to_sha256": "0bcb3462ef00fab2c5153600f064efc21608adcd7876433e1d834c7ab16e4b8e",
+      "reason": "允许测试夹具构造独立恢复 upgrade-id。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "b4a1d1183d383e1316a5466ecf380b27784619eb9b15d9365cef3dcbad46cc7a",
+      "to_sha256": "a4074100b278b817a6c20a2c6859435649f250c64aee11f0d6ac423b37da39bf",
+      "reason": "覆盖停线 Ledger 恢复 successor 的成功路径和失败关闭边界。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_stopped_ledger_recovery_source_transition_test.go",
+      "sha256": "b0500ed0780f3d6110935943615ce4162d5835100be3afc7486972f1bbfa86e1",
+      "reason": "在 officialegress 包冻结并变异测试停线 Ledger 恢复 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_stopped_ledger_recovery_source_transition_test.go",
+      "sha256": "512f8162c5ecec8de00ac1552e8d52c6c5f191741c2a8cf03b3eb40586fcae12",
+      "reason": "在 service 包独立重放同一停线 Ledger 恢复 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery/plan.json",
+      "sha256": "b1ce5c8159532cc463661d1b3178c7f9f6c32ff4ded0f1822bda7bffef38ea43",
+      "reason": "冻结恢复预算、旧停线事实、控制链和网络不变量。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade tools.official_client_capture.tests.test_codex_upgrade_timing_ledger tools.official_client_capture.tests.test_codex_upgrade_job_rehearsal_receipt",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(StoppedLedgerRecovery|Arm64TypescriptDependency)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_stopped_ledger_recovery",
+  "identity_sha256": "b1abc85b4931feee1e59c83cf401744c47b6994fd95bdeff377ca76b684c890e"
+}

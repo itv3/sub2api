@@ -2869,6 +2869,148 @@ class CodexUpgradeTest(unittest.TestCase):
                 },
             )
 
+    def test_successor_rebinds_controls_after_predecessor_ledger_stops(
+        self,
+    ) -> None:
+        """旧 Ledger 停线后，新演练、计时和 ARM64 控制必须来自同一 preflight。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            predecessor_dir, predecessor_manifest, _ = (
+                self._create_classified_campaign(root / "predecessor")
+            )
+            predecessor_timing = predecessor_manifest["control_receipts"][
+                "upgrade_timing"
+            ]
+            predecessor_ledger = Path(predecessor_timing["ledger_dir"])
+            for index, phase in enumerate(("VC-0", "VC-1", "VC-2", "VC-3")):
+                codex_upgrade_timing_ledger.append_event(
+                    predecessor_ledger,
+                    event_id=f"complete-{phase.lower()}",
+                    phase=phase,
+                    event_type="stage_completed",
+                )
+                codex_upgrade_timing_ledger.append_event(
+                    predecessor_ledger,
+                    event_id=f"start-vc{index + 1}",
+                    phase=f"VC-{index + 1}",
+                    event_type="stage_started",
+                )
+            codex_upgrade_timing_ledger.append_event(
+                predecessor_ledger,
+                event_id="vc4-stop-fixture",
+                phase="VC-4",
+                event_type="stop_the_line",
+                root_cause_id="wall-clock-fixture",
+                next_action="建立恢复 preflight 和 successor",
+            )
+            stop_relative = "receipts/stop.json"
+            codex_upgrade_timing_ledger.checkpoint(
+                predecessor_ledger,
+                stop_relative,
+            )
+            stop_receipt = predecessor_ledger / stop_relative
+
+            preflight_arguments = self._campaign_arguments(
+                root / "recovery-preflight",
+                campaign_mode="preflight_only",
+            )
+            preflight_arguments.campaign_id = "recovery-preflight-fixture"
+            preflight_arguments.campaign_dir = root / "recovery-preflight-campaign"
+            recovery_timing_root = root / "recovery-control" / "timing"
+            preflight_arguments.timing_ledger_dir = recovery_timing_root
+            preflight_arguments.timing_receipt = create_timing_checkpoint(
+                recovery_timing_root,
+                upgrade_id=preflight_arguments.campaign_id,
+                baseline_version=preflight_arguments.baseline_version,
+                target_version=preflight_arguments.target_version,
+                campaign_purpose=preflight_arguments.campaign_purpose,
+            )
+            recovery_arm_root = root / "recovery-control" / "arm64"
+            preflight_arguments.arm64_environment_root = recovery_arm_root
+            preflight_arguments.arm64_environment_receipt = create_arm_receipt(
+                recovery_arm_root,
+                phase="p0",
+                subject_id=preflight_arguments.campaign_id,
+                prefix="recovery-p0",
+            )
+            preflight_manifest = codex_upgrade.create_campaign(
+                preflight_arguments
+            )
+            contract = codex_upgrade._job_rehearsal_contract_from_manifest(
+                preflight_arguments.campaign_dir,
+                preflight_manifest,
+            )
+            rehearsal_root = root / "recovery-rehearsal"
+            rehearsal_receipt = create_job_rehearsal_receipt(
+                rehearsal_root,
+                contract=contract,
+                preflight_campaign_id=preflight_manifest["campaign_id"],
+                preflight_campaign_dir=preflight_arguments.campaign_dir,
+                preflight_manifest_sha256=codex_upgrade.file_sha256(
+                    preflight_arguments.campaign_dir / "campaign.json"
+                ),
+            )
+
+            successor_dir = root / "successor"
+            return_code, stdout, stderr = self._run_main(
+                [
+                    "successor",
+                    "--predecessor-campaign-dir",
+                    str(predecessor_dir),
+                    "--campaign-dir",
+                    str(successor_dir),
+                    "--campaign-id",
+                    "upgrade-0146-recovery-successor",
+                    "--codex-account-id",
+                    "90",
+                    "--reason",
+                    "candidate_runtime_identity_correction",
+                    "--job-rehearsal-root",
+                    str(rehearsal_root),
+                    "--job-rehearsal-receipt",
+                    str(rehearsal_receipt),
+                    "--recovery-timing-ledger-dir",
+                    str(preflight_arguments.timing_ledger_dir),
+                    "--recovery-timing-receipt",
+                    str(preflight_arguments.timing_receipt),
+                    "--recovery-arm64-environment-root",
+                    str(preflight_arguments.arm64_environment_root),
+                    "--recovery-arm64-environment-receipt",
+                    str(preflight_arguments.arm64_environment_receipt),
+                    "--predecessor-stop-ledger-dir",
+                    str(predecessor_ledger),
+                    "--predecessor-stop-receipt",
+                    str(stop_receipt),
+                ]
+            )
+            self.assertEqual(return_code, 0, stderr)
+            self.assertTrue(
+                json.loads(stdout)["recovery_controls_rebound"]
+            )
+            successor_manifest = codex_upgrade.load_campaign_manifest(
+                successor_dir
+            )
+            self.assertEqual(
+                successor_manifest["control_receipts"]["upgrade_timing"],
+                preflight_manifest["control_receipts"]["upgrade_timing"],
+            )
+            import_receipt = json.loads(
+                (successor_dir / "predecessor-import.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                import_receipt["schema_version"],
+                codex_upgrade.PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+            )
+            self.assertEqual(
+                import_receipt["recovery_control_transition"]["stop_checkpoint"][
+                    "head_sequence"
+                ],
+                10,
+            )
+
     def test_successor_rebinds_live_attestation_compose_coordinates_immutably(
         self,
     ) -> None:

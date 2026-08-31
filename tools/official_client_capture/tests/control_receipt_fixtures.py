@@ -126,6 +126,8 @@ def create_job_rehearsal_receipt(
     *,
     contract: dict[str, object],
     preflight_campaign_id: str,
+    preflight_campaign_dir: Path | None = None,
+    preflight_manifest_sha256: str | None = None,
 ) -> Path:
     """写入不运行命令的合成全量 Job facts，并经正式 finalizer 封存。"""
 
@@ -235,9 +237,15 @@ def create_job_rehearsal_receipt(
         "schema_version": rehearsal.FACTS_SCHEMA,
         "observed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "preflight_campaign": {
-            "path": str((root / "preflight-campaign").resolve()),
+            "path": str(
+                (
+                    preflight_campaign_dir
+                    if preflight_campaign_dir is not None
+                    else root / "preflight-campaign"
+                ).resolve()
+            ),
             "campaign_id": preflight_campaign_id,
-            "manifest_sha256": "9" * 64,
+            "manifest_sha256": preflight_manifest_sha256 or "9" * 64,
             "campaign_mode": "preflight_only",
         },
         "execution_contract": contract,

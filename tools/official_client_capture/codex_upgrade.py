@@ -144,6 +144,7 @@ PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA = (
 )
 PREDECESSOR_RUNTIME_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v4"
 PREDECESSOR_REHEARSAL_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v5"
+PREDECESSOR_RECOVERY_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v6"
 COMPARISON_SCHEMA = "codex-upgrade-comparison/v2"
 ACCEPTANCE_SCHEMA = "codex-upgrade-acceptance/v2"
 CAMPAIGN_MODES = frozenset({"preflight_only", "formal"})
@@ -2563,6 +2564,36 @@ def _build_parser() -> argparse.ArgumentParser:
             "提供后将替换前序 Formal 的旧演练绑定。"
         ),
     )
+    successor.add_argument(
+        "--recovery-timing-ledger-dir",
+        type=Path,
+        help="旧 Ledger 停线后，恢复 P0 使用的新 UpgradeTimingLedger。",
+    )
+    successor.add_argument(
+        "--recovery-timing-receipt",
+        type=Path,
+        help="新恢复 Ledger 的 active checkpoint。",
+    )
+    successor.add_argument(
+        "--recovery-arm64-environment-root",
+        type=Path,
+        help="与新恢复 Ledger 同主体的 ARM64 P0 收据根。",
+    )
+    successor.add_argument(
+        "--recovery-arm64-environment-receipt",
+        type=Path,
+        help="与新恢复 Ledger 同主体的 ARM64 P0 收据。",
+    )
+    successor.add_argument(
+        "--predecessor-stop-ledger-dir",
+        type=Path,
+        help="前序 Formal 所绑定且已经停线的 Ledger。",
+    )
+    successor.add_argument(
+        "--predecessor-stop-receipt",
+        type=Path,
+        help="前序 Ledger 的 stop_the_line checkpoint。",
+    )
 
     classify = subparsers.add_parser(
         "classify", help="生成差异草案或封存已审核的目标规则迁移"
@@ -4610,6 +4641,185 @@ def _successor_job_rehearsal_transition(
     }
 
 
+def _successor_recovery_control_transition(
+    arguments: argparse.Namespace,
+    successor_manifest: dict[str, Any],
+) -> dict[str, Any] | None:
+    """把已停线 Ledger 精确连接到新的离线恢复 P0 控制收据。"""
+
+    names = (
+        "recovery_timing_ledger_dir",
+        "recovery_timing_receipt",
+        "recovery_arm64_environment_root",
+        "recovery_arm64_environment_receipt",
+        "predecessor_stop_ledger_dir",
+        "predecessor_stop_receipt",
+    )
+    values = {name: getattr(arguments, name, None) for name in names}
+    provided = [value is not None for value in values.values()]
+    if not any(provided):
+        return None
+    if not all(provided):
+        raise ConfigurationError("后继恢复控制坐标必须六项同时提供。")
+    if (
+        getattr(arguments, "job_rehearsal_root", None) is None
+        or getattr(arguments, "job_rehearsal_receipt", None) is None
+    ):
+        raise ConfigurationError("恢复控制重绑必须同时提供新的完整 Job 演练收据。")
+
+    controls = successor_manifest.get("control_receipts")
+    if not isinstance(controls, dict):
+        raise ConfigurationError("前序 Formal Campaign 缺少控制收据。")
+    predecessor_timing = controls.get("upgrade_timing")
+    predecessor_arm = controls.get("arm64_environment")
+    if not isinstance(predecessor_timing, dict) or not isinstance(
+        predecessor_arm, dict
+    ):
+        raise ConfigurationError("前序 Formal Campaign 控制收据不完整。")
+
+    stop_root = values["predecessor_stop_ledger_dir"]
+    stop_path = values["predecessor_stop_receipt"]
+    assert isinstance(stop_root, Path) and isinstance(stop_path, Path)
+    stop_relative = _control_receipt_relative(
+        stop_root,
+        stop_path,
+        "前序 stop_the_line checkpoint",
+    )
+    try:
+        stop_checkpoint = codex_upgrade_timing_ledger.replay(
+            stop_root,
+            stop_relative,
+        )
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"前序停线 checkpoint 未通过：{error}") from error
+    stop_summary = stop_checkpoint.get("summary")
+    expected_summary = {
+        "baseline_version": successor_manifest.get("baseline_version"),
+        "target_version": successor_manifest.get("target_version"),
+        "campaign_purpose": successor_manifest.get("campaign_purpose"),
+    }
+    if (
+        not isinstance(stop_summary, dict)
+        or stop_summary.get("status") != "stopped"
+        or stop_summary.get("active_phase")
+        not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+        or any(stop_summary.get(key) != value for key, value in expected_summary.items())
+    ):
+        raise ConfigurationError("前序 checkpoint 不是当前升级在 VC-1～VC-6 的停线事实。")
+    resolved_stop_root = stop_root.resolve(strict=True)
+    if (
+        Path(str(predecessor_timing.get("ledger_dir", ""))).resolve(strict=True)
+        != resolved_stop_root
+        or predecessor_timing.get("upgrade_id") != stop_summary.get("upgrade_id")
+    ):
+        raise ConfigurationError("前序停线 checkpoint 与 Formal Campaign 的 Ledger 不一致。")
+
+    recovery_arguments = argparse.Namespace(
+        campaign_mode="preflight_only",
+        campaign_purpose=successor_manifest["campaign_purpose"],
+        baseline_version=successor_manifest["baseline_version"],
+        target_version=successor_manifest["target_version"],
+        timing_ledger_dir=values["recovery_timing_ledger_dir"],
+        timing_receipt=values["recovery_timing_receipt"],
+        arm64_environment_root=values["recovery_arm64_environment_root"],
+        arm64_environment_receipt=values[
+            "recovery_arm64_environment_receipt"
+        ],
+    )
+    successor_controls = _plan_control_receipts(recovery_arguments)
+    successor_timing = successor_controls["upgrade_timing"]
+    if (
+        successor_timing["ledger_dir"] == predecessor_timing.get("ledger_dir")
+        or successor_timing["upgrade_id"] == predecessor_timing.get("upgrade_id")
+    ):
+        raise ConfigurationError("恢复 Ledger 必须使用新的目录和 upgrade-id。")
+
+    controls.update(successor_controls)
+    stop_file = resolved_stop_root / stop_relative
+    return {
+        "reason": "stopped_ledger_recovery",
+        "predecessor": {
+            "upgrade_timing": predecessor_timing,
+            "arm64_environment": predecessor_arm,
+        },
+        "stop_checkpoint": {
+            "ledger_dir": str(resolved_stop_root),
+            "receipt": {
+                "path": stop_relative,
+                "sha256": file_sha256(stop_file),
+                "bytes": stop_file.stat().st_size,
+            },
+            "upgrade_id": stop_summary["upgrade_id"],
+            "active_phase": stop_summary["active_phase"],
+            "head_sequence": stop_summary["head_sequence"],
+            "head_sha256": stop_summary["head_sha256"],
+            "total_elapsed_seconds": stop_summary["total_elapsed_seconds"],
+            "total_live_request_count": stop_summary["total_live_request_count"],
+        },
+        "successor": successor_controls,
+    }
+
+
+def _assert_recovery_rehearsal_uses_successor_controls(
+    arguments: argparse.Namespace,
+    successor_manifest: Mapping[str, Any],
+) -> None:
+    """确认新演练来自绑定同一恢复 Ledger 和 ARM64 收据的 preflight。"""
+
+    rehearsal_root = arguments.job_rehearsal_root
+    rehearsal_path = arguments.job_rehearsal_receipt
+    assert isinstance(rehearsal_root, Path) and isinstance(rehearsal_path, Path)
+    rehearsal_relative = _control_receipt_relative(
+        rehearsal_root,
+        rehearsal_path,
+        "恢复完整 Job 离线演练收据",
+    )
+    try:
+        rehearsal = codex_upgrade_job_rehearsal_receipt.replay(
+            rehearsal_root,
+            rehearsal_relative,
+        )
+    except (OSError, codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError) as error:
+        raise ConfigurationError(f"恢复完整 Job 演练无法重放：{error}") from error
+    preflight = rehearsal.get("preflight_campaign")
+    if not isinstance(preflight, dict):
+        raise ConfigurationError("恢复完整 Job 演练缺少 preflight Campaign。")
+    preflight_dir = Path(str(preflight.get("path", "")))
+    preflight_manifest_path = preflight_dir / "campaign.json"
+    if (
+        not preflight_dir.is_absolute()
+        or not preflight_manifest_path.is_file()
+        or preflight_manifest_path.is_symlink()
+        or file_sha256(preflight_manifest_path) != preflight.get("manifest_sha256")
+    ):
+        raise ConfigurationError("恢复完整 Job 演练的 preflight Campaign 绑定非法。")
+    preflight_manifest = load_campaign_manifest(preflight_dir)
+    expected_controls = successor_manifest.get("control_receipts")
+    actual_controls = preflight_manifest.get("control_receipts")
+    if (
+        preflight_manifest.get("campaign_mode") != "preflight_only"
+        or preflight_manifest.get("campaign_id") != preflight.get("campaign_id")
+        or any(
+            preflight_manifest.get(field) != successor_manifest.get(field)
+            for field in ("baseline_version", "target_version", "campaign_purpose")
+        )
+        or preflight_manifest.get("tool_identity")
+        != successor_manifest.get("tool_identity")
+        or not isinstance(expected_controls, dict)
+        or not isinstance(actual_controls, dict)
+        or actual_controls.get("upgrade_timing")
+        != expected_controls.get("upgrade_timing")
+        or actual_controls.get("arm64_environment")
+        != expected_controls.get("arm64_environment")
+    ):
+        raise ConfigurationError("恢复 preflight 与后继当前控制合同不一致。")
+    _verify_control_receipts(
+        preflight_dir,
+        preflight_manifest,
+        require_active=True,
+    )
+
+
 def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
     """创建同版本后继 Campaign，并按原因选择承接边界。
 
@@ -4803,12 +5013,21 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                 ),
                 "后继 Campaign 当前批准场景",
             )
+        recovery_control_transition = _successor_recovery_control_transition(
+            arguments,
+            successor_manifest,
+        )
         job_rehearsal_transition = _successor_job_rehearsal_transition(
             arguments,
             staging_dir,
             successor_manifest,
             target_scenario_override=rehearsal_scenario_override,
         )
+        if recovery_control_transition is not None:
+            _assert_recovery_rehearsal_uses_successor_controls(
+                arguments,
+                successor_manifest,
+            )
         _rebuild_successor_plan(
             staging_dir,
             successor_dir,
@@ -4827,15 +5046,19 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         classification_path = _stage_path(predecessor_dir, "classify")[1]
         import_receipt: dict[str, Any] = {
             "schema_version": (
-                PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
-                if job_rehearsal_transition is not None
+                PREDECESSOR_RECOVERY_IMPORT_SCHEMA
+                if recovery_control_transition is not None
                 else (
-                    PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
-                    if reclassification_successor
+                    PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+                    if job_rehearsal_transition is not None
                     else (
-                        PREDECESSOR_RUNTIME_IMPORT_SCHEMA
-                        if runtime_configuration is not None
-                        else PREDECESSOR_IMPORT_SCHEMA
+                        PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
+                        if reclassification_successor
+                        else (
+                            PREDECESSOR_RUNTIME_IMPORT_SCHEMA
+                            if runtime_configuration is not None
+                            else PREDECESSOR_IMPORT_SCHEMA
+                        )
                     )
                 )
             ),
@@ -4884,6 +5107,10 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         if job_rehearsal_transition is not None:
             import_receipt["job_rehearsal_transition"] = (
                 job_rehearsal_transition
+            )
+        if recovery_control_transition is not None:
+            import_receipt["recovery_control_transition"] = (
+                recovery_control_transition
             )
         if runtime_configuration is not None:
             import_receipt["configuration_transition"].update(
@@ -4959,6 +5186,7 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         "codex_account_id": arguments.codex_account_id,
         "runtime_configuration_rebound": runtime_configuration is not None,
         "job_rehearsal_rebound": job_rehearsal_transition is not None,
+        "recovery_controls_rebound": recovery_control_transition is not None,
         "next_command": status["next_command"],
     }
 
@@ -5532,12 +5760,21 @@ def _validate_predecessor_import_receipt(
         PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA,
         PREDECESSOR_RUNTIME_IMPORT_SCHEMA,
         PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+        PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
     }:
         expected_receipt_fields.add("configuration_transition")
-    if receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA:
+    if receipt_schema in {
+        PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+        PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+    }:
         expected_receipt_fields.add("job_rehearsal_transition")
+    if receipt_schema == PREDECESSOR_RECOVERY_IMPORT_SCHEMA:
+        expected_receipt_fields.add("recovery_control_transition")
     if receipt_schema == PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA or (
-        receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+        receipt_schema in {
+            PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+            PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        }
         and receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS
     ):
         expected_receipt_fields.add("import_mode")
@@ -5552,6 +5789,7 @@ def _validate_predecessor_import_receipt(
             PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA,
             PREDECESSOR_RUNTIME_IMPORT_SCHEMA,
             PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+            PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
         }
         or not _is_rfc3339_timestamp(receipt.get("created_at_utc"))
         or receipt.get("reason") not in SUCCESSOR_REASONS
@@ -5565,6 +5803,7 @@ def _validate_predecessor_import_receipt(
     reclassification_import = receipt_schema in {
         PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA,
         PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+        PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
     } and receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS
     if reclassification_import:
         if (
@@ -5625,7 +5864,10 @@ def _validate_predecessor_import_receipt(
         successor_rehearsal, dict
     ):
         raise ConfigurationError("前序或后继 Campaign 缺少完整 Job 演练绑定。")
-    if receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA:
+    if receipt_schema in {
+        PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+        PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+    }:
         expected_rehearsal_transition = {
             "reason": "current_execution_contract_rehearsal",
             "predecessor": predecessor_rehearsal,
@@ -5639,6 +5881,125 @@ def _validate_predecessor_import_receipt(
             raise ConfigurationError("后继完整 Job 演练过渡收据非法。")
     elif successor_rehearsal != predecessor_rehearsal:
         raise ConfigurationError("后继未登记完整 Job 演练绑定变化。")
+
+    predecessor_timing = (
+        predecessor_controls.get("upgrade_timing")
+        if isinstance(predecessor_controls, dict)
+        else None
+    )
+    predecessor_arm = (
+        predecessor_controls.get("arm64_environment")
+        if isinstance(predecessor_controls, dict)
+        else None
+    )
+    successor_timing = (
+        successor_controls.get("upgrade_timing")
+        if isinstance(successor_controls, dict)
+        else None
+    )
+    successor_arm = (
+        successor_controls.get("arm64_environment")
+        if isinstance(successor_controls, dict)
+        else None
+    )
+    if not all(
+        isinstance(value, dict)
+        for value in (
+            predecessor_timing,
+            predecessor_arm,
+            successor_timing,
+            successor_arm,
+        )
+    ):
+        raise ConfigurationError("前序或后继 Campaign 的计时／ARM64 控制绑定非法。")
+    if receipt_schema == PREDECESSOR_RECOVERY_IMPORT_SCHEMA:
+        control_transition = receipt.get("recovery_control_transition")
+        if (
+            not isinstance(control_transition, dict)
+            or set(control_transition)
+            != {"reason", "predecessor", "stop_checkpoint", "successor"}
+            or control_transition.get("reason") != "stopped_ledger_recovery"
+            or control_transition.get("predecessor")
+            != {
+                "upgrade_timing": predecessor_timing,
+                "arm64_environment": predecessor_arm,
+            }
+            or control_transition.get("successor")
+            != {
+                "upgrade_timing": successor_timing,
+                "arm64_environment": successor_arm,
+            }
+            or predecessor_timing == successor_timing
+            or predecessor_arm == successor_arm
+        ):
+            raise ConfigurationError("后继恢复控制过渡收据非法。")
+        stop_binding = control_transition.get("stop_checkpoint")
+        if not isinstance(stop_binding, dict) or set(stop_binding) != {
+            "ledger_dir",
+            "receipt",
+            "upgrade_id",
+            "active_phase",
+            "head_sequence",
+            "head_sha256",
+            "total_elapsed_seconds",
+            "total_live_request_count",
+        }:
+            raise ConfigurationError("后继恢复停线绑定字段不闭合。")
+        stop_root = Path(str(stop_binding.get("ledger_dir", "")))
+        stop_receipt = stop_binding.get("receipt")
+        if (
+            not isinstance(stop_receipt, dict)
+            or set(stop_receipt) != {"path", "sha256", "bytes"}
+            or not stop_root.is_absolute()
+            or str(stop_root.resolve()) != str(stop_root)
+            or str(predecessor_timing.get("ledger_dir", "")) != str(stop_root)
+        ):
+            raise ConfigurationError("后继恢复停线坐标非法。")
+        try:
+            stop_relative = _control_receipt_relative(
+                stop_root,
+                Path(str(stop_receipt.get("path", ""))),
+                "后继恢复停线 checkpoint",
+            )
+            stop_path = stop_root / stop_relative
+            stop_checkpoint = codex_upgrade_timing_ledger.replay(
+                stop_root,
+                stop_relative,
+            )
+        except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+            raise ConfigurationError(f"后继恢复停线 checkpoint 未通过：{error}") from error
+        stop_summary = stop_checkpoint.get("summary")
+        expected_stop = {
+            "ledger_dir": str(stop_root),
+            "receipt": {
+                "path": stop_relative,
+                "sha256": file_sha256(stop_path),
+                "bytes": stop_path.stat().st_size,
+            },
+            "upgrade_id": stop_summary.get("upgrade_id"),
+            "active_phase": stop_summary.get("active_phase"),
+            "head_sequence": stop_summary.get("head_sequence"),
+            "head_sha256": stop_summary.get("head_sha256"),
+            "total_elapsed_seconds": stop_summary.get("total_elapsed_seconds"),
+            "total_live_request_count": stop_summary.get(
+                "total_live_request_count"
+            ),
+        }
+        if (
+            not isinstance(stop_summary, dict)
+            or stop_summary.get("status") != "stopped"
+            or stop_binding != expected_stop
+            or stop_summary.get("upgrade_id")
+            != predecessor_timing.get("upgrade_id")
+            or stop_summary.get("active_phase")
+            not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+        ):
+            raise ConfigurationError("后继恢复停线 checkpoint 事实非法。")
+    elif (
+        successor_timing != predecessor_timing
+        or successor_arm != predecessor_arm
+    ):
+        raise ConfigurationError("后继未登记计时／ARM64 控制绑定变化。")
 
     invariant_fields = (
         "campaign_mode",
@@ -5683,7 +6044,11 @@ def _validate_predecessor_import_receipt(
     )
     allowed_configuration_fields = {"codex_account_id"}
     if receipt_schema == PREDECESSOR_RUNTIME_IMPORT_SCHEMA or (
-        receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+        receipt_schema
+        in {
+            PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+            PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        }
         and runtime_configuration_changed
     ):
         allowed_configuration_fields.update(runtime_fields)
@@ -5707,7 +6072,11 @@ def _validate_predecessor_import_receipt(
             }
         }
         if receipt_schema == PREDECESSOR_RUNTIME_IMPORT_SCHEMA or (
-            receipt_schema == PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+            receipt_schema
+            in {
+                PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+                PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+            }
             and runtime_configuration_changed
         ):
             if receipt.get("reason") != "candidate_runtime_identity_correction":
