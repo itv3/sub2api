@@ -1240,7 +1240,7 @@ P0 还必须执行以下机器预检；临时画像和合成证据只验证工�
 | 当前基线 | 在干净 HEAD 执行 `make test-capture-tools`、`make check-egress-spec`，记录命令、源码摘要、退出码和测试通过／失败／跳过数量 |
 | 目标版本坐标 | 用真实 baseline／target 坐标试运行 `plan` 加载；对空值、错误值和正确值做 mutation，禁止缺失坐标静默回退当前画像 |
 | 双版本与画像生成 | 用临时批准资产验证 `prepare-profile`／`stage-profile`、Active 不变、Active／Previous endpoint 并集和版本新增 route 的 fail-close 门禁 |
-| 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本，禁止遗留版本硬编码 |
+| 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本；目标版本证据标签声明必须逐 Job 精确覆盖正式清单，禁止遗留版本硬编码 |
 | 执行身份 | 逐字核对受管工具树与实际执行副本；确认候选源码、测试树、目标架构和镜像构建输入可形成同源摘要链 |
 | 官方证据 | 按 Framework §5.3.5 冻结并验证唯一 `reuse／recapture` 决定 |
 | ARM64 执行 | 逐项通过 §4.0.5 的网络、运行时、模型目录、坐标、依赖、时间和存储门禁 |
@@ -1335,6 +1335,7 @@ inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 
 该工具 `from_sha256 → to_sha256` 精确边全部可重放的已登记后继。未知摘要、路径替换或不连续边一律失败关闭，
 不得覆盖 `ledger.json` 或伪造 checkpoint 来承接新工具。历史 checkpoint 保留生成时的 producer 原字节，
 重放器只用同一后继链验证其身份，不得把历史收据重写为当前 producer。
+后续 `append／checkpoint／replay／status` 必须直接执行 `ledger.json` 的 `producer.tool`；内容相同的同步副本也不能代替该绝对路径。
 
 每个 candidate 建立时还必须声明用途，且用途不可在验收后追认：
 
@@ -1446,6 +1447,7 @@ DMIT 归档只读复用，不登录或修改 DMIT 主机。ARM64 固定出站边
 | 完整 Job 演练 | 展开目标版本全部官方／candidate Job，在 ARM64 实际 `capture-cli` 内逐项验证路径、依赖、环境变量、Job 身份和执行树摘要；演练不得发送官方请求 |
 
 完整 Job 演练必须生成并重放工具就绪收据。任一 Job 未通过时禁止创建 Formal Campaign；修复后须重新完整演练并冻结工具摘要。
+演练合同还必须绑定目标版本证据标签声明摘要，并验证声明与正式 official／candidate Job 集逐项完全一致；缺失、多余或旧版本声明均在 P0 失败关闭。
 
 执行顺序固定为：先创建 `preflight_only` Campaign，再在 ARM64 运行以下三个离线命令；`collect` 只做路径、
 依赖、语法、二进制、bubblewrap 和 zstd 探针，不执行 Job，也不发送官方请求。
@@ -1507,8 +1509,11 @@ Formal Campaign 冻结的 target 执行契约逐摘要一致；不一致时必�
 |---:|---|---|
 | 1 | `codex_upgrade.py plan --campaign-mode formal --campaign-purpose <用途>` | 在 P0 目录之外冻结正式输入，生成 `target-source.json`、`source-diff.json` 和 `baseline-surface.json` |
 | 2 | `capture-official run` | 按场景采集 HTTP、WS、TLS、端点、状态和错误分支证据 |
-| 3 | `capture-official seal` | 校验恢复、权限、秘密扫描、inventory 和 finalizer，进入 `official_sealed` |
-| 4 | `classify`（不传批准清单） | 生成官方差异和 `classification/draft/<revision>/` 五份草案 |
+| 3 | `SIDE=official bash tools/prepare_assertion_bundle.sh` | 从本 attempt 的冻结 Job 根生成 `assertion-bundle/capture-manifest.json` |
+| 4 | `capture-official seal` | 校验恢复、权限、秘密扫描、inventory 和 finalizer，进入 `official_sealed` |
+| 5 | `classify`（不传批准清单） | 生成官方差异和 `classification/draft/<revision>/` 五份草案 |
+
+第 3 步必须显式提供 `CAMPAIGN_DIR` 和 `ATTEMPT_ID`；目标版本证据标签声明不存在时立即回到 P0 修复，不能临时手写 manifest。
 
 ### 4.1.2 规则整理
 

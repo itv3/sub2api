@@ -36,6 +36,32 @@ from tools.official_client_capture.tests.control_receipt_fixtures import (
 
 
 class CodexUpgradeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # 公共 Campaign 夹具使用 0.147 离线合成数据；0.151 与其他版本
+        # 继续调用正式声明校验，fail-close 行为另由 rehearsal 专项测试覆盖。
+        original = getattr(
+            codex_upgrade_job_rehearsal_receipt,
+            "_target_evidence_label_declaration_sha256",
+        )
+
+        def target_evidence_label_declaration_sha256(
+            target_version: str,
+            target_scenario: object,
+            **kwargs: object,
+        ) -> str:
+            if target_version == "0.147.0":
+                return "d" * 64
+            return original(target_version, target_scenario, **kwargs)
+
+        patcher = mock.patch.object(
+            codex_upgrade_job_rehearsal_receipt,
+            "_target_evidence_label_declaration_sha256",
+            side_effect=target_evidence_label_declaration_sha256,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_third_party_client_model_uses_lite_track_and_preserves_history(self) -> None:
         self.assertEqual(
             codex_upgrade._third_party_client_model(
@@ -1188,41 +1214,52 @@ class CodexUpgradeTest(unittest.TestCase):
         rehearsal_root: Path | None = None
         rehearsal_receipt: Path | None = None
         if campaign_mode == "formal":
-            contract = codex_upgrade_job_rehearsal_receipt.build_execution_contract(
-                target_version="0.147.0",
-                target_sha256=target_sha256,
-                target_package_sha256=target_package_sha256,
-                target_code_mode_host_sha256=target_code_mode_host_sha256,
-                suite="full",
-                tool_files_sha256=codex_upgrade._tool_identity()["files_sha256"],
-                configuration={
-                    "runtime_image": runtime_image,
-                    "model": "gpt-5.4",
-                    "lite_model": "gpt-5.6-luna",
-                    "capture_root": "/root/oauth-capture",
-                    "capture_container": "capture-cli",
-                    "service_container": "sub2apiplus",
-                    "keeper_container": "sub2apiplus-keeper",
-                    "postgres_container": "sub2apiplus-postgres",
-                    "redis_container": "sub2apiplus-redis",
-                    "capture_codex_bin": "/opt/codex-0.147.0/bin/codex",
-                    "relay_codex_bin": "/opt/codex-0.147.0/bin/codex",
-                    "capture_code_mode_host_bin": (
-                        "/opt/codex-0.147.0/bin/codex-code-mode-host"
-                    ),
-                    "relay_code_mode_host_bin": (
-                        "/opt/codex-0.147.0/bin/codex-code-mode-host"
-                    ),
-                    "codex_account_id": 90,
-                    "api_key_id": 1,
-                    "live_attestation_compose_dir": live_compose_dir,
-                    "live_attestation_compose_files": live_compose_files,
-                },
-                target_scenario=json.loads(
-                    target_scenario_manifest.read_text(encoding="utf-8")
-                ),
-                extra_jobs=None,
-            )
+            # 旧版本只用于离线合成 Campaign；目标标签声明门禁由 0.151
+            # 专项测试覆盖，不能为即将退休的 0.147 新增生产声明。
+            with mock.patch.object(
+                codex_upgrade_job_rehearsal_receipt,
+                "_target_evidence_label_declaration_sha256",
+                return_value="d" * 64,
+            ):
+                contract = (
+                    codex_upgrade_job_rehearsal_receipt.build_execution_contract(
+                        target_version="0.147.0",
+                        target_sha256=target_sha256,
+                        target_package_sha256=target_package_sha256,
+                        target_code_mode_host_sha256=target_code_mode_host_sha256,
+                        suite="full",
+                        tool_files_sha256=codex_upgrade._tool_identity()[
+                            "files_sha256"
+                        ],
+                        configuration={
+                            "runtime_image": runtime_image,
+                            "model": "gpt-5.4",
+                            "lite_model": "gpt-5.6-luna",
+                            "capture_root": "/root/oauth-capture",
+                            "capture_container": "capture-cli",
+                            "service_container": "sub2apiplus",
+                            "keeper_container": "sub2apiplus-keeper",
+                            "postgres_container": "sub2apiplus-postgres",
+                            "redis_container": "sub2apiplus-redis",
+                            "capture_codex_bin": "/opt/codex-0.147.0/bin/codex",
+                            "relay_codex_bin": "/opt/codex-0.147.0/bin/codex",
+                            "capture_code_mode_host_bin": (
+                                "/opt/codex-0.147.0/bin/codex-code-mode-host"
+                            ),
+                            "relay_code_mode_host_bin": (
+                                "/opt/codex-0.147.0/bin/codex-code-mode-host"
+                            ),
+                            "codex_account_id": 90,
+                            "api_key_id": 1,
+                            "live_attestation_compose_dir": live_compose_dir,
+                            "live_attestation_compose_files": live_compose_files,
+                        },
+                        target_scenario=json.loads(
+                            target_scenario_manifest.read_text(encoding="utf-8")
+                        ),
+                        extra_jobs=None,
+                    )
+                )
             rehearsal_root = root / "control" / "job-rehearsal"
             rehearsal_receipt = create_job_rehearsal_receipt(
                 rehearsal_root,

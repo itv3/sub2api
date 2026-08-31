@@ -1,0 +1,80 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-evidence-label-preflight-tool-successor-source-transition/v1",
+  "issued_at_utc": "2026-08-31T00:21:53Z",
+  "base_commit": "556ea788f1ecc5c54847e8c49ac7546a779ba348",
+  "scope": "codex-cli-0.151-evidence-label-preflight-tool-successor",
+  "predecessor": {
+    "kind": "codex_cli_0151_full_job_readiness_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-full-job-readiness-tool-successor-source-transition.json",
+    "sha256": "9aa4d23d05520cb6820b8c959b706c9858b53f6076f889497e21e594dba76b0b"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "583b633b924d7b4043956a549ba79d06aeb9f6c65555b2603b7d59c564b902bd",
+      "to_sha256": "b001f4f22926765cd2ca918686f23801d0c44da677836c2180823abbc83fc11c",
+      "reason": "在 officialegress 包登记证据标签前置工具后继，并连续承接完整 Job 就绪摘要。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "from_sha256": "24f0c77983a5d0a749d29a5e40a07d68e23021cb6183dab37bb63813b1b260ea",
+      "to_sha256": "b3888319a829bdbf02953753dfb42eba8af63387af565fa581a6480a10445d11",
+      "reason": "在 service 包独立重放同一证据标签前置摘要闭集与 mutation 门禁。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "5eb3541c0cade2736e79657f205d41c2d2002d4f5c8fb125c53e98005aabd3d5",
+      "to_sha256": "7fe4012203707618773117c13efc548e9cf107f40c24432b90a2ce4d4f9ff630",
+      "reason": "补充 P0 标签声明、冻结 producer 绝对路径和 official seal 前 assertion bundle 三项硬门禁。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.py",
+      "from_sha256": "c72128c2594c043d3c347ca237cc8e3ed6c8fbce107ca43494fa9b76b7622020",
+      "to_sha256": "a81d921587b3293bc0d4932ebed3ec24b1bae7330823e62d720b78291bffbd18",
+      "reason": "把目标证据标签声明摘要纳入 rehearsal 执行合同 v2，并校验 Job 与阶段闭集。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.schema.json",
+      "from_sha256": "c9613e0d0a31d8fde3fc5b215c19e88343e1193588e905974edfb4377a39c2cd",
+      "to_sha256": "0fbdf0067c9fdb4061ad4bc5abe729f10c7e6227b38a415644b61879e6bab7de",
+      "reason": "冻结 rehearsal 执行合同 v2 的证据标签声明摘要字段。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "f104aeef4fff9181925903fbedb708ad9683e61e56184295b44999316ed8df8e",
+      "to_sha256": "3df8d26a1264bacb899188fa2d69954968a90f91aab4aff11151c7193c45841f",
+      "reason": "仅在 0.147 离线合成夹具中冻结标签摘要，不放宽生产目标声明校验。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_job_rehearsal_receipt.py",
+      "from_sha256": "2d2e6f18baf53992b71b8ff917a3df3a2a71ce2298a9e4697ae3f7cba16b7472",
+      "to_sha256": "0c6c1acd21e0b76a9a7bae1d95ecb7e596fc3649db410e7d83da69094b09d703",
+      "reason": "覆盖 0.151 标签声明摘要、缺失声明和 Job 闭集不完整的失败关闭。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor/plan.json",
+      "sha256": "185f351f5ae82c31eaf1797c10286b0a38d8e721fd724aef424d33a2b8527a50",
+      "reason": "冻结本维护变更的 ARM64 固定网络、零 live 请求、预算和输出边界。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_evidence_labels_0_151_0.json",
+      "sha256": "2ba171df550bca8cd5e9a97627abc0363092544312ec586803635f83570d1e70",
+      "reason": "新增与 0.151 全部 38 个 official 与 candidate Job 精确一致的证据标签声明。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_evidence_label_preflight_tool_successor",
+  "identity_sha256": "ba57b7a1746cde6c3ff12c0cc16060606eebad405786ca1adab03350442ca906"
+}

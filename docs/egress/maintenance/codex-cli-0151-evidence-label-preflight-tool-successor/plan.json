@@ -1,0 +1,50 @@
+{
+  "schema_version": "codex-cli-0151-evidence-label-preflight-tool-successor-plan/v1",
+  "change_set": "codex_cli_0151_evidence_label_preflight_tool_successor",
+  "purpose": "在 Formal Campaign 前冻结 0.151 全部 Job 的证据标签声明，并把 assertion bundle 前置为 seal 必需步骤",
+  "source": {
+    "branch": "codex/codex-0151-full-job-readiness",
+    "commit": "556ea788f1ecc5c54847e8c49ac7546a779ba348",
+    "tree": "55c01022f6da42edcdf03ff5247ba48a37bba066"
+  },
+  "budget": {
+    "started_at_utc": "2026-08-31T00:21:53Z",
+    "deadline_at_utc": "2026-08-31T02:21:53Z",
+    "wall_clock_minutes": 120,
+    "same_root_cause_retry_limit": 2
+  },
+  "resource_limits": {
+    "execution_host": "ARM64",
+    "root_filesystem_max_used_percent": 69,
+    "root_filesystem_min_available_bytes": 32212254720,
+    "live_openai_request_limit": 0,
+    "cleanup_policy": "本变更集不删除历史 Campaign、证据、镜像、容器或运行目录"
+  },
+  "network_invariants": {
+    "public_egress_ip": "179.255.100.158",
+    "sub2apiplus": {
+      "network": "proxy-network",
+      "ipv4_address": "172.25.0.3",
+      "gateway": "172.25.0.1"
+    },
+    "capture_cli": {
+      "network": "capture-network",
+      "ipv4_address": "172.30.0.10",
+      "gateway": "172.30.0.1"
+    },
+    "forbidden_changes": [
+      "Docker 网络",
+      "静态地址",
+      "默认路由",
+      "NAT",
+      "iptables"
+    ]
+  },
+  "required_outputs": [
+    "0.151 全部 official 与 candidate Job 的闭集证据标签声明",
+    "rehearsal 执行合同 v2 对标签声明摘要的强制绑定",
+    "缺失、多余、阶段错配与旧版本声明的失败关闭测试",
+    "assertion bundle 在 official seal 前的固定文档步骤",
+    "ARM64 固定网络下的全量离线测试与独立 transition 重放"
+  ]
+}

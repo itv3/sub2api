@@ -226,6 +226,7 @@
         "suite",
         "tool_files_sha256",
         "target_scenario_sha256",
+        "evidence_label_declaration_sha256",
         "extra_jobs_sha256",
         "configuration",
         "job_count",
@@ -238,7 +239,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "codex-upgrade-job-rehearsal-contract/v1"
+          "const": "codex-upgrade-job-rehearsal-contract/v2"
         },
         "target_version": {
           "type": "string",
@@ -263,6 +264,9 @@
           "$ref": "#/$defs/sha256"
         },
         "target_scenario_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence_label_declaration_sha256": {
           "$ref": "#/$defs/sha256"
         },
         "extra_jobs_sha256": {

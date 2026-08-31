@@ -68,6 +68,13 @@ class JobRehearsalReceiptTests(unittest.TestCase):
             contract = self._contract(Path(directory))
         self.assertEqual(contract["job_count"], 38)
         self.assertEqual(contract["phase_counts"], {"official": 29, "candidate": 9})
+        declaration_path = Path(receipt.__file__).with_name(
+            "codex_upgrade_evidence_labels_0_151_0.json"
+        )
+        self.assertEqual(
+            contract["evidence_label_declaration_sha256"],
+            receipt._sha256_file(declaration_path),
+        )
         self.assertEqual(
             contract["c2pa_job_identities"],
             {
@@ -81,6 +88,46 @@ class JobRehearsalReceiptTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_missing_0151_evidence_label_declaration_fails_closed(self) -> None:
+        scenario_path = Path(receipt.__file__).with_name(
+            "codex_upgrade_scenarios_0_151_0.json"
+        )
+        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                receipt.JobRehearsalReceiptError,
+                "缺少证据标签声明",
+            ):
+                receipt._target_evidence_label_declaration_sha256(
+                    "0.151.0",
+                    scenario,
+                    tool_root=Path(directory),
+                )
+
+    def test_0151_evidence_label_declaration_must_cover_every_job(self) -> None:
+        source = Path(receipt.__file__).with_name(
+            "codex_upgrade_evidence_labels_0_151_0.json"
+        )
+        scenario_path = Path(receipt.__file__).with_name(
+            "codex_upgrade_scenarios_0_151_0.json"
+        )
+        declaration = json.loads(source.read_text(encoding="utf-8"))
+        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+        declaration["entries"] = declaration["entries"][:-1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / source.name
+            self._rewrite(path, declaration)
+            with self.assertRaisesRegex(
+                receipt.JobRehearsalReceiptError,
+                "未精确覆盖正式 Job 集",
+            ):
+                receipt._target_evidence_label_declaration_sha256(
+                    "0.151.0",
+                    scenario,
+                    tool_root=root,
+                )
 
     def test_finalize_and_replay(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

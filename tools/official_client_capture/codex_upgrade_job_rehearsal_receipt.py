@@ -21,7 +21,7 @@ from typing import Any, Iterable, Mapping
 
 FACTS_SCHEMA = "codex-upgrade-job-rehearsal-facts/v1"
 RECEIPT_SCHEMA = "codex-upgrade-job-rehearsal-receipt/v1"
-EXECUTION_CONTRACT_SCHEMA = "codex-upgrade-job-rehearsal-contract/v1"
+EXECUTION_CONTRACT_SCHEMA = "codex-upgrade-job-rehearsal-contract/v2"
 PRODUCER_SCHEMA = "codex-upgrade-job-rehearsal-producer/v1"
 PRODUCER_VERSION = "1"
 EXPECTED_ARCHITECTURE = "linux/arm64"
@@ -314,6 +314,65 @@ def _job_templates(
     return sorted(selected, key=lambda item: (str(item["phase"]), str(item["id"])))
 
 
+def _target_evidence_label_declaration_sha256(
+    target_version: str,
+    target_scenario: Mapping[str, Any],
+    *,
+    tool_root: Path | None = None,
+) -> str:
+    """验证目标版本证据标签声明完整覆盖正式 Job 集。"""
+
+    from tools.official_client_capture import build_evidence_catalog
+
+    root = tool_root or Path(__file__).resolve().parent
+    version_key = target_version.replace(".", "_")
+    path = root / f"codex_upgrade_evidence_labels_{version_key}.json"
+    if path.is_symlink() or not path.is_file():
+        raise JobRehearsalReceiptError(
+            f"目标版本 {target_version} 缺少证据标签声明：{path}"
+        )
+    try:
+        declaration = build_evidence_catalog.load_label_declaration(
+            path,
+            expected_codex_version=target_version,
+        )
+    except (OSError, build_evidence_catalog.EvidenceCatalogError) as error:
+        raise JobRehearsalReceiptError(
+            f"目标版本 {target_version} 证据标签声明非法：{error}"
+        ) from error
+
+    raw_jobs = target_scenario.get("capture_jobs")
+    if not isinstance(raw_jobs, list) or not raw_jobs:
+        raise JobRehearsalReceiptError("target 场景清单没有 capture_jobs")
+    scenario_jobs = {
+        str(item.get("id")): str(item.get("phase"))
+        for item in raw_jobs
+        if isinstance(item, dict)
+    }
+    declared_jobs = {
+        str(item.get("job_id")): str(item.get("side"))
+        for item in declaration["entries"]
+        if isinstance(item, dict)
+    }
+    if (
+        len(scenario_jobs) != len(raw_jobs)
+        or len(declared_jobs) != len(declaration["entries"])
+        or declared_jobs != scenario_jobs
+    ):
+        missing = sorted(set(scenario_jobs) - set(declared_jobs))
+        extra = sorted(set(declared_jobs) - set(scenario_jobs))
+        mismatched = sorted(
+            job_id
+            for job_id in set(scenario_jobs) & set(declared_jobs)
+            if scenario_jobs[job_id] != declared_jobs[job_id]
+        )
+        raise JobRehearsalReceiptError(
+            "目标证据标签声明未精确覆盖正式 Job 集："
+            f"missing={missing} extra={extra} phase_mismatch={mismatched}"
+        )
+    return _sha256_file(path)
+
+
 def build_execution_contract(
     *,
     target_version: str,
@@ -354,6 +413,12 @@ def build_execution_contract(
         raise JobRehearsalReceiptError(
             "Job 执行配置存在空值：" + "、".join(missing)
         )
+    evidence_label_declaration_sha256 = (
+        _target_evidence_label_declaration_sha256(
+            target_version,
+            target_scenario,
+        )
+    )
     templates = _job_templates(target_scenario, extra_jobs, suite)
     job_phases = {str(item["id"]): str(item["phase"]) for item in templates}
     step_counts = {
@@ -401,6 +466,9 @@ def build_execution_contract(
         "suite": suite,
         "tool_files_sha256": tool_files_sha256,
         "target_scenario_sha256": _fingerprint(target_scenario),
+        "evidence_label_declaration_sha256": (
+            evidence_label_declaration_sha256
+        ),
         "extra_jobs_sha256": (
             _fingerprint(extra_jobs) if extra_jobs is not None else None
         ),
@@ -432,6 +500,7 @@ def validate_execution_contract(contract: dict[str, Any]) -> dict[str, Any]:
             "suite",
             "tool_files_sha256",
             "target_scenario_sha256",
+            "evidence_label_declaration_sha256",
             "extra_jobs_sha256",
             "configuration",
             "job_count",
@@ -452,6 +521,7 @@ def validate_execution_contract(contract: dict[str, Any]) -> dict[str, Any]:
         "target_code_mode_host_sha256",
         "tool_files_sha256",
         "target_scenario_sha256",
+        "evidence_label_declaration_sha256",
         "job_templates_sha256",
     ):
         if not SHA256_RE.fullmatch(str(contract.get(field, ""))):

@@ -1001,7 +1001,13 @@ func validateCodex0151FullJobReadinessToolSuccessorService(
 			return errors.New("Codex CLI 0.151 完整 Job 就绪工具后继 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkServiceDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151EvidenceLabelPreflightToolSuccessorSupersedesService(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 完整 Job 就绪工具后继 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -1013,7 +1019,13 @@ func validateCodex0151FullJobReadinessToolSuccessorService(
 			return errors.New("Codex CLI 0.151 完整 Job 就绪工具后继 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(addition.Path)))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkServiceDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151EvidenceLabelPreflightToolSuccessorSupersedesService(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 完整 Job 就绪工具后继 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -1043,8 +1055,20 @@ func codex0151FullJobReadinessToolSuccessorSupersedesService(
 			transition.ToSHA256 == currentDigest {
 			return true
 		}
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			codex0151EvidenceLabelPreflightToolSuccessorSupersedesService(
+				path,
+				transition.ToSHA256,
+				currentDigest,
+			) {
+			return true
+		}
 	}
-	return false
+	return codex0151EvidenceLabelPreflightToolSuccessorSupersedesService(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151FullJobReadinessToolSuccessorSourceTransitionServiceIsFrozen(t *testing.T) {
@@ -1091,6 +1115,210 @@ func TestCodex0151FullJobReadinessToolSuccessorSourceTransitionServiceRejectsMut
 			test.mutate(&mutated)
 			if err := validateCodex0151FullJobReadinessToolSuccessorService(mutated); err == nil {
 				t.Fatal("变异后的完整 Job 就绪工具后继 transition 被错误接受")
+			}
+		})
+	}
+}
+
+const codex0151EvidenceLabelPreflightToolSuccessorServicePath = "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor-source-transition.json"
+
+var (
+	codex0151EvidenceLabelPreflightToolSuccessorServiceOnce   sync.Once
+	codex0151EvidenceLabelPreflightToolSuccessorServiceCached codex0151ToolReadinessReceiptService
+	codex0151EvidenceLabelPreflightToolSuccessorServiceErr    error
+)
+
+func loadCodex0151EvidenceLabelPreflightToolSuccessorService() (codex0151ToolReadinessReceiptService, error) {
+	codex0151EvidenceLabelPreflightToolSuccessorServiceOnce.Do(func() {
+		codex0151EvidenceLabelPreflightToolSuccessorServiceCached,
+			codex0151EvidenceLabelPreflightToolSuccessorServiceErr =
+			readCodex0151EvidenceLabelPreflightToolSuccessorService()
+	})
+	return codex0151EvidenceLabelPreflightToolSuccessorServiceCached,
+		codex0151EvidenceLabelPreflightToolSuccessorServiceErr
+}
+
+func readCodex0151EvidenceLabelPreflightToolSuccessorService() (codex0151ToolReadinessReceiptService, error) {
+	var receipt codex0151ToolReadinessReceiptService
+	raw, err := os.ReadFile(filepath.Join(
+		"../../..",
+		filepath.FromSlash(codex0151EvidenceLabelPreflightToolSuccessorServicePath),
+	))
+	if err != nil {
+		return receipt, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return receipt, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return receipt, errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 尾部存在额外 JSON")
+	}
+	var identityDocument map[string]any
+	if err := json.Unmarshal(raw, &identityDocument); err != nil {
+		return receipt, err
+	}
+	delete(identityDocument, "identity_sha256")
+	canonical, err := json.Marshal(identityDocument)
+	if err != nil {
+		return receipt, err
+	}
+	canonical = append(canonical, '\n')
+	if upstreamMergeFrameworkServiceDigest(canonical) != receipt.IdentitySHA256 {
+		return receipt, errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 自摘要不一致")
+	}
+	if err := validateCodex0151EvidenceLabelPreflightToolSuccessorService(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func validateCodex0151EvidenceLabelPreflightToolSuccessorService(
+	receipt codex0151ToolReadinessReceiptService,
+) error {
+	if receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-evidence-label-preflight-tool-successor-source-transition/v1" ||
+		receipt.IssuedAtUTC != "2026-08-31T00:21:53Z" ||
+		receipt.BaseCommit != "556ea788f1ecc5c54847e8c49ac7546a779ba348" ||
+		receipt.Scope != "codex-cli-0.151-evidence-label-preflight-tool-successor" ||
+		receipt.Result != "passed_codex_cli_0151_evidence_label_preflight_tool_successor" {
+		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 顶层事实非法")
+	}
+	if receipt.Predecessor.Kind != "codex_cli_0151_full_job_readiness_tool_successor_source_transition" ||
+		receipt.Predecessor.Path != codex0151FullJobReadinessToolSuccessorServicePath ||
+		receipt.Predecessor.SHA256 != "9aa4d23d05520cb6820b8c959b706c9858b53f6076f889497e21e594dba76b0b" {
+		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 前序非法")
+	}
+	predecessorRaw, err := os.ReadFile(filepath.Join(
+		"../../..",
+		filepath.FromSlash(receipt.Predecessor.Path),
+	))
+	if err != nil || upstreamMergeFrameworkServiceDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 前序摘要不一致")
+	}
+	expectedVerification := []string{
+		"python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+		"go test ./internal/officialegress ./internal/service -run 'TestCodex(01491Terminal|0151)' -count=1",
+		"make check-egress-spec",
+	}
+	if !slices.Equal(receipt.Verification, expectedVerification) {
+		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 验证集合非法")
+	}
+	if receipt.Safety.LiveAccountUsed || receipt.Safety.OnlineAcceptancePerformed ||
+		receipt.Safety.ProductionConfigChanged || receipt.Safety.OfficialEgressProfileChanged {
+		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 安全边界非法")
+	}
+	expectedFrom := map[string]string{
+		"backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go": "583b633b924d7b4043956a549ba79d06aeb9f6c65555b2603b7d59c564b902bd",
+		"backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go":        "24f0c77983a5d0a749d29a5e40a07d68e23021cb6183dab37bb63813b1b260ea",
+		"docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md":                                                 "5eb3541c0cade2736e79657f205d41c2d2002d4f5c8fb125c53e98005aabd3d5",
+		"tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.py":                     "c72128c2594c043d3c347ca237cc8e3ed6c8fbce107ca43494fa9b76b7622020",
+		"tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.schema.json":            "c9613e0d0a31d8fde3fc5b215c19e88343e1193588e905974edfb4377a39c2cd",
+		"tools/official_client_capture/tests/test_codex_upgrade.py":                                "f104aeef4fff9181925903fbedb708ad9683e61e56184295b44999316ed8df8e",
+		"tools/official_client_capture/tests/test_codex_upgrade_job_rehearsal_receipt.py":          "2d2e6f18baf53992b71b8ff917a3df3a2a71ce2298a9e4697ae3f7cba16b7472",
+	}
+	expectedAdditions := map[string]struct{}{
+		"docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor/plan.json": {},
+		"tools/official_client_capture/codex_upgrade_evidence_labels_0_151_0.json":                 {},
+	}
+	transitionPaths := make([]string, 0, len(receipt.Transitions))
+	for _, transition := range receipt.Transitions {
+		if expectedFrom[transition.Path] != transition.FromSHA256 ||
+			!validOpenAIReplayOOMRepairServiceSHA(transition.ToSHA256) ||
+			transition.FromSHA256 == transition.ToSHA256 || strings.TrimSpace(transition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 条目非法")
+		}
+		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
+		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+			return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 当前摘要不一致：" + transition.Path)
+		}
+		transitionPaths = append(transitionPaths, transition.Path)
+	}
+	additionPaths := make([]string, 0, len(receipt.Additions))
+	for _, addition := range receipt.Additions {
+		if _, ok := expectedAdditions[addition.Path]; !ok ||
+			!validOpenAIReplayOOMRepairServiceSHA(addition.SHA256) || strings.TrimSpace(addition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 证据标签前置工具后继 addition 条目非法")
+		}
+		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(addition.Path)))
+		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != addition.SHA256 {
+			return errors.New("Codex CLI 0.151 证据标签前置工具后继 addition 当前摘要不一致：" + addition.Path)
+		}
+		additionPaths = append(additionPaths, addition.Path)
+	}
+	if len(receipt.Transitions) != len(expectedFrom) || len(receipt.Additions) != len(expectedAdditions) ||
+		!slices.IsSorted(transitionPaths) ||
+		len(transitionPaths) != len(slices.Compact(append([]string(nil), transitionPaths...))) ||
+		!slices.IsSorted(additionPaths) ||
+		len(additionPaths) != len(slices.Compact(append([]string(nil), additionPaths...))) {
+		return errors.New("Codex CLI 0.151 证据标签前置工具后继路径闭集非法")
+	}
+	return nil
+}
+
+// codex0151EvidenceLabelPreflightToolSuccessorSupersedesService 只承接证据标签前置工具后继的精确摘要边。
+func codex0151EvidenceLabelPreflightToolSuccessorSupersedesService(
+	path,
+	priorDigest,
+	currentDigest string,
+) bool {
+	receipt, err := loadCodex0151EvidenceLabelPreflightToolSuccessorService()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			transition.ToSHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCodex0151EvidenceLabelPreflightToolSuccessorSourceTransitionServiceIsFrozen(t *testing.T) {
+	if _, err := loadCodex0151EvidenceLabelPreflightToolSuccessorService(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodex0151EvidenceLabelPreflightToolSuccessorSourceTransitionServiceRejectsMutation(t *testing.T) {
+	receipt, err := loadCodex0151EvidenceLabelPreflightToolSuccessorService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*codex0151ToolReadinessReceiptService)
+	}{
+		{
+			name: "路径摘要漂移",
+			mutate: func(mutated *codex0151ToolReadinessReceiptService) {
+				mutated.Transitions = append([]openAIReplayOOMRepairTransitionService(nil), mutated.Transitions...)
+				mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
+			},
+		},
+		{
+			name: "安全边界放宽",
+			mutate: func(mutated *codex0151ToolReadinessReceiptService) {
+				mutated.Safety.LiveAccountUsed = true
+			},
+		},
+		{
+			name: "闭集缺项",
+			mutate: func(mutated *codex0151ToolReadinessReceiptService) {
+				mutated.Additions = append(
+					[]openAIReplayOOMRepairAdditionService(nil),
+					mutated.Additions[1:]...,
+				)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := receipt
+			test.mutate(&mutated)
+			if err := validateCodex0151EvidenceLabelPreflightToolSuccessorService(mutated); err == nil {
+				t.Fatal("变异后的证据标签前置工具后继 transition 被错误接受")
 			}
 		})
 	}
