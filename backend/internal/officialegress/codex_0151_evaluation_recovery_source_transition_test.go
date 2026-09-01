@@ -118,7 +118,13 @@ func validateCodex0151EvaluationRecovery(receipt codex0151ToolReadinessReceipt) 
 			return errors.New("Codex CLI 0.151 评估恢复 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151FrameworkClarificationSupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 评估恢复 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -130,7 +136,13 @@ func validateCodex0151EvaluationRecovery(receipt codex0151ToolReadinessReceipt) 
 			return errors.New("Codex CLI 0.151 评估恢复 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151FrameworkClarificationSupersedes(
+				addition.Path,
+				addition.SHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 评估恢复 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -175,6 +187,11 @@ func codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest stri
 		}
 		receipts = append(receipts, predecessor)
 	}
+	clarification, clarificationErr := loadCodex0151FrameworkClarification()
+	if clarificationErr != nil {
+		return false
+	}
+	receipts = append(receipts, clarification)
 	reachable := map[string]struct{}{priorDigest: {}}
 	for {
 		changed := false
@@ -199,6 +216,144 @@ func codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest stri
 		if !changed {
 			return false
 		}
+	}
+}
+
+const codex0151FrameworkClarificationPath = "docs/egress/maintenance/codex-cli-0151-framework-clarification-source-transition.json"
+
+var (
+	codex0151FrameworkClarificationOnce   sync.Once
+	codex0151FrameworkClarificationCached codex0151ToolReadinessReceipt
+	codex0151FrameworkClarificationErr    error
+)
+
+func loadCodex0151FrameworkClarification() (codex0151ToolReadinessReceipt, error) {
+	codex0151FrameworkClarificationOnce.Do(func() {
+		codex0151FrameworkClarificationCached, codex0151FrameworkClarificationErr =
+			readCodex0151FrameworkClarification()
+	})
+	return codex0151FrameworkClarificationCached, codex0151FrameworkClarificationErr
+}
+
+func readCodex0151FrameworkClarification() (codex0151ToolReadinessReceipt, error) {
+	var receipt codex0151ToolReadinessReceipt
+	raw, err := os.ReadFile(codex01491TerminalRepoPath(codex0151FrameworkClarificationPath))
+	if err != nil {
+		return receipt, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return receipt, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return receipt, errors.New("Codex CLI 0.151 框架澄清 transition 尾部存在额外 JSON")
+	}
+	var identityDocument map[string]any
+	if err := json.Unmarshal(raw, &identityDocument); err != nil {
+		return receipt, err
+	}
+	delete(identityDocument, "identity_sha256")
+	canonical, err := json.Marshal(identityDocument)
+	if err != nil {
+		return receipt, err
+	}
+	canonical = append(canonical, '\n')
+	if upstreamMergeFrameworkDigest(canonical) != receipt.IdentitySHA256 {
+		return receipt, errors.New("Codex CLI 0.151 框架澄清 transition 自摘要不一致")
+	}
+	if err := validateCodex0151FrameworkClarification(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func validateCodex0151FrameworkClarification(receipt codex0151ToolReadinessReceipt) error {
+	if receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-framework-clarification-source-transition/v1" ||
+		receipt.IssuedAtUTC != "2026-09-01T06:10:28Z" ||
+		receipt.BaseCommit != "a074d5c2ab9677347046e9a1fd48872769a65d54" ||
+		receipt.Scope != "codex-cli-0.151-framework-clarification" ||
+		receipt.Result != "passed_codex_cli_0151_framework_clarification" {
+		return errors.New("Codex CLI 0.151 框架澄清 transition 顶层事实非法")
+	}
+	if receipt.Predecessor.Kind != "codex_cli_0151_evaluation_recovery" ||
+		receipt.Predecessor.Path != codex0151EvaluationRecoveryPath ||
+		receipt.Predecessor.SHA256 != "470a65c98fe4d7ecd1684cb2cb4346cd353b56363c36847b914e20f6b3ab274c" {
+		return errors.New("Codex CLI 0.151 框架澄清 transition 前序非法")
+	}
+	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
+	if err != nil || upstreamMergeFrameworkDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+		return errors.New("Codex CLI 0.151 框架澄清 transition 前序摘要不一致")
+	}
+	expectedVerification := []string{
+		"git diff --check",
+		"go test ./internal/officialegress ./internal/service -run 'TestCodex0151(FrameworkClarification|EvaluationRecovery)' -count=1",
+		"make check-egress-spec",
+	}
+	if !slices.Equal(receipt.Verification, expectedVerification) {
+		return errors.New("Codex CLI 0.151 框架澄清 transition 验证集合非法")
+	}
+	if receipt.Safety.LiveAccountUsed || receipt.Safety.OnlineAcceptancePerformed ||
+		receipt.Safety.ProductionConfigChanged || receipt.Safety.OfficialEgressProfileChanged {
+		return errors.New("Codex CLI 0.151 框架澄清 transition 安全边界非法")
+	}
+	expectedFrom := map[string]string{
+		"backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go": "0074ae9e33bdd83370885ebcd17f40733ca19aa416449f1e67e7dc767998093f",
+		"backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go":        "a3dff98daf42daaecc1062ff287f09e0ac278ff16f935d7091009a9c923ebf88",
+		"docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md":                                              "74dc01ac86f6f44c77a508bc5834fe3a6699e92d436d9d0701fe00952e556b75",
+	}
+	transitionPaths := make([]string, 0, len(receipt.Transitions))
+	for _, transition := range receipt.Transitions {
+		if expectedFrom[transition.Path] != transition.FromSHA256 ||
+			!receiptSHA256(transition.ToSHA256) || transition.FromSHA256 == transition.ToSHA256 ||
+			strings.TrimSpace(transition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 框架澄清 transition 条目非法")
+		}
+		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
+		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+			return errors.New("Codex CLI 0.151 框架澄清 transition 当前摘要不一致：" + transition.Path)
+		}
+		transitionPaths = append(transitionPaths, transition.Path)
+	}
+	if len(receipt.Transitions) != len(expectedFrom) || len(receipt.Additions) != 0 ||
+		!slices.IsSorted(transitionPaths) ||
+		len(transitionPaths) != len(slices.Compact(append([]string(nil), transitionPaths...))) {
+		return errors.New("Codex CLI 0.151 框架澄清路径闭集非法")
+	}
+	return nil
+}
+
+// codex0151FrameworkClarificationSupersedes 只承接本次文档澄清的三条精确摘要边。
+func codex0151FrameworkClarificationSupersedes(path, priorDigest, currentDigest string) bool {
+	receipt, err := loadCodex0151FrameworkClarification()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			transition.ToSHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCodex0151FrameworkClarificationSourceTransitionIsFrozen(t *testing.T) {
+	if _, err := loadCodex0151FrameworkClarification(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodex0151FrameworkClarificationSourceTransitionRejectsMutation(t *testing.T) {
+	receipt, err := loadCodex0151FrameworkClarification()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := receipt
+	mutated.Transitions = append([]openAIReplayOOMRepairTransition(nil), receipt.Transitions...)
+	mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
+	if err := validateCodex0151FrameworkClarification(mutated); err == nil {
+		t.Fatal("变异后的 Codex CLI 0.151 框架澄清 transition 被错误接受")
 	}
 }
 
