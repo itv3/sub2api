@@ -1345,6 +1345,9 @@ successor 不得用于超时、扫描过慢、评估侧工具修复或临时失�
 若后继由产出侧工具变化触发，先按 §4.0.5 用当前工具建立恢复用 `preflight_only` 并完成完整 Job
 演练，再在 `successor` 命令追加 `--job-rehearsal-root <root> --job-rehearsal-receipt <receipt>`。
 工具会按后继当前执行合同重放收据并替换旧绑定；缺少、部分提供或合同不一致均失败关闭。
+若 `classification_fact_correction` 后继的历史 target 场景只因 `source_spec.sha256` 发生受管维护，
+Job 合同必须以恢复 preflight 的当前受管场景重算，同时保留历史官方执行合同；不得复用旧场景合同，
+也不得因此重发官方请求。
 
 以下原地恢复只适用于显式白名单内的评估侧工具修复；产出侧工具变化仍须新建 Campaign。旧 Ledger
 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger、ARM64 收据和完整 Job 演练。

@@ -648,6 +648,9 @@ ready_for_operator_release
   和新完整 Job 演练；两步批准 attempt／phase 限定的评估 transition（读取原始证据 0 字节）；仅为缺少
   manifest 的历史导入阶段执行一次 `deep-verify`；返回原 attempt 完成 seal 预览与零扫描批准。任一步
   身份、边界、摘要或控制收据不一致即继续停线，不得自动重试、建 successor 或重新发送 live 请求。
+- `classification_fact_correction` 后继若 Formal target 场景仅因受管 `source_spec.sha256` 更新而与当前场景
+  不同，恢复 preflight 必须绑定当前受管场景，并以该场景重算完整 Job 合同；历史官方执行合同仍只读保留，
+  不得复用旧场景合同或因此重发官方请求。该规则不适用于仅修正 Candidate 运行时身份的后继。
 - successor 只绑定直接前序的 checkpoint、`EvidenceManifest` 根摘要和 transition 收据。前序尚无可信
   manifest 时只允许一次显式 `deep-verify` 建立迁移 checkpoint；此后多级历史只验证摘要链，禁止递归
   重扫任一级原始证据。
