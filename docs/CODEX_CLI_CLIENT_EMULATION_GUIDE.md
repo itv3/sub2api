@@ -1491,10 +1491,11 @@ ARM64 的 Go 固定使用 `/root/oauth-capture/state/local/go1.27.0/bin`；构�
 
 完整 Job 演练必须生成并重放工具就绪收据。任一 Job 未通过时禁止创建 Formal Campaign；修复后须重新完整演练并冻结工具摘要。
 
-P0 还必须在 ARM64 使用不小于本次最大 evidence set 的实规模夹具（本轮至少 45 GiB）验证：廉价前检
-失败时读取 0 字节；preview 完整扫描恰好一次；批准、普通 `status` 和 successor 读取原始证据 0 字节；
-同一根因的第二个 successor 被拒绝；中断后从 checkpoint 续作而不是重跑。每项记录字节数和墙钟，任一
-最坏耗时无法装入 Framework §5.3.5 预算即为 P0 阻断。该测试不得改变两张固定 Docker 网络或公网出口。
+P0 还必须在 ARM64 使用不小于本次“最大单一 manifest 边界”的实规模夹具验证：廉价前检失败时读取
+0 字节；preview 完整扫描恰好一次；批准、普通 `status` 和 successor 读取原始证据 0 字节；同一根因的
+第二个 successor 被拒绝；中断后从 checkpoint 续作而不是重跑。规模以 attempt 冻结根的逻辑字节数为准，
+禁止把全部历史 Campaign 或归档累计成几十 GiB 的人造夹具。每项记录字节数和墙钟，任一最坏耗时无法
+装入 Framework §5.3.5 预算即为 P0 阻断。该测试不得改变两张固定 Docker 网络或公网出口。
 演练合同还必须绑定目标版本证据标签声明摘要，并验证声明与正式 official／candidate Job 集逐项完全一致；缺失、多余或旧版本声明均在 P0 失败关闭。
 
 执行顺序固定为：先创建 `preflight_only` Campaign，再在 ARM64 运行以下三个离线命令；`collect` 只做路径、
