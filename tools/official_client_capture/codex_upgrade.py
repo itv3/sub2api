@@ -4933,7 +4933,7 @@ def _successor_recovery_control_transition(
 def _assert_recovery_rehearsal_uses_successor_controls(
     arguments: argparse.Namespace,
     successor_manifest: Mapping[str, Any],
-) -> None:
+) -> tuple[Path, dict[str, Any]]:
     """确认新演练来自绑定同一恢复 Ledger 和 ARM64 收据的 preflight。"""
 
     rehearsal_root = arguments.job_rehearsal_root
@@ -4988,6 +4988,99 @@ def _assert_recovery_rehearsal_uses_successor_controls(
         preflight_manifest,
         require_active=True,
     )
+    return preflight_dir, preflight_manifest
+
+
+def _recovery_rehearsal_target_scenario_override(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    preflight_dir: Path,
+    preflight_manifest: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """只允许当前受管场景承接 Formal 的历史规格章节摘要。"""
+
+    target_version = str(manifest.get("target_version", ""))
+    if not VERSION_RE.fullmatch(target_version):
+        raise ConfigurationError("Formal target_version 非法。")
+
+    def bound_scenario(
+        root: Path,
+        source_manifest: Mapping[str, Any],
+        label: str,
+    ) -> dict[str, Any]:
+        inputs = source_manifest.get("inputs")
+        reference = (
+            inputs.get("target_discovery_scenarios")
+            if isinstance(inputs, Mapping)
+            else None
+        )
+        if not isinstance(reference, dict):
+            raise ConfigurationError(f"{label}缺少 target 场景绑定。")
+        _require_file_binding(reference, f"{label} target 场景")
+        path = _campaign_file(root, reference["path"])
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or file_sha256(path) != reference["sha256"]
+        ):
+            raise ConfigurationError(f"{label} target 场景摘要不一致。")
+        payload = _read_json(path, f"{label} target 场景")
+        _validate_scenario_manifest_shape(payload)
+        if payload.get("codex_version") != target_version:
+            raise ConfigurationError(f"{label} target 场景版本不一致。")
+        return payload
+
+    frozen = bound_scenario(campaign_dir, manifest, "Formal")
+    preflight = bound_scenario(
+        preflight_dir,
+        preflight_manifest,
+        "恢复 preflight",
+    )
+    managed_path = (
+        Path(__file__).resolve().parent
+        / f"codex_upgrade_scenarios_{target_version.replace('.', '_')}.json"
+    )
+    if managed_path.is_symlink() or not managed_path.is_file():
+        raise ConfigurationError("当前受管版本化 target 场景不存在或不可信。")
+    managed = _read_json(managed_path, "当前受管版本化 target 场景")
+    _validate_scenario_manifest_shape(managed)
+    if managed.get("codex_version") != target_version or preflight != managed:
+        raise ConfigurationError(
+            "恢复 preflight 必须使用当前受管版本化 target 场景原文件。"
+        )
+    if frozen == managed:
+        return None
+
+    frozen_binding = _scenario_source_spec_binding(
+        frozen,
+        label="Formal 历史 target 场景",
+    )
+    managed_binding = _scenario_source_spec_binding(
+        managed,
+        label="当前受管版本化 target 场景",
+    )
+    source_path_text, _, fragment = managed_binding.source_spec.partition("#")
+    current_source = Path(__file__).resolve().parents[2] / source_path_text
+    if (
+        frozen_binding.codex_version != managed_binding.codex_version
+        or frozen_binding.source_spec != managed_binding.source_spec
+        or current_source.is_symlink()
+        or not current_source.is_file()
+        or source_spec_section_sha256(current_source, fragment)
+        != managed_binding.source_spec_sha256
+    ):
+        raise ConfigurationError("Formal 与当前场景的规格来源身份不一致。")
+
+    normalized_frozen = json.loads(json.dumps(frozen, ensure_ascii=False))
+    normalized_source = normalized_frozen.get("source_spec")
+    if not isinstance(normalized_source, dict):
+        raise ConfigurationError("Formal 历史 target 场景缺少 source_spec。")
+    normalized_source["sha256"] = managed_binding.source_spec_sha256
+    if normalized_frozen != managed:
+        raise ConfigurationError(
+            "Formal 历史 target 场景除 source_spec.sha256 外发生变化。"
+        )
+    return managed
 
 
 def _reject_repeated_successor_reason(
@@ -8101,9 +8194,29 @@ def _phase_recovery_controls_from_arguments(
     recovery_tool_identity = _tool_identity()
     if recovery_tool_identity["files_sha256"] != current_tool_sha256:
         raise ConfigurationError("恢复演练工具身份与当前评估工具不一致。")
+
+    # 先证明演练来自同一新 Ledger、ARM64 P0 和当前工具的 preflight，
+    # 再读取其受管版本化场景。Formal 只允许承接历史 source_spec 摘要，
+    # 不能把 Campaign 内规范化副本反向当成新预检输入。
+    recovery_manifest = json.loads(json.dumps(manifest, ensure_ascii=False))
+    recovery_manifest["tool_identity"] = recovery_tool_identity
+    recovery_manifest["control_receipts"] = recovery_controls
+    preflight_dir, preflight_manifest = (
+        _assert_recovery_rehearsal_uses_successor_controls(
+            arguments,
+            recovery_manifest,
+        )
+    )
+    target_scenario_override = _recovery_rehearsal_target_scenario_override(
+        campaign_dir,
+        manifest,
+        preflight_dir,
+        preflight_manifest,
+    )
     expected_rehearsal_contract = _job_rehearsal_contract_from_manifest(
         campaign_dir,
         manifest,
+        target_scenario_override=target_scenario_override,
         tool_files_sha256_override=current_tool_sha256,
     )
     rehearsal_root = values["job_rehearsal_root"]
@@ -8113,16 +8226,6 @@ def _phase_recovery_controls_from_arguments(
         rehearsal_root,
         rehearsal_receipt,
         expected_rehearsal_contract,
-    )
-
-    # 完整演练必须来自绑定同一新 Ledger、同一新 ARM64 P0 收据且使用当前工具
-    # 的 preflight_only Campaign，不能只拿一份孤立的演练 JSON 冒充恢复闭环。
-    recovery_manifest = json.loads(json.dumps(manifest, ensure_ascii=False))
-    recovery_manifest["tool_identity"] = recovery_tool_identity
-    recovery_manifest["control_receipts"] = recovery_controls
-    _assert_recovery_rehearsal_uses_successor_controls(
-        arguments,
-        recovery_manifest,
     )
 
     stop_file = resolved_stop_root / stop_relative

@@ -385,6 +385,91 @@ class CodexUpgradeTest(unittest.TestCase):
                 controls,
             )
 
+    def test_recovery_rehearsal_only_accepts_managed_scenario_source_digest_drift(
+        self,
+    ) -> None:
+        """恢复场景必须来自受管原文件，Formal 只承接历史章节摘要。"""
+
+        managed_path = (
+            Path(codex_upgrade.__file__).resolve().parent
+            / "codex_upgrade_scenarios_0_151_0.json"
+        )
+        managed = json.loads(managed_path.read_text(encoding="utf-8"))
+        historical = json.loads(json.dumps(managed, ensure_ascii=False))
+        historical["source_spec"]["sha256"] = "0" * 64
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            formal_dir = root / "formal"
+            preflight_dir = root / "preflight"
+            formal_path = formal_dir / "inputs" / "target.json"
+            preflight_path = preflight_dir / "inputs" / "target.json"
+            self._write_json(formal_path, historical)
+            self._write_json(preflight_path, managed)
+            formal_manifest = {
+                "target_version": "0.151.0",
+                "inputs": {
+                    "target_discovery_scenarios": self._binding(
+                        formal_path,
+                        "inputs/target.json",
+                    )
+                },
+            }
+            preflight_manifest = {
+                "target_version": "0.151.0",
+                "inputs": {
+                    "target_discovery_scenarios": self._binding(
+                        preflight_path,
+                        "inputs/target.json",
+                    )
+                },
+            }
+
+            override = codex_upgrade._recovery_rehearsal_target_scenario_override(
+                formal_dir,
+                formal_manifest,
+                preflight_dir,
+                preflight_manifest,
+            )
+            self.assertEqual(override, managed)
+
+            self._write_json(preflight_path, historical)
+            preflight_manifest["inputs"]["target_discovery_scenarios"] = (
+                self._binding(preflight_path, "inputs/target.json")
+            )
+            with self.assertRaisesRegex(
+                codex_upgrade.ConfigurationError,
+                "受管版本化 target 场景原文件",
+            ):
+                codex_upgrade._recovery_rehearsal_target_scenario_override(
+                    formal_dir,
+                    formal_manifest,
+                    preflight_dir,
+                    preflight_manifest,
+                )
+
+            self._write_json(preflight_path, managed)
+            preflight_manifest["inputs"]["target_discovery_scenarios"] = (
+                self._binding(preflight_path, "inputs/target.json")
+            )
+            changed = json.loads(json.dumps(historical, ensure_ascii=False))
+            changed["profile_id"] = "tampered-profile"
+            self._write_json(formal_path, changed)
+            formal_manifest["inputs"]["target_discovery_scenarios"] = self._binding(
+                formal_path,
+                "inputs/target.json",
+            )
+            with self.assertRaisesRegex(
+                codex_upgrade.ConfigurationError,
+                "除 source_spec.sha256 外发生变化",
+            ):
+                codex_upgrade._recovery_rehearsal_target_scenario_override(
+                    formal_dir,
+                    formal_manifest,
+                    preflight_dir,
+                    preflight_manifest,
+                )
+
     def test_plan_identity_uses_transition_when_original_ledger_is_stopped(
         self,
     ) -> None:

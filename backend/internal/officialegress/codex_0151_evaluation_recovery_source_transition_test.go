@@ -192,6 +192,12 @@ func codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest stri
 		return false
 	}
 	receipts = append(receipts, clarification)
+	managedScenarioRecovery, managedScenarioRecoveryErr :=
+		loadCodex0151ManagedScenarioRecovery()
+	if managedScenarioRecoveryErr != nil {
+		return false
+	}
+	receipts = append(receipts, managedScenarioRecovery)
 	reachable := map[string]struct{}{priorDigest: {}}
 	for {
 		changed := false
@@ -310,7 +316,13 @@ func validateCodex0151FrameworkClarification(receipt codex0151ToolReadinessRecei
 			return errors.New("Codex CLI 0.151 框架澄清 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151ManagedScenarioRecoverySupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 框架澄清 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -323,19 +335,29 @@ func validateCodex0151FrameworkClarification(receipt codex0151ToolReadinessRecei
 	return nil
 }
 
-// codex0151FrameworkClarificationSupersedes 只承接本次文档澄清的三条精确摘要边。
+// codex0151FrameworkClarificationSupersedes 承接文档澄清及其直接工具后继。
 func codex0151FrameworkClarificationSupersedes(path, priorDigest, currentDigest string) bool {
 	receipt, err := loadCodex0151FrameworkClarification()
 	if err != nil {
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
-			return true
+		if transition.Path == path && transition.FromSHA256 == priorDigest {
+			if transition.ToSHA256 == currentDigest {
+				return true
+			}
+			return codex0151ManagedScenarioRecoverySupersedes(
+				path,
+				transition.ToSHA256,
+				currentDigest,
+			)
 		}
 	}
-	return false
+	return codex0151ManagedScenarioRecoverySupersedes(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151FrameworkClarificationSourceTransitionIsFrozen(t *testing.T) {
@@ -354,6 +376,144 @@ func TestCodex0151FrameworkClarificationSourceTransitionRejectsMutation(t *testi
 	mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
 	if err := validateCodex0151FrameworkClarification(mutated); err == nil {
 		t.Fatal("变异后的 Codex CLI 0.151 框架澄清 transition 被错误接受")
+	}
+}
+
+const codex0151ManagedScenarioRecoveryPath = "docs/egress/maintenance/codex-cli-0151-managed-scenario-recovery-source-transition.json"
+
+var (
+	codex0151ManagedScenarioRecoveryOnce   sync.Once
+	codex0151ManagedScenarioRecoveryCached codex0151ToolReadinessReceipt
+	codex0151ManagedScenarioRecoveryErr    error
+)
+
+func loadCodex0151ManagedScenarioRecovery() (codex0151ToolReadinessReceipt, error) {
+	codex0151ManagedScenarioRecoveryOnce.Do(func() {
+		codex0151ManagedScenarioRecoveryCached, codex0151ManagedScenarioRecoveryErr =
+			readCodex0151ManagedScenarioRecovery()
+	})
+	return codex0151ManagedScenarioRecoveryCached, codex0151ManagedScenarioRecoveryErr
+}
+
+func readCodex0151ManagedScenarioRecovery() (codex0151ToolReadinessReceipt, error) {
+	var receipt codex0151ToolReadinessReceipt
+	raw, err := os.ReadFile(codex01491TerminalRepoPath(codex0151ManagedScenarioRecoveryPath))
+	if err != nil {
+		return receipt, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return receipt, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return receipt, errors.New("Codex CLI 0.151 受管场景恢复 transition 尾部存在额外 JSON")
+	}
+	var identityDocument map[string]any
+	if err := json.Unmarshal(raw, &identityDocument); err != nil {
+		return receipt, err
+	}
+	delete(identityDocument, "identity_sha256")
+	canonical, err := json.Marshal(identityDocument)
+	if err != nil {
+		return receipt, err
+	}
+	canonical = append(canonical, '\n')
+	if upstreamMergeFrameworkDigest(canonical) != receipt.IdentitySHA256 {
+		return receipt, errors.New("Codex CLI 0.151 受管场景恢复 transition 自摘要不一致")
+	}
+	if err := validateCodex0151ManagedScenarioRecovery(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func validateCodex0151ManagedScenarioRecovery(receipt codex0151ToolReadinessReceipt) error {
+	if receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-managed-scenario-recovery-source-transition/v1" ||
+		receipt.IssuedAtUTC != "2026-09-01T06:26:28Z" ||
+		receipt.BaseCommit != "28c4b8fb8dab7a29a77135d2e9c19e056f8abd27" ||
+		receipt.Scope != "codex-cli-0.151-managed-scenario-recovery" ||
+		receipt.Result != "passed_codex_cli_0151_managed_scenario_recovery" {
+		return errors.New("Codex CLI 0.151 受管场景恢复 transition 顶层事实非法")
+	}
+	if receipt.Predecessor.Kind != "codex_cli_0151_framework_clarification" ||
+		receipt.Predecessor.Path != codex0151FrameworkClarificationPath ||
+		receipt.Predecessor.SHA256 != "2113cb607bcf7f080036220767f6c2267506260e36992fc451d8b301eea1d0e6" {
+		return errors.New("Codex CLI 0.151 受管场景恢复 transition 前序非法")
+	}
+	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
+	if err != nil || upstreamMergeFrameworkDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+		return errors.New("Codex CLI 0.151 受管场景恢复 transition 前序摘要不一致")
+	}
+	expectedVerification := []string{
+		"python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade",
+		"go test ./internal/officialegress ./internal/service -run 'TestCodex0151(ManagedScenarioRecovery|FrameworkClarification|EvaluationRecovery)' -count=1",
+		"make check-egress-spec",
+	}
+	if !slices.Equal(receipt.Verification, expectedVerification) {
+		return errors.New("Codex CLI 0.151 受管场景恢复 transition 验证集合非法")
+	}
+	if receipt.Safety.LiveAccountUsed || receipt.Safety.OnlineAcceptancePerformed ||
+		receipt.Safety.ProductionConfigChanged || receipt.Safety.OfficialEgressProfileChanged {
+		return errors.New("Codex CLI 0.151 受管场景恢复 transition 安全边界非法")
+	}
+	expectedFrom := map[string]string{
+		"backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go": "4895527ac689c4c07c1650407e8cbd7f613bd6030abdb35265f123a4a09db9c5",
+		"backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go":        "460f77f12d9af03c30fbdacdf02cbb36f7ebd1c8ea24bf4ed01bbba15361cd61",
+		"tools/official_client_capture/codex_upgrade.py":                                           "38fc19c54804ff7b106ccd6950522bb11bbca432cc93a88875ea3fe836c549ac",
+		"tools/official_client_capture/tests/test_codex_upgrade.py":                                "15ffcbd6975fc0cbd798d893aa50ecd1ea428cdc10c0ff91b9fb490733eb8039",
+	}
+	transitionPaths := make([]string, 0, len(receipt.Transitions))
+	for _, transition := range receipt.Transitions {
+		if expectedFrom[transition.Path] != transition.FromSHA256 ||
+			!receiptSHA256(transition.ToSHA256) || transition.FromSHA256 == transition.ToSHA256 ||
+			strings.TrimSpace(transition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 受管场景恢复 transition 条目非法")
+		}
+		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
+		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+			return errors.New("Codex CLI 0.151 受管场景恢复 transition 当前摘要不一致：" + transition.Path)
+		}
+		transitionPaths = append(transitionPaths, transition.Path)
+	}
+	if len(receipt.Transitions) != len(expectedFrom) || len(receipt.Additions) != 0 ||
+		!slices.IsSorted(transitionPaths) ||
+		len(transitionPaths) != len(slices.Compact(append([]string(nil), transitionPaths...))) {
+		return errors.New("Codex CLI 0.151 受管场景恢复路径闭集非法")
+	}
+	return nil
+}
+
+func codex0151ManagedScenarioRecoverySupersedes(path, priorDigest, currentDigest string) bool {
+	receipt, err := loadCodex0151ManagedScenarioRecovery()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			transition.ToSHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCodex0151ManagedScenarioRecoverySourceTransitionIsFrozen(t *testing.T) {
+	if _, err := loadCodex0151ManagedScenarioRecovery(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodex0151ManagedScenarioRecoverySourceTransitionRejectsMutation(t *testing.T) {
+	receipt, err := loadCodex0151ManagedScenarioRecovery()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := receipt
+	mutated.Transitions = append([]openAIReplayOOMRepairTransition(nil), receipt.Transitions...)
+	mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
+	if err := validateCodex0151ManagedScenarioRecovery(mutated); err == nil {
+		t.Fatal("变异后的 Codex CLI 0.151 受管场景恢复 transition 被错误接受")
 	}
 }
 
