@@ -210,6 +210,7 @@ func assertCompatibilityClosureFileDigest(
 		}
 	}
 	if got != expected &&
+		!codex0151EvaluationRecoverySupersedesCompatibilityClosureService(path, expected, want, got) &&
 		!upstreamMergeFrameworkTransitionSupersedesService(path, expected, got) &&
 		!upstreamMergeFrameworkTransitionSupersedesService(path, want, got) &&
 		!claudeFWGTestTransitionSupersedesService(path, expected, got) &&
@@ -220,6 +221,40 @@ func assertCompatibilityClosureFileDigest(
 		!upstreamV0180EgressPrerequisiteTransitionSupersedesService(path, want, got) {
 		t.Fatalf("兼容代码闭集文件摘要漂移：path=%s got=%s want=%s", path, got, expected)
 	}
+}
+
+// codex0151EvaluationRecoverySupersedesCompatibilityClosureService 先用既有闭集
+// 到达本次 transition 的 from 摘要，再用有界恢复图到达当前摘要。
+func codex0151EvaluationRecoverySupersedesCompatibilityClosureService(
+	path, expected, want, currentDigest string,
+) bool {
+	if codex0151EvaluationRecoverySupersedesService(path, expected, currentDigest) ||
+		codex0151EvaluationRecoverySupersedesService(path, want, currentDigest) {
+		return true
+	}
+	receipt, err := loadCodex0151EvaluationRecoveryService()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path != path ||
+			!codex0151EvaluationRecoverySupersedesService(
+				path, transition.FromSHA256, currentDigest,
+			) {
+			continue
+		}
+		if upstreamMergeFrameworkTransitionSupersedesService(path, expected, transition.FromSHA256) ||
+			upstreamMergeFrameworkTransitionSupersedesService(path, want, transition.FromSHA256) ||
+			claudeFWGTestTransitionSupersedesService(path, expected, transition.FromSHA256) ||
+			claudeFWGSourceTransitionSupersedesService(path, expected, transition.FromSHA256) ||
+			versionLeakDebtTransitionSupersedes(path, want, transition.FromSHA256) ||
+			upstreamV0177SourceTransitionSupersedes(path, want, transition.FromSHA256) ||
+			upstreamV0180EgressPrerequisiteTransitionSupersedesService(path, expected, transition.FromSHA256) ||
+			upstreamV0180EgressPrerequisiteTransitionSupersedesService(path, want, transition.FromSHA256) {
+			return true
+		}
+	}
+	return false
 }
 
 func loadMultiPersonaControlTestTransition(

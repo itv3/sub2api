@@ -1332,6 +1332,8 @@ official surface；旧分类结果只作为被纠正事实绑定摘要，不复�
 位于前序 Campaign，保持只读；后继只绑定直接前序 checkpoint、`EvidenceManifest` 根摘要、阶段 seal
 和批准联合摘要。`status`、`compare`、`accept` 只重放这条小型摘要链，不递归读取任一级原始 evidence。
 前序没有可信 manifest 时，必须在创建 successor 前执行唯一一次显式 `deep-verify` 建立迁移 checkpoint。
+摘要承接必须以最多 64 份 transition 收据做确定性有界图可达验证；遇环、缺失、摘要漂移或超过上限
+立即失败关闭，禁止逐层补 successor、递归重试或扫描历史 evidence。
 任一路径、manifest 根摘要、package digest 或不可变边界漂移均失败关闭。后继 Campaign
 普通运行时纠正后继只能新跑 candidate 与第三方客户端验证；分类事实纠正后继允许重新批准规则、
 场景、画像和断言，但仍不得改变目标版本、官方身份或已封存官方证据语义。后面三项发生变化时

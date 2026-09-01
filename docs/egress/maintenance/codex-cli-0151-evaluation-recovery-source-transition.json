@@ -1,0 +1,115 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-evaluation-recovery-source-transition/v1",
+  "issued_at_utc": "2026-09-01T05:07:25Z",
+  "base_commit": "35e895191789be7e1b7b295daea5a94b415362c1",
+  "scope": "codex-cli-0.151-evaluation-recovery",
+  "predecessor": {
+    "kind": "codex_cli_0151_test_trace_preflight_tool_successor",
+    "path": "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor-source-transition.json",
+    "sha256": "d8b7f1bf9b07b71be4d8e423c01c23447ebd744d539aa3a54e720b38b5b42f5e"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/catalog_generic_bind_retirement_test.go",
+      "from_sha256": "50942dcc21efef1cb808b7ab3ae13d5768b04f07c71282732f8fb0ac1e688d0e",
+      "to_sha256": "0eb5756315f79d474dd349b17de75f2f6553634ee60f48ec8e03c851657ded9f",
+      "reason": "让通用 Catalog 退休门禁通过本次有界 transition 承接文档摘要。"
+    },
+    {
+      "path": "backend/internal/officialegress/catalog_retirements_test.go",
+      "from_sha256": "c3e6e3261b7658e5da04953a1b7edf41ccc57a70478a5852902a34f08377503a",
+      "to_sha256": "faf01f281a90aec462f9b023c35131b4d9cb7a832679e1f6fd616a5e33ce98bd",
+      "reason": "让通用退休摘要承接统一调用本次有界图验证。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_test_trace_preflight_tool_successor_test.go",
+      "from_sha256": "7d4ac0d6919f29c0aefdd92c8a43fd8e8b2f6b4d768da6145d9b95d53914dd7c",
+      "to_sha256": "0347790a6fae9cd1ae4bba5d456ea0599e3810658a48832b1c1172b929548421",
+      "reason": "让既有 officialegress 后继链只通过本次评估恢复 transition 承接当前摘要。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
+      "from_sha256": "3dbb42cea9bf7fa3f99aacea7065e31289e73c1a8030362b5bf1815e6e3b84e7",
+      "to_sha256": "257da7b5cf7c7e783b36d44d95af1a47d02d96c0c990c98d99cbbce4cc288df5",
+      "reason": "让 service 后继链只通过本次评估恢复 transition 承接当前摘要。"
+    },
+    {
+      "path": "backend/internal/service/compatibility_code_retirement_closure_test.go",
+      "from_sha256": "9e7ba19d2a4dc810c660836e07da9a583f58e97ac7cf4a6ef7b7dd7093c323ad",
+      "to_sha256": "cb24f66960018283cb228330f0046728ab8ae56088aba03a717b64a26b52cad5",
+      "reason": "让 service 兼容退休门禁通过本次有界 transition 承接文档摘要。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "c3348ad333f5add6b51755a004c93109b9c5b1263454ccec33af05fe8b7701e3",
+      "to_sha256": "41525a31943a65535800649b3972edea69d2d2496e0eec1af68a6d5face3275b",
+      "reason": "限定原 attempt 恢复仅用于评估侧工具，并固定一次扫描与零重发顺序。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "from_sha256": "0b8f2adc69bc55c2efd75fee51624714b43f7bef5eb51b7319bfb0890f0df3b9",
+      "to_sha256": "74dc01ac86f6f44c77a508bc5834fe3a6699e92d436d9d0701fe00952e556b75",
+      "reason": "固定评估工具原地恢复、EvidenceManifest 和预算停线的公共边界。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "40688af442fe2da95d4a81f7a0ac7b18ea6b3a3932f9d122c8e2b60fe9a01b81",
+      "to_sha256": "38fc19c54804ff7b106ccd6950522bb11bbca432cc93a88875ea3fe836c549ac",
+      "reason": "实现受管评估 transition、单次扫描、checkpoint 续作和零扫描封存链。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_seal_preview.schema.json",
+      "from_sha256": "0160c1a05416cd7b3660404bb90add3098cbdd15b954c562baa3bc11deee0a76",
+      "to_sha256": "399a4d20db8d9d5bf6cbbf88c2f4bd8d5a33ea112952988a37c77abcadbdc43f",
+      "reason": "追加 v3 seal 预览的 manifest、草案和扫描汇总字段，同时保留 v2。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_stage_result.schema.json",
+      "from_sha256": "fb7b63f3008850e24f19c15c02b9d990341aeae6b9a0da4ca36de24fb45fdb94",
+      "to_sha256": "f4967759439fcad0723650ad721fb41d76e227f1ba3b1ffa0018dae0200b543e",
+      "reason": "绑定阶段 EvidenceManifest、扫描汇总和评估 transition 收据。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "e8c97b5d40e991dc9600a9acd55c9e8ed6d6a66f8929d36f53f5c53740f59b46",
+      "to_sha256": "15ffcbd6975fc0cbd798d893aa50ecd1ea428cdc10c0ff91b9fb490733eb8039",
+      "reason": "覆盖恢复控制、路径逃逸、单次扫描、续作、零扫描批准和同根因后继拒绝。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
+      "sha256": "0074ae9e33bdd83370885ebcd17f40733ca19aa416449f1e67e7dc767998093f",
+      "reason": "在 officialegress 包冻结并变异测试本次追加式 transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
+      "sha256": "a3dff98daf42daaecc1062ff287f09e0ac278ff16f935d7091009a9c923ebf88",
+      "reason": "在 service 包独立重放并变异测试同一 transition。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-evaluation-recovery/plan.json",
+      "sha256": "95014d3a719edb601c9a164627263d4317e1d7931a04c37279224e7941a7d7d7",
+      "reason": "记录根因、最小修复、验证集合和固定网络约束。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_evidence_manifest.py",
+      "sha256": "ec70cbac29dd99d2bc07a6d44faa2174f8670e767eab676b139c7e40c6e2f451",
+      "reason": "提供有界、可续作、扫描后复核 stat 的 EvidenceManifest 实现。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(EvaluationRecovery|TestTracePreflightToolSuccessor|Arm64EnvironmentProducerReplayToolSuccessor)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_evaluation_recovery",
+  "identity_sha256": "54cf8088643991157b0ed310144557c39676fe0478541568b981ef1e292e0eff"
+}

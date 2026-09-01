@@ -90,6 +90,7 @@ func TestCatalogGenericBindCompatibilityRetirementReceiptAndSourceExtinction(t *
 			t.Fatal(readErr)
 		}
 		if got := catalogGenericBindRetirementDigest(source); got != transition.ToSHA256 &&
+			!codex0151EvaluationRecoverySupersedes(transition.Path, transition.ToSHA256, got) &&
 			!compatibilityCodeRetirementTransitionSupersedes(transition.Path, transition.ToSHA256, got) {
 			t.Fatalf("Catalog 通用 binding 源码摘要漂移：path=%s got=%s want=%s", transition.Path, got, transition.ToSHA256)
 		}

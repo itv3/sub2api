@@ -100,6 +100,15 @@
     "evidence_inventory": {
       "$ref": "#/$defs/evidenceInventory"
     },
+    "evidence_manifest": {
+      "$ref": "#/$defs/fileBinding"
+    },
+    "scan_summary": {
+      "$ref": "#/$defs/scanSummary"
+    },
+    "evaluation_transition": {
+      "$ref": "#/$defs/fileBinding"
+    },
     "surface": {
       "$ref": "#/$defs/fileBinding"
     },
@@ -250,6 +259,47 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "required": [
+          "evidence_manifest"
+        ]
+      },
+      "then": {
+        "required": [
+          "scan_summary"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "scan_summary"
+        ]
+      },
+      "then": {
+        "required": [
+          "evidence_manifest"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "evaluation_transition"
+        ]
+      },
+      "then": {
+        "properties": {
+          "stage": {
+            "enum": [
+              "capture-official",
+              "capture-candidate"
+            ]
+          }
+        }
+      }
+    },
     {
       "if": {
         "allOf": [
@@ -776,6 +826,38 @@
         },
         "offset": {
           "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "scanSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "full_scan_count",
+        "scanned_bytes",
+        "reused_bytes",
+        "total_bytes",
+        "elapsed_seconds"
+      ],
+      "properties": {
+        "full_scan_count": {
+          "const": 1
+        },
+        "scanned_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reused_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsed_seconds": {
+          "type": "number",
           "minimum": 0
         }
       }

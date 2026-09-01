@@ -1,0 +1,28 @@
+{
+  "schema_version": "codex-cli-0151-evaluation-recovery-plan/v1",
+  "created_at_utc": "2026-09-01T05:07:25Z",
+  "scope": "codex-cli-0.151-evaluation-recovery",
+  "classification": "evaluation_side",
+  "root_cause": "候选证据封存反复递归扫描，且超时恢复缺少原 attempt、停线台账、新 P0 与完整 Job 演练的强绑定。",
+  "changes": [
+    "以 EvidenceManifest 将同一证据边界限制为一次完整内容扫描，并支持 checkpoint 续作。",
+    "评估 transition 只放行显式白名单和 candidate 阶段限定的混合工具，产出侧变化继续失败关闭。",
+    "seal 批准、status、compare 和 accept 只重放摘要与 stat 边界，不再读取原始证据。",
+    "保留 r26 已完成的 91 个 live 请求，禁止因评估工具修复重发。"
+  ],
+  "constraints": {
+    "arm64_only_for_formal_validation": true,
+    "sub2apiplus_ipv4": "172.25.0.3",
+    "capture_cli_ipv4": "172.30.0.10",
+    "public_egress_ipv4": "179.255.100.158",
+    "network_mutation_allowed": false,
+    "retire_only_version": "0.147.0"
+  },
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(EvaluationRecovery|TestTracePreflightToolSuccessor|Arm64EnvironmentProducerReplayToolSuccessor)' -count=1",
+    "make check-egress-spec"
+  ],
+  "status": "implemented_pending_arm64_validation"
+}

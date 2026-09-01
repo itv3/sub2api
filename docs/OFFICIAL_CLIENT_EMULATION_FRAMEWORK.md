@@ -643,6 +643,8 @@ ready_for_operator_release
 - successor 只绑定直接前序的 checkpoint、`EvidenceManifest` 根摘要和 transition 收据。前序尚无可信
   manifest 时只允许一次显式 `deep-verify` 建立迁移 checkpoint；此后多级历史只验证摘要链，禁止递归
   重扫任一级原始证据。
+- 摘要链必须用确定性的有界图可达验证；最多读取 64 份 transition 收据，遇到环、缺失、摘要漂移或
+  超过上限立即失败关闭，禁止逐层创建 successor 或自动重试来“追平”当前摘要。
 - 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复使用新 Ledger，并绑定旧停线 checkpoint、
   新计时／ARM64 收据和新演练。新 Ledger 不得删除或改写旧耗时与 live 请求总数，也不得以恢复为由
   创建 successor。

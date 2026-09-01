@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-seal-preview-v2.json",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-seal-preview-v3.json",
   "title": "Codex 出站抓包 Seal 预览",
   "description": "人工批准前由机器生成的联合事实摘要；批准值必须等于 review_sha256，预览本身不可回写。",
   "type": "object",
@@ -24,7 +24,10 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "codex-upgrade-seal-preview/v2"
+      "enum": [
+        "codex-upgrade-seal-preview/v2",
+        "codex-upgrade-seal-preview/v3"
+      ]
     },
     "campaign_id": {
       "$ref": "#/$defs/safeId"
@@ -76,6 +79,18 @@
     "restoration_report_sha256": {
       "$ref": "#/$defs/sha256"
     },
+    "evidence_manifest_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "evidence_manifest_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "seal_draft_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "scan_summary": {
+      "$ref": "#/$defs/scanSummary"
+    },
     "post_client_restoration_sha256": {
       "$ref": "#/$defs/sha256"
     },
@@ -106,6 +121,34 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "codex-upgrade-seal-preview/v3"
+          }
+        },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": [
+          "evidence_manifest_sha256",
+          "evidence_manifest_digest",
+          "seal_draft_sha256",
+          "scan_summary"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {"required": ["evidence_manifest_sha256"]},
+            {"required": ["evidence_manifest_digest"]},
+            {"required": ["seal_draft_sha256"]},
+            {"required": ["scan_summary"]}
+          ]
+        }
+      }
+    },
     {
       "if": {
         "properties": {
@@ -207,6 +250,24 @@
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "scanSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "full_scan_count",
+        "scanned_bytes",
+        "reused_bytes",
+        "total_bytes",
+        "elapsed_seconds"
+      ],
+      "properties": {
+        "full_scan_count": {"const": 1},
+        "scanned_bytes": {"type": "integer", "minimum": 0},
+        "reused_bytes": {"type": "integer", "minimum": 0},
+        "total_bytes": {"type": "integer", "minimum": 1},
+        "elapsed_seconds": {"type": "number", "minimum": 0}
+      }
     }
   }
 }

@@ -79,6 +79,7 @@ from tools.official_client_capture.codex_upgrade_environment_probe import (
     run_probe as run_environment_probe,
 )
 from tools.official_client_capture import codex_upgrade_arm64_environment_receipt
+from tools.official_client_capture import codex_upgrade_evidence_manifest
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
 from tools.official_client_capture import codex_upgrade_timing_ledger
 from tools.official_client_capture import codex_upgrade_gate_receipt as external_gate_receipt
@@ -135,7 +136,18 @@ RESTORATION_SCHEMA = FINALIZED_RESTORATION_SCHEMA
 CAPTURE_ATTEMPT_SCHEMA = "codex-upgrade-capture-attempt/v2"
 CAPTURE_RESERVATION_SCHEMA = "codex-upgrade-capture-reservation/v2"
 SEAL_FAILURE_SCHEMA = "codex-upgrade-seal-failure/v2"
-SEAL_PREVIEW_SCHEMA = "codex-upgrade-seal-preview/v2"
+LEGACY_SEAL_PREVIEW_SCHEMA = "codex-upgrade-seal-preview/v2"
+SEAL_PREVIEW_SCHEMA = "codex-upgrade-seal-preview/v3"
+SEAL_DRAFT_SCHEMA = "codex-upgrade-seal-draft/v1"
+IMPORTED_STAGE_CHECKPOINT_SCHEMA = "codex-upgrade-imported-stage-checkpoint/v1"
+TOOL_EVALUATION_TRANSITION_PREVIEW_SCHEMA = (
+    "codex-upgrade-tool-evaluation-transition-preview/v1"
+)
+TOOL_EVALUATION_TRANSITION_SCHEMA = "codex-upgrade-tool-evaluation-transition/v1"
+TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA = (
+    "codex-upgrade-tool-evaluation-recovery-controls/v1"
+)
+DEEP_VERIFY_RECEIPT_SCHEMA = "codex-upgrade-deep-verify/v1"
 SCENARIO_SCHEMA = "codex-upgrade-scenarios/v1"
 STAGE_SCHEMA = "codex-upgrade-stage-result/v2"
 PREDECESSOR_IMPORT_SCHEMA_V1 = "codex-upgrade-predecessor-import/v1"
@@ -923,24 +935,19 @@ def _merge_surfaces(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def scan_evidence(paths: Iterable[Path], label: str) -> dict[str, Any]:
-    """从规范化 JSON、JSONL、relay 摘要和 pcap 建立动态出站面。"""
+def _scan_evidence_files(
+    files: Iterable[Path],
+    label: str,
+    *,
+    input_paths: Iterable[Path],
+) -> dict[str, Any]:
+    """只解析显式文件清单，不自行递归发现证据边界。"""
 
     surfaces: list[dict[str, Any]] = []
     warnings: list[str] = []
-    files: set[Path] = set()
-    for root in paths:
-        if root.is_file():
-            files.add(root)
-        elif root.is_dir():
-            files.update(
-                path
-                for path in root.rglob("*")
-                if path.is_file()
-                and not path.is_symlink()
-                and path.suffix.lower() in {".json", ".jsonl", ".pcap", ".bin"}
-            )
-    for path in sorted(files):
+    selected_files = sorted(set(files))
+    selected_inputs = list(input_paths)
+    for path in selected_files:
         source = str(path)
         try:
             if path.suffix.lower() == ".bin":
@@ -970,12 +977,31 @@ def scan_evidence(paths: Iterable[Path], label: str) -> dict[str, Any]:
     return {
         "schema_version": SURFACE_SCHEMA,
         "label": label,
-        "input_paths": [str(path) for path in paths],
-        "file_count": len(files),
+        "input_paths": [str(path) for path in selected_inputs],
+        "file_count": len(selected_files),
         "surface_count": len(merged),
         "surfaces": merged,
         "warnings": warnings,
     }
+
+
+def scan_evidence(paths: Iterable[Path], label: str) -> dict[str, Any]:
+    """从规范化 JSON、JSONL、relay 摘要和 pcap 建立动态出站面。"""
+
+    input_paths = list(paths)
+    files: set[Path] = set()
+    for root in input_paths:
+        if root.is_file():
+            files.add(root)
+        elif root.is_dir():
+            files.update(
+                path
+                for path in root.rglob("*")
+                if path.is_file()
+                and not path.is_symlink()
+                and path.suffix.lower() in {".json", ".jsonl", ".pcap", ".bin"}
+            )
+    return _scan_evidence_files(files, label, input_paths=input_paths)
 
 
 def compare_surfaces(
@@ -2752,6 +2778,79 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     all_command.add_argument("--acknowledge-live-requests", action="store_true")
 
+    evaluation_transition = subparsers.add_parser(
+        "evaluation-transition",
+        help="为已完成请求的 attempt 审批阶段限定的评估工具过渡",
+    )
+    add_campaign_reference(evaluation_transition)
+    evaluation_transition.add_argument(
+        "--phase",
+        choices=("official", "candidate"),
+        required=True,
+    )
+    evaluation_transition.add_argument("--candidate-id")
+    evaluation_transition.add_argument("--attempt-id", required=True)
+    evaluation_transition.add_argument("--approve-transition-sha256")
+    evaluation_transition.add_argument(
+        "--predecessor-stop-ledger-dir",
+        type=Path,
+        required=True,
+        help="原 Campaign 所绑定且已经停线的 Ledger。",
+    )
+    evaluation_transition.add_argument(
+        "--predecessor-stop-receipt",
+        type=Path,
+        required=True,
+        help="原 Ledger 的 stop_the_line checkpoint。",
+    )
+    evaluation_transition.add_argument(
+        "--recovery-timing-ledger-dir",
+        type=Path,
+        required=True,
+        help="恢复流程的新 active UpgradeTimingLedger。",
+    )
+    evaluation_transition.add_argument(
+        "--recovery-timing-receipt",
+        type=Path,
+        required=True,
+        help="恢复 Ledger 的 active checkpoint。",
+    )
+    evaluation_transition.add_argument(
+        "--recovery-arm64-environment-root",
+        type=Path,
+        required=True,
+        help="恢复流程的新 ARM64 P0 证据根。",
+    )
+    evaluation_transition.add_argument(
+        "--recovery-arm64-environment-receipt",
+        type=Path,
+        required=True,
+        help="恢复流程的新 ARM64 P0 收据。",
+    )
+    evaluation_transition.add_argument(
+        "--job-rehearsal-root",
+        type=Path,
+        required=True,
+        help="使用当前工具完成的完整 Job 离线演练证据根。",
+    )
+    evaluation_transition.add_argument(
+        "--job-rehearsal-receipt",
+        type=Path,
+        required=True,
+        help="使用当前工具完成的完整 Job 离线演练收据。",
+    )
+
+    deep_verify = subparsers.add_parser(
+        "deep-verify",
+        help="显式重哈希证据并建立可续作验证 checkpoint",
+    )
+    add_campaign_reference(deep_verify)
+    deep_verify.add_argument("--candidate-id")
+    deep_verify.add_argument(
+        "--attempt-id",
+        help="工具发生阶段限定漂移时，绑定已批准 transition 的 attempt。",
+    )
+
     status = subparsers.add_parser("status", help="显示 Campaign 状态和下一命令")
     add_campaign_reference(status)
     status.add_argument("--candidate-id")
@@ -3304,6 +3403,11 @@ _EVALUATION_SIDE_FILES = frozenset(
         "check_sample_integrity.py",
         # capture manifest 的校验 schema；只约束校验严格度，不产生内容。
         "candidate_capture_manifest.schema.json",
+        # 对已完成 attempt 做单次 hash／secret scan，并生成只读 manifest；不发送请求。
+        "codex_upgrade_evidence_manifest.py",
+        # seal 预览与阶段收据 schema 只约束评估结果，不参与采集 Job。
+        "codex_upgrade_seal_preview.schema.json",
+        "codex_upgrade_stage_result.schema.json",
     }
 )
 
@@ -3748,6 +3852,7 @@ def _job_rehearsal_contract_from_manifest(
     manifest: Mapping[str, Any],
     *,
     target_scenario_override: Mapping[str, Any] | None = None,
+    tool_files_sha256_override: str | None = None,
 ) -> dict[str, Any]:
     """从已封存 Formal Campaign 复算完整 Job 演练合同。"""
 
@@ -3788,7 +3893,11 @@ def _job_rehearsal_contract_from_manifest(
                 package.get("code_mode_host_sha256", "")
             ),
             suite=str(manifest.get("suite", "")),
-            tool_files_sha256=str(tool_identity.get("files_sha256", "")),
+            tool_files_sha256=(
+                tool_files_sha256_override
+                if tool_files_sha256_override is not None
+                else str(tool_identity.get("files_sha256", ""))
+            ),
             configuration=_job_rehearsal_configuration(configuration),
             target_scenario=target_scenario,
             extra_jobs=extra_jobs,
@@ -4881,6 +4990,50 @@ def _assert_recovery_rehearsal_uses_successor_controls(
     )
 
 
+def _reject_repeated_successor_reason(
+    predecessor_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+    reason: str,
+) -> None:
+    """只读小型 Campaign 清单，拒绝同一根因形成第二层后继链。"""
+
+    current_dir = predecessor_dir.resolve()
+    current: Mapping[str, Any] = predecessor_manifest
+    visited = {current_dir}
+    for _depth in range(64):
+        binding = current.get("predecessor")
+        if binding is None:
+            return
+        if not isinstance(binding, dict):
+            raise ConfigurationError("前序 Campaign 链绑定非法。")
+        if binding.get("reason") == reason:
+            raise ConfigurationError(
+                "同一根因已经使用过一次 successor，第二层必须停线："
+                f"{reason}"
+            )
+        next_dir = Path(str(binding.get("campaign_dir", "")))
+        if (
+            not next_dir.is_absolute()
+            or str(next_dir.resolve()) != str(next_dir)
+            or next_dir.resolve() in visited
+        ):
+            raise ConfigurationError("前序 Campaign 链路径不可信或形成循环。")
+        manifest_path = next_dir / "campaign.json"
+        if (
+            manifest_path.is_symlink()
+            or not manifest_path.is_file()
+            or file_sha256(manifest_path)
+            != binding.get("campaign_manifest_sha256")
+        ):
+            raise ConfigurationError("前序 Campaign 链清单摘要漂移。")
+        current = load_campaign_manifest(next_dir)
+        if current.get("campaign_id") != binding.get("campaign_id"):
+            raise ConfigurationError("前序 Campaign 链 ID 漂移。")
+        current_dir = next_dir.resolve()
+        visited.add(current_dir)
+    raise ConfigurationError("前序 Campaign 链超过 64 层，拒绝继续 successor。")
+
+
 def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
     """创建同版本后继 Campaign，并按原因选择承接边界。
 
@@ -4906,6 +5059,11 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
     )
 
     predecessor_manifest = _require_formal_campaign(predecessor_dir)
+    _reject_repeated_successor_reason(
+        predecessor_dir,
+        predecessor_manifest,
+        arguments.reason,
+    )
     predecessor_configuration = predecessor_manifest.get("configuration")
     if not isinstance(predecessor_configuration, dict):
         raise ConfigurationError("前序 Campaign 的运行配置不是对象。")
@@ -5449,6 +5607,37 @@ def _validate_stage_contract(document: dict[str, Any]) -> None:
             raise ConfigurationError("抓包阶段 results 不能为空。")
         _require_file_binding(document.get("attempt"), "抓包 attempt")
         _require_file_binding(document.get("seal_preview"), "seal 预览")
+        evaluation_transition = document.get("evaluation_transition")
+        if evaluation_transition is not None:
+            _require_file_binding(evaluation_transition, "评估工具 transition")
+        evidence_manifest = document.get("evidence_manifest")
+        if evidence_manifest is not None:
+            _require_file_binding(evidence_manifest, "EvidenceManifest")
+            scan_summary = document.get("scan_summary")
+            if (
+                not isinstance(scan_summary, dict)
+                or set(scan_summary)
+                != {
+                    "full_scan_count",
+                    "scanned_bytes",
+                    "reused_bytes",
+                    "total_bytes",
+                    "elapsed_seconds",
+                }
+                or scan_summary.get("full_scan_count") != 1
+                or not all(
+                    isinstance(scan_summary.get(field), int)
+                    and scan_summary[field] >= 0
+                    for field in ("scanned_bytes", "reused_bytes", "total_bytes")
+                )
+                or scan_summary["scanned_bytes"] + scan_summary["reused_bytes"]
+                != scan_summary["total_bytes"]
+                or not isinstance(scan_summary.get("elapsed_seconds"), (int, float))
+                or scan_summary["elapsed_seconds"] < 0
+            ):
+                raise ConfigurationError("抓包阶段 scan_summary 非法。")
+        elif "scan_summary" in document:
+            raise ConfigurationError("抓包阶段不得携带无 manifest 的 scan_summary。")
         if not isinstance(document["evidence_roots"], list) or not document["evidence_roots"]:
             raise ConfigurationError("抓包阶段 evidence_roots 不能为空。")
         inventory = document["evidence_inventory"]
@@ -5658,11 +5847,19 @@ def save_stage_result(
         raise ConfigurationError("阶段收据 candidate purpose 与 Campaign 不一致。")
     document["candidate_purpose"] = expected_candidate_purpose
     evidence_roots = [Path(value) for value in document.get("evidence_roots", [])]
+    has_evidence_manifest = isinstance(document.get("evidence_manifest"), dict)
     if canonical in {"capture-official", "capture-candidate"} and evidence_roots:
-        document.setdefault("evidence_inventory", _evidence_inventory(evidence_roots))
-        security = document.setdefault("security", _evidence_security(evidence_roots))
-        if not security.get("known_secret_scan_passed"):
-            raise ConfigurationError(f"{canonical} 证据秘密扫描未通过。")
+        if has_evidence_manifest:
+            _stage_evidence_manifest(
+                campaign_dir,
+                document,
+                verify_boundary=True,
+            )
+        else:
+            document.setdefault("evidence_inventory", _evidence_inventory(evidence_roots))
+            security = document.setdefault("security", _evidence_security(evidence_roots))
+            if not security.get("known_secret_scan_passed"):
+                raise ConfigurationError(f"{canonical} 证据秘密扫描未通过。")
     result_schema = document.pop("schema_version", None)
     document["schema_version"] = STAGE_SCHEMA
     if result_schema and result_schema != STAGE_SCHEMA:
@@ -5680,27 +5877,34 @@ def save_stage_result(
         if path.exists() or path.is_symlink():
             raise ConfigurationError(f"阶段结果已存在，禁止覆盖：{path}")
         if canonical in {"capture-official", "capture-candidate"} and evidence_roots:
-            current_inventory = _evidence_inventory(evidence_roots)
-            if current_inventory != document.get("evidence_inventory"):
-                raise ConfigurationError(
-                    f"{canonical} 证据在封存审批后发生变化，禁止写入。"
+            if has_evidence_manifest:
+                _stage_evidence_manifest(
+                    campaign_dir,
+                    document,
+                    verify_boundary=True,
                 )
-            current_security = _evidence_security(evidence_roots)
-            expected_security = document.get("security")
-            if not isinstance(expected_security, dict) or any(
-                expected_security.get(key) != value
-                for key, value in current_security.items()
-            ):
-                raise ConfigurationError(
-                    f"{canonical} 证据秘密扫描结果在封存审批后发生变化。"
-                )
-            if (
-                expected_security.get("raw_evidence_private") is not True
-                or not _evidence_permissions_private(evidence_roots)
-            ):
-                raise ConfigurationError(
-                    f"{canonical} 原始证据权限在封存审批后发生变化。"
-                )
+            else:
+                current_inventory = _evidence_inventory(evidence_roots)
+                if current_inventory != document.get("evidence_inventory"):
+                    raise ConfigurationError(
+                        f"{canonical} 证据在封存审批后发生变化，禁止写入。"
+                    )
+                current_security = _evidence_security(evidence_roots)
+                expected_security = document.get("security")
+                if not isinstance(expected_security, dict) or any(
+                    expected_security.get(key) != value
+                    for key, value in current_security.items()
+                ):
+                    raise ConfigurationError(
+                        f"{canonical} 证据秘密扫描结果在封存审批后发生变化。"
+                    )
+                if (
+                    expected_security.get("raw_evidence_private") is not True
+                    or not _evidence_permissions_private(evidence_roots)
+                ):
+                    raise ConfigurationError(
+                        f"{canonical} 原始证据权限在封存审批后发生变化。"
+                    )
         document["sealed_at_utc"] = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
         )
@@ -5822,6 +6026,9 @@ def _validate_predecessor_import_receipt(
     stage_payload: dict[str, Any],
     canonical: str,
     import_chain: frozenset[Path],
+    *,
+    import_cache: dict[tuple[str, str, str | None], dict[str, Any]] | None = None,
+    skip_evidence_scan: bool = False,
 ) -> dict[str, Any]:
     """重放前序 Campaign、官方证据、安全门禁和批准五件套。"""
 
@@ -6219,17 +6426,26 @@ def _validate_predecessor_import_receipt(
             raise ConfigurationError("后继 Campaign 的运行配置过渡收据非法。")
 
     next_chain = frozenset({*import_chain, campaign_dir.resolve()})
-    predecessor_official = _load_stage_result(
-        predecessor_dir,
-        "capture-official",
-        _import_chain=next_chain,
-        _replay_machine_receipts=False,
-    )
-    predecessor_classification = _load_stage_result(
-        predecessor_dir,
-        "classify",
-        _import_chain=next_chain,
-    )
+    cache = import_cache if import_cache is not None else {}
+
+    def load_predecessor_stage(stage: str) -> dict[str, Any]:
+        key = (str(predecessor_dir.resolve()), stage, None)
+        cached = cache.get(key)
+        if cached is not None:
+            return dict(cached)
+        loaded = _load_stage_result(
+            predecessor_dir,
+            stage,
+            _import_chain=next_chain,
+            _replay_machine_receipts=(stage != "capture-official"),
+            _import_cache=cache,
+            _skip_evidence_scan=skip_evidence_scan,
+        )
+        cache[key] = dict(loaded)
+        return loaded
+
+    predecessor_official = load_predecessor_stage("capture-official")
+    predecessor_classification = load_predecessor_stage("classify")
     if (
         predecessor_official.get("status") != "complete"
         or predecessor_classification.get("status") != "complete"
@@ -6396,6 +6612,150 @@ def _validate_predecessor_import_receipt(
     return projected
 
 
+def _verify_predecessor_import_shallow(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> None:
+    """只验证本 Campaign 的导入摘要，不打开前序目录。"""
+
+    binding = payload.get("predecessor_import")
+    _verify_campaign_binding(campaign_dir, binding, "前序导入收据")
+    receipt_path = _campaign_file(campaign_dir, str(binding["path"]))
+    receipt = _read_json(receipt_path, "前序导入收据")
+    unsigned = dict(receipt)
+    digest = unsigned.pop("receipt_digest", None)
+    predecessor = manifest.get("predecessor")
+    predecessor_binding = receipt.get("predecessor_campaign")
+    if (
+        not isinstance(predecessor, dict)
+        or not isinstance(predecessor_binding, dict)
+        or predecessor
+        != {
+            **predecessor_binding,
+            "reason": receipt.get("reason"),
+        }
+        or receipt.get("successor_campaign_id") != manifest.get("campaign_id")
+        or receipt.get("successor_campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or not SHA256_RE.fullmatch(str(digest))
+        or digest != _fingerprint(unsigned)
+    ):
+        raise ConfigurationError("前序导入收据的本地摘要链不一致。")
+
+
+def _imported_stage_checkpoint_path(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+) -> Path:
+    suffix = canonical if candidate_id is None else f"{canonical}-{candidate_id}"
+    return campaign_dir / "verification-checkpoints" / f"{suffix}.json"
+
+
+def _load_imported_stage_checkpoint(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+    local_payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    path = _imported_stage_checkpoint_path(campaign_dir, canonical, candidate_id)
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError("导入阶段 checkpoint 路径不可信。")
+    payload = _read_json(path, "导入阶段 checkpoint")
+    unsigned = dict(payload)
+    digest = unsigned.pop("checkpoint_digest", None)
+    projected = payload.get("projected_stage")
+    _, local_stage_path = _stage_path(campaign_dir, canonical, candidate_id)
+    import_binding = local_payload.get("predecessor_import")
+    _require_file_binding(import_binding, "前序导入收据")
+    import_path = _campaign_file(campaign_dir, str(import_binding["path"]))
+    if (
+        set(payload)
+        != {
+            "schema_version",
+            "created_at_utc",
+            "campaign_id",
+            "campaign_manifest_sha256",
+            "stage",
+            "candidate_id",
+            "local_stage_sha256",
+            "predecessor_import_sha256",
+            "projected_stage",
+            "projected_stage_sha256",
+            "checkpoint_digest",
+        }
+        or payload.get("schema_version") != IMPORTED_STAGE_CHECKPOINT_SCHEMA
+        or payload.get("campaign_id")
+        != load_campaign_manifest(campaign_dir).get("campaign_id")
+        or payload.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or payload.get("stage") != canonical
+        or payload.get("candidate_id") != candidate_id
+        or payload.get("local_stage_sha256") != file_sha256(local_stage_path)
+        or payload.get("predecessor_import_sha256") != file_sha256(import_path)
+        or not isinstance(projected, dict)
+        or payload.get("projected_stage_sha256") != _fingerprint(projected)
+        or digest != _fingerprint(unsigned)
+    ):
+        raise ConfigurationError("导入阶段 checkpoint 身份或摘要不一致。")
+    _validate_stage_contract(projected)
+    if canonical == "capture-official" and projected.get("evidence_manifest") is not None:
+        _stage_evidence_manifest(
+            campaign_dir,
+            projected,
+            verify_boundary=True,
+        )
+    return dict(projected)
+
+
+def _write_imported_stage_checkpoint(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+    local_payload: Mapping[str, Any],
+    projected: Mapping[str, Any],
+) -> Path:
+    existing_path = _imported_stage_checkpoint_path(
+        campaign_dir,
+        canonical,
+        candidate_id,
+    )
+    if existing_path.exists() or existing_path.is_symlink():
+        existing = _load_imported_stage_checkpoint(
+            campaign_dir,
+            canonical,
+            candidate_id,
+            local_payload,
+        )
+        if existing != dict(projected):
+            raise ConfigurationError("导入阶段 checkpoint 与当前显式复验结果不一致。")
+        return existing_path
+    _, local_stage_path = _stage_path(campaign_dir, canonical, candidate_id)
+    import_binding = local_payload.get("predecessor_import")
+    _require_file_binding(import_binding, "前序导入收据")
+    import_path = _campaign_file(campaign_dir, str(import_binding["path"]))
+    core: dict[str, Any] = {
+        "schema_version": IMPORTED_STAGE_CHECKPOINT_SCHEMA,
+        "created_at_utc": _utc_now(),
+        "campaign_id": load_campaign_manifest(campaign_dir)["campaign_id"],
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "stage": canonical,
+        "candidate_id": candidate_id,
+        "local_stage_sha256": file_sha256(local_stage_path),
+        "predecessor_import_sha256": file_sha256(import_path),
+        "projected_stage": dict(projected),
+        "projected_stage_sha256": _fingerprint(projected),
+    }
+    checkpoint = {**core, "checkpoint_digest": _fingerprint(core)}
+    path = existing_path
+    ensure_private_directory(path.parent, campaign_dir)
+    _write_or_verify_json(path, checkpoint)
+    return path
+
+
 def _load_stage_result(
     campaign_dir: Path,
     stage: str,
@@ -6403,6 +6763,10 @@ def _load_stage_result(
     *,
     _import_chain: frozenset[Path] | None = None,
     _replay_machine_receipts: bool = True,
+    _shallow: bool = False,
+    _ignore_checkpoint: bool = False,
+    _import_cache: dict[tuple[str, str, str | None], dict[str, Any]] | None = None,
+    _skip_evidence_scan: bool = False,
 ) -> dict[str, Any]:
     campaign_manifest = _require_formal_campaign(campaign_dir)
     canonical, path = _stage_path(campaign_dir, stage, candidate_id)
@@ -6438,26 +6802,112 @@ def _load_stage_result(
     if payload.get("candidate_purpose") != expected_candidate_purpose:
         raise ConfigurationError(f"{canonical} candidate purpose 与 Campaign 不一致。")
     _validate_stage_contract(payload)
+    if _shallow:
+        if payload.get("predecessor_import") is not None:
+            _verify_predecessor_import_shallow(
+                campaign_dir,
+                campaign_manifest,
+                payload,
+            )
+        elif canonical in {"capture-official", "capture-candidate"}:
+            _verify_campaign_binding(campaign_dir, payload.get("attempt"), "抓包 attempt")
+            _verify_campaign_binding(campaign_dir, payload.get("seal_preview"), "seal 预览")
+            if payload.get("evaluation_transition") is not None:
+                _verify_campaign_binding(
+                    campaign_dir,
+                    payload.get("evaluation_transition"),
+                    "评估工具 transition",
+                )
+            if payload.get("evidence_manifest") is not None:
+                _stage_evidence_manifest(
+                    campaign_dir,
+                    payload,
+                    verify_boundary=False,
+                )
+        elif canonical == "classify" and payload.get("status") in {
+            "complete",
+            "blocked",
+        }:
+            for field in (
+                "target_rule_manifest",
+                "migration_manifest",
+                "scenario_manifest",
+                "profile_manifest",
+                "assertion_profile_manifest",
+            ):
+                _verify_campaign_binding(campaign_dir, payload.get(field), field)
+        elif canonical == "accept" and payload.get("status") == "complete":
+            candidate = _load_stage_result(
+                campaign_dir,
+                "capture-candidate",
+                candidate_id,
+                _replay_machine_receipts=False,
+                _shallow=True,
+            )
+            _replay_bound_candidate_external_gate(
+                payload.get("candidate_external_gate"),
+                manifest=campaign_manifest,
+                candidate_id=str(candidate_id),
+                candidate=candidate,
+            )
+            _verify_campaign_binding(
+                campaign_dir,
+                payload.get("assertion_result"),
+                "逐规则断言结果",
+            )
+            _verify_campaign_binding(
+                campaign_dir,
+                payload.get("evidence_seal"),
+                "验收证据封印",
+            )
+        return payload
     if payload.get("predecessor_import") is not None:
-        return _validate_predecessor_import_receipt(
+        if not _ignore_checkpoint:
+            checkpoint = _load_imported_stage_checkpoint(
+                campaign_dir,
+                canonical,
+                candidate_id,
+                payload,
+            )
+            if checkpoint is not None:
+                return checkpoint
+        projected = _validate_predecessor_import_receipt(
             campaign_dir,
             campaign_manifest,
             payload,
             canonical,
             _import_chain or frozenset(),
+            import_cache=_import_cache,
+            skip_evidence_scan=_skip_evidence_scan,
         )
+        return projected
     if canonical in {"capture-official", "capture-candidate"}:
         _verify_campaign_binding(campaign_dir, payload.get("attempt"), "抓包 attempt")
         _verify_campaign_binding(
             campaign_dir, payload.get("seal_preview"), "seal 预览"
         )
+        if payload.get("evaluation_transition") is not None:
+            _verify_campaign_binding(
+                campaign_dir,
+                payload.get("evaluation_transition"),
+                "评估工具 transition",
+            )
         _verify_capture_seal_preview(campaign_dir, payload, canonical)
         if _replay_machine_receipts:
             _replay_capture_stage_receipts(campaign_dir, payload, canonical)
-        _verify_stage_evidence(
-            payload,
-            "官方" if canonical == "capture-official" else "候选",
-        )
+        if _skip_evidence_scan:
+            if payload.get("evidence_manifest") is not None:
+                _stage_evidence_manifest(
+                    campaign_dir,
+                    payload,
+                    verify_boundary=True,
+                )
+        else:
+            _verify_stage_evidence(
+                payload,
+                "官方" if canonical == "capture-official" else "候选",
+                campaign_dir=campaign_dir,
+            )
     if canonical == "classify" and payload.get("status") in {"complete", "blocked"}:
         fields = (
             "target_rule_manifest",
@@ -6546,6 +6996,9 @@ def _verify_capture_seal_preview(
     if preview_path.parent != attempt_root:
         raise ConfigurationError("seal 预览与抓包 attempt 不在同一目录。")
     preview = _read_json(preview_path, "seal 预览")
+    preview_schema = preview.get("schema_version")
+    if preview_schema not in {LEGACY_SEAL_PREVIEW_SCHEMA, SEAL_PREVIEW_SCHEMA}:
+        raise ConfigurationError("seal 预览 schema_version 不受支持。")
 
     envelope_fields = {
         "schema_version",
@@ -6562,7 +7015,7 @@ def _verify_capture_seal_preview(
         key: value for key, value in stage.items() if key not in envelope_fields
     }
     expected_core: dict[str, Any] = {
-        "schema_version": SEAL_PREVIEW_SCHEMA,
+        "schema_version": preview_schema,
         "campaign_id": attempt["campaign_id"],
         "campaign_mode": attempt["campaign_mode"],
         "campaign_purpose": attempt["campaign_purpose"],
@@ -6580,6 +7033,31 @@ def _verify_capture_seal_preview(
             "sha256"
         ],
     }
+    if preview_schema == SEAL_PREVIEW_SCHEMA:
+        manifest = _stage_evidence_manifest(
+            campaign_dir,
+            stage_payload,
+            verify_boundary=True,
+        )
+        draft = _load_seal_draft(
+            campaign_dir,
+            attempt_root,
+            phase=phase,
+            candidate_id=candidate_id,
+            attempt=attempt,
+        )
+        if draft["stage_payload"] != stage_payload:
+            raise ConfigurationError("阶段收据与冻结 seal 草案不一致。")
+        expected_core.update(
+            {
+                "evidence_manifest_sha256": stage_payload["evidence_manifest"][
+                    "sha256"
+                ],
+                "evidence_manifest_digest": manifest["manifest_digest"],
+                "seal_draft_sha256": file_sha256(_seal_draft_path(attempt_root)),
+                "scan_summary": stage_payload["scan_summary"],
+            }
+        )
     if phase == "candidate":
         expected_core.update(
             {
@@ -6681,7 +7159,8 @@ def _latest_attempt_summary(
                 if key not in {"status", "review_sha256"}
             }
             if (
-                preview.get("schema_version") != SEAL_PREVIEW_SCHEMA
+                preview.get("schema_version")
+                not in {LEGACY_SEAL_PREVIEW_SCHEMA, SEAL_PREVIEW_SCHEMA}
                 or preview.get("campaign_id") != attempt.get("campaign_id")
                 or preview.get("phase") != phase
                 or preview.get("candidate_id") != candidate_id
@@ -6897,6 +7376,8 @@ def campaign_status(
             )
         return {
             "schema_version": "codex-upgrade-status/v2",
+            "verification_mode": "shallow",
+            "raw_evidence_scanned_bytes": 0,
             "campaign_id": manifest["campaign_id"],
             "campaign_mode": mode,
             "campaign_purpose": purpose,
@@ -6923,7 +7404,12 @@ def campaign_status(
     stage_status: dict[str, Any] = {}
     for stage in ("capture-official", "classify"):
         try:
-            stage_status[stage] = _load_stage_result(campaign_dir, stage).get(
+            stage_status[stage] = _load_stage_result(
+                campaign_dir,
+                stage,
+                _replay_machine_receipts=False,
+                _shallow=True,
+            ).get(
                 "status", "unknown"
             )
         except ConfigurationError as error:
@@ -6949,7 +7435,11 @@ def campaign_status(
     candidate_production_states: dict[str, str] = {}
     for current_candidate_id in candidates:
         candidate_stage = _load_stage_result(
-            campaign_dir, "capture-candidate", current_candidate_id
+            campaign_dir,
+            "capture-candidate",
+            current_candidate_id,
+            _replay_machine_receipts=False,
+            _shallow=True,
         )
         if candidate_stage.get("status") != "complete":
             raise ConfigurationError("候选抓包阶段尚未完整封存。")
@@ -6959,7 +7449,13 @@ def campaign_status(
         candidate_states[current_candidate_id] = "candidate_sealed"
         for stage, output in (("compare", comparisons), ("accept", acceptance)):
             try:
-                value = _load_stage_result(campaign_dir, stage, current_candidate_id)
+                value = _load_stage_result(
+                    campaign_dir,
+                    stage,
+                    current_candidate_id,
+                    _replay_machine_receipts=False,
+                    _shallow=True,
+                )
             except ConfigurationError as error:
                 if "尚未封存" not in str(error):
                     raise
@@ -6978,18 +7474,6 @@ def campaign_status(
                     )
                     _verify_campaign_binding(
                         campaign_dir, value.get("evidence_seal"), "验收证据封印"
-                    )
-                    _verify_stage_evidence(
-                        _load_stage_result(campaign_dir, "capture-official"),
-                        "官方",
-                    )
-                    _verify_stage_evidence(
-                        _load_stage_result(
-                            campaign_dir,
-                            "capture-candidate",
-                            current_candidate_id,
-                        ),
-                        "候选",
                     )
     contamination_records = _campaign_contamination_records(campaign_dir)
     contaminated = bool(contamination_records)
@@ -7108,6 +7592,8 @@ def campaign_status(
         next_command = "capture-official"
     return {
         "schema_version": "codex-upgrade-status/v2",
+        "verification_mode": "shallow",
+        "raw_evidence_scanned_bytes": 0,
         "campaign_id": manifest["campaign_id"],
         "campaign_mode": mode,
         "campaign_purpose": purpose,
@@ -7340,8 +7826,18 @@ def _campaign_jobs(
     return jobs
 
 
-def _verify_plan_identity(campaign_dir: Path, manifest: dict[str, Any]) -> None:
-    _verify_control_receipts(campaign_dir, manifest, require_active=True)
+def _verify_plan_identity(
+    campaign_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    operation: str | None = None,
+    attempt_root: Path | None = None,
+    attempt: Mapping[str, Any] | None = None,
+) -> dict[str, str] | None:
+    # 先重放原 Campaign 的冻结控制事实，但暂不要求旧 Ledger 仍 active。
+    # 工具缺陷恢复时旧 Ledger 必须已经 stop_the_line，批准后的 transition
+    # 会另行绑定并重放新的 active 控制链；其他路径仍在下方要求旧控制 active。
+    _verify_control_receipts(campaign_dir, manifest, require_active=False)
     target_source = Path(manifest["configuration"]["target_source"])
     expected = manifest["official_identity"]
     cargo_lock = target_source / "Cargo.lock"
@@ -7369,7 +7865,8 @@ def _verify_plan_identity(campaign_dir: Path, manifest: dict[str, Any]) -> None:
     current_tool = _tool_identity(include_git=False)
     expected_tool = manifest["tool_identity"]
     if current_tool["files_sha256"] == expected_tool["files_sha256"]:
-        return
+        _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        return None
     # 工具确实变了。按证据影响面分级判定，而不是一律拒绝：产出侧改动会改变证据字节，
     # 必须整轮重来；评估侧改动只改变「怎么判断」，已封存证据逐字节不变，重新评估即可。
     #
@@ -7383,12 +7880,33 @@ def _verify_plan_identity(campaign_dir: Path, manifest: dict[str, Any]) -> None:
     if drift["production"] or (
         current_tool["production_sha256"] != expected_tool["production_sha256"]
     ):
-        raise ConfigurationError(
-            "升级工具的产出侧在 plan 后发生变化，证据字节前提已不成立："
-            + "、".join(drift["production"] or ["<摘要不一致但无法定位文件>"])
+        if operation is None or attempt_root is None or attempt is None:
+            raise ConfigurationError(
+                "升级工具的产出侧在 plan 后发生变化，证据字节前提已不成立："
+                + "、".join(
+                    drift["production"] or ["<摘要不一致但无法定位文件>"]
+                )
+            )
+        transition = _load_phase_evaluation_transition(
+            campaign_dir,
+            manifest,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            operation=operation,
+            current_tool=current_tool,
+            drift=drift,
         )
+        _record_evaluation_side_drift(
+            campaign_dir,
+            current_tool,
+            expected_tool,
+            drift,
+        )
+        return transition
     # 只有评估侧变化：放行，但把变化清单落进台账供审计，避免静默放行。
+    _verify_control_receipts(campaign_dir, manifest, require_active=True)
     _record_evaluation_side_drift(campaign_dir, current_tool, expected_tool, drift)
+    return None
 
 
 TOOL_EVALUATION_DRIFT_SCHEMA = "codex-upgrade-tool-evaluation-drift/v1"
@@ -7459,6 +7977,638 @@ def _record_evaluation_side_drift(
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+_PHASE_EVALUATION_HYBRID_FILES = frozenset({"codex_upgrade.py"})
+_PHASE_EVALUATION_OPERATIONS = {
+    "official": ("capture-official-seal", "deep-verify"),
+    "candidate": ("capture-candidate-seal", "compare", "accept", "deep-verify"),
+}
+
+
+def _evaluation_transition_preview_path(attempt_root: Path) -> Path:
+    return attempt_root / "evaluation-transition-preview.json"
+
+
+def _evaluation_transition_path(attempt_root: Path) -> Path:
+    return attempt_root / "evaluation-transition.json"
+
+
+def _phase_recovery_controls_from_arguments(
+    arguments: argparse.Namespace,
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> dict[str, Any]:
+    """绑定旧停线事实与当前工具的新计时、P0 和完整演练收据。"""
+
+    required_names = (
+        "predecessor_stop_ledger_dir",
+        "predecessor_stop_receipt",
+        "recovery_timing_ledger_dir",
+        "recovery_timing_receipt",
+        "recovery_arm64_environment_root",
+        "recovery_arm64_environment_receipt",
+        "job_rehearsal_root",
+        "job_rehearsal_receipt",
+    )
+    values = {name: getattr(arguments, name, None) for name in required_names}
+    if not all(isinstance(value, Path) for value in values.values()):
+        raise ConfigurationError("评估 transition 必须完整提供八项恢复控制坐标。")
+
+    _verify_control_receipts(campaign_dir, manifest, require_active=False)
+    frozen_controls = manifest.get("control_receipts")
+    if not isinstance(frozen_controls, Mapping):
+        raise ConfigurationError("原 Formal Campaign 缺少冻结控制收据。")
+    predecessor_timing = frozen_controls.get("upgrade_timing")
+    predecessor_arm = frozen_controls.get("arm64_environment")
+    if not isinstance(predecessor_timing, Mapping) or not isinstance(
+        predecessor_arm, Mapping
+    ):
+        raise ConfigurationError("原 Formal Campaign 的计时或 ARM64 控制收据不完整。")
+
+    stop_root = values["predecessor_stop_ledger_dir"]
+    stop_receipt = values["predecessor_stop_receipt"]
+    assert isinstance(stop_root, Path) and isinstance(stop_receipt, Path)
+    stop_relative = _control_receipt_relative(
+        stop_root,
+        stop_receipt,
+        "原 Campaign stop_the_line checkpoint",
+    )
+    try:
+        stop_checkpoint = codex_upgrade_timing_ledger.replay(
+            stop_root,
+            stop_relative,
+        )
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"原 Campaign 停线 checkpoint 未通过：{error}") from error
+    stop_summary = stop_checkpoint.get("summary")
+    if (
+        not isinstance(stop_summary, Mapping)
+        or stop_summary.get("status") != "stopped"
+        or stop_summary.get("active_phase")
+        not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+        or any(
+            stop_summary.get(field) != manifest.get(field)
+            for field in (
+                "baseline_version",
+                "target_version",
+                "campaign_purpose",
+            )
+        )
+        or stop_summary.get("upgrade_id") != predecessor_timing.get("upgrade_id")
+        or stop_summary.get("evidence_decision")
+        != predecessor_timing.get("evidence_decision")
+    ):
+        raise ConfigurationError("停线 checkpoint 不是原 Campaign 在 VC-1～VC-6 的事实。")
+    resolved_stop_root = stop_root.resolve(strict=True)
+    try:
+        frozen_ledger_root = Path(
+            str(predecessor_timing.get("ledger_dir", ""))
+        ).resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ConfigurationError("原 Campaign 的 Ledger 路径不可信。") from error
+    if frozen_ledger_root != resolved_stop_root:
+        raise ConfigurationError("停线 checkpoint 与原 Campaign 绑定的 Ledger 不一致。")
+
+    recovery_arguments = argparse.Namespace(
+        campaign_mode="preflight_only",
+        campaign_purpose=manifest["campaign_purpose"],
+        baseline_version=manifest["baseline_version"],
+        target_version=manifest["target_version"],
+        timing_ledger_dir=values["recovery_timing_ledger_dir"],
+        timing_receipt=values["recovery_timing_receipt"],
+        arm64_environment_root=values["recovery_arm64_environment_root"],
+        arm64_environment_receipt=values[
+            "recovery_arm64_environment_receipt"
+        ],
+    )
+    recovery_controls = _plan_control_receipts(recovery_arguments)
+    recovery_timing = recovery_controls["upgrade_timing"]
+    if (
+        recovery_timing["ledger_dir"] == predecessor_timing.get("ledger_dir")
+        or recovery_timing["upgrade_id"] == predecessor_timing.get("upgrade_id")
+        or recovery_timing["evidence_decision"]
+        != predecessor_timing.get("evidence_decision")
+    ):
+        raise ConfigurationError(
+            "恢复 Ledger 必须使用新的目录和 upgrade-id，并保留证据复用决定。"
+        )
+
+    current_tool_sha256 = str(current_tool.get("files_sha256", ""))
+    if not SHA256_RE.fullmatch(current_tool_sha256):
+        raise ConfigurationError("当前评估工具身份非法。")
+    recovery_tool_identity = _tool_identity()
+    if recovery_tool_identity["files_sha256"] != current_tool_sha256:
+        raise ConfigurationError("恢复演练工具身份与当前评估工具不一致。")
+    expected_rehearsal_contract = _job_rehearsal_contract_from_manifest(
+        campaign_dir,
+        manifest,
+        tool_files_sha256_override=current_tool_sha256,
+    )
+    rehearsal_root = values["job_rehearsal_root"]
+    rehearsal_receipt = values["job_rehearsal_receipt"]
+    assert isinstance(rehearsal_root, Path) and isinstance(rehearsal_receipt, Path)
+    recovery_controls["job_rehearsal"] = _job_rehearsal_control_from_receipt(
+        rehearsal_root,
+        rehearsal_receipt,
+        expected_rehearsal_contract,
+    )
+
+    # 完整演练必须来自绑定同一新 Ledger、同一新 ARM64 P0 收据且使用当前工具
+    # 的 preflight_only Campaign，不能只拿一份孤立的演练 JSON 冒充恢复闭环。
+    recovery_manifest = json.loads(json.dumps(manifest, ensure_ascii=False))
+    recovery_manifest["tool_identity"] = recovery_tool_identity
+    recovery_manifest["control_receipts"] = recovery_controls
+    _assert_recovery_rehearsal_uses_successor_controls(
+        arguments,
+        recovery_manifest,
+    )
+
+    stop_file = resolved_stop_root / stop_relative
+    return {
+        "schema_version": TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA,
+        "predecessor": {
+            "upgrade_timing": dict(predecessor_timing),
+            "arm64_environment": dict(predecessor_arm),
+        },
+        "stop_checkpoint": {
+            "ledger_dir": str(resolved_stop_root),
+            "receipt": {
+                "path": stop_relative,
+                "sha256": file_sha256(stop_file),
+                "bytes": stop_file.stat().st_size,
+            },
+            "upgrade_id": stop_summary["upgrade_id"],
+            "evidence_decision": stop_summary["evidence_decision"],
+            "active_phase": stop_summary["active_phase"],
+            "head_sequence": stop_summary["head_sequence"],
+            "head_sha256": stop_summary["head_sha256"],
+            "total_elapsed_seconds": stop_summary["total_elapsed_seconds"],
+            "total_live_request_count": stop_summary[
+                "total_live_request_count"
+            ],
+        },
+        "recovery": recovery_controls,
+        "current_tool_files_sha256": current_tool_sha256,
+    }
+
+
+def _control_path_from_recovery_binding(
+    value: Any,
+    *,
+    root_field: str,
+    label: str,
+) -> tuple[Path, Path]:
+    if not isinstance(value, Mapping):
+        raise ConfigurationError(f"{label}控制绑定不是对象。")
+    root = Path(str(value.get(root_field, "")))
+    receipt = value.get("receipt")
+    if (
+        not isinstance(receipt, Mapping)
+        or set(receipt) != {"path", "sha256", "bytes"}
+        or not isinstance(receipt.get("path"), str)
+        or not SHA256_RE.fullmatch(str(receipt.get("sha256", "")))
+        or not isinstance(receipt.get("bytes"), int)
+        or isinstance(receipt.get("bytes"), bool)
+        or int(receipt["bytes"]) <= 0
+    ):
+        raise ConfigurationError(f"{label}收据绑定非法。")
+    return root, root / str(receipt["path"])
+
+
+def _validate_phase_recovery_controls(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    payload: Any,
+    current_tool: Mapping[str, Any],
+) -> dict[str, Any]:
+    """从 transition 内的路径重建恢复控制链并要求逐字段一致。"""
+
+    if not isinstance(payload, Mapping) or set(payload) != {
+        "schema_version",
+        "predecessor",
+        "stop_checkpoint",
+        "recovery",
+        "current_tool_files_sha256",
+    }:
+        raise ConfigurationError("评估 transition 的恢复控制结构非法。")
+    if payload.get("schema_version") != TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA:
+        raise ConfigurationError("评估 transition 的恢复控制版本不受支持。")
+    stop = payload.get("stop_checkpoint")
+    recovery = payload.get("recovery")
+    if not isinstance(stop, Mapping) or not isinstance(recovery, Mapping):
+        raise ConfigurationError("评估 transition 缺少停线或恢复控制。")
+    stop_root, stop_receipt = _control_path_from_recovery_binding(
+        stop,
+        root_field="ledger_dir",
+        label="原 Campaign 停线 checkpoint",
+    )
+    timing_root, timing_receipt = _control_path_from_recovery_binding(
+        recovery.get("upgrade_timing"),
+        root_field="ledger_dir",
+        label="恢复 UpgradeTimingLedger",
+    )
+    arm_root, arm_receipt = _control_path_from_recovery_binding(
+        recovery.get("arm64_environment"),
+        root_field="evidence_root",
+        label="恢复 ARM64 P0",
+    )
+    rehearsal_root, rehearsal_receipt = _control_path_from_recovery_binding(
+        recovery.get("job_rehearsal"),
+        root_field="evidence_root",
+        label="恢复完整 Job 演练",
+    )
+    arguments = argparse.Namespace(
+        predecessor_stop_ledger_dir=stop_root,
+        predecessor_stop_receipt=stop_receipt,
+        recovery_timing_ledger_dir=timing_root,
+        recovery_timing_receipt=timing_receipt,
+        recovery_arm64_environment_root=arm_root,
+        recovery_arm64_environment_receipt=arm_receipt,
+        job_rehearsal_root=rehearsal_root,
+        job_rehearsal_receipt=rehearsal_receipt,
+    )
+    expected = _phase_recovery_controls_from_arguments(
+        arguments,
+        campaign_dir,
+        manifest,
+        current_tool,
+    )
+    if dict(payload) != expected:
+        raise ConfigurationError("评估 transition 的恢复控制身份或摘要漂移。")
+    return expected
+
+
+def _tool_entry_index(identity: Mapping[str, Any]) -> dict[str, str]:
+    entries = identity.get("entries")
+    if not isinstance(entries, list):
+        return {}
+    return {
+        str(item.get("path")): str(item.get("sha256"))
+        for item in entries
+        if isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and SHA256_RE.fullmatch(str(item.get("sha256", "")))
+    }
+
+
+def _phase_evaluation_changed_files(
+    expected_tool: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    before = _tool_entry_index(expected_tool)
+    after = _tool_entry_index(current_tool)
+    changed: list[dict[str, Any]] = []
+    for path in sorted(set(before) | set(after)):
+        if before.get(path) == after.get(path):
+            continue
+        changed.append(
+            {
+                "path": path,
+                "from_sha256": before.get(path),
+                "to_sha256": after.get(path),
+                "classification": (
+                    "phase_scoped_hybrid"
+                    if path in _PHASE_EVALUATION_HYBRID_FILES
+                    else "evaluation"
+                ),
+            }
+        )
+    return changed
+
+
+def _build_phase_evaluation_transition_preview(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    recovery_controls: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected_tool = manifest.get("tool_identity")
+    if not isinstance(expected_tool, Mapping):
+        raise ConfigurationError("Campaign 缺少可分级的工具身份。")
+    drift = _tool_identity_drift(current_tool, expected_tool)
+    changed = _phase_evaluation_changed_files(expected_tool, current_tool)
+    changed_paths = {item["path"] for item in changed}
+    allowed_paths = set(_EVALUATION_SIDE_FILES) | set(
+        _PHASE_EVALUATION_HYBRID_FILES
+    )
+    if (
+        current_tool.get("files_sha256") == expected_tool.get("files_sha256")
+        or not changed
+    ):
+        raise ConfigurationError("当前工具与 Campaign 冻结身份一致，无需 transition。")
+    if (
+        set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES)
+        or changed_paths - allowed_paths
+    ):
+        raise ConfigurationError(
+            "评估 transition 包含产出侧变化，禁止原地续作："
+            + "、".join(sorted(changed_paths - allowed_paths or drift["production"]))
+        )
+    if phase not in _PHASE_EVALUATION_OPERATIONS:
+        raise ConfigurationError("评估 transition phase 非法。")
+    if attempt.get("status") != "awaiting_receipts":
+        raise ConfigurationError("评估 transition 只允许已完成请求、等待封存的 attempt。")
+    if (
+        attempt.get("phase") != phase
+        or attempt.get("candidate_id") != candidate_id
+        or attempt.get("campaign_id") != manifest.get("campaign_id")
+        or attempt.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+    ):
+        raise ConfigurationError("评估 transition 与 Campaign／attempt 身份不一致。")
+    transition_path = _evaluation_transition_path(attempt_root).resolve(strict=False)
+    for raw_root in attempt.get("evidence_roots", []):
+        root = Path(str(raw_root)).resolve(strict=False)
+        if transition_path == root or transition_path.is_relative_to(root):
+            raise ConfigurationError("评估 transition 输出不得写入原始证据边界。")
+    core: dict[str, Any] = {
+        "schema_version": TOOL_EVALUATION_TRANSITION_PREVIEW_SCHEMA,
+        "campaign_id": manifest["campaign_id"],
+        "campaign_mode": manifest["campaign_mode"],
+        "campaign_purpose": manifest["campaign_purpose"],
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "phase": phase,
+        "candidate_id": candidate_id,
+        "attempt_id": attempt["attempt_id"],
+        "attempt_digest": attempt["attempt_digest"],
+        "evidence_boundary_sha256": _fingerprint(
+            {
+                "attempt_digest": attempt["attempt_digest"],
+                "evidence_roots": attempt.get("evidence_roots"),
+            }
+        ),
+        "from_tool_files_sha256": expected_tool["files_sha256"],
+        "to_tool_files_sha256": current_tool["files_sha256"],
+        "from_production_sha256": expected_tool["production_sha256"],
+        "to_production_sha256": current_tool["production_sha256"],
+        "from_evaluation_sha256": expected_tool["evaluation_sha256"],
+        "to_evaluation_sha256": current_tool["evaluation_sha256"],
+        "changed_files": changed,
+        "allowed_operations": list(_PHASE_EVALUATION_OPERATIONS[phase]),
+        "recovery_controls": dict(recovery_controls),
+        "raw_evidence_scanned_bytes": 0,
+    }
+    return {
+        **core,
+        "status": "approval_required",
+        "review_sha256": _fingerprint(core),
+    }
+
+
+def _validate_phase_evaluation_transition(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> dict[str, Any]:
+    path = _evaluation_transition_path(attempt_root)
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError(
+            "当前工具含阶段限定变化；先执行 evaluation-transition 并批准摘要。"
+        )
+    receipt = _read_json(path, "评估工具 transition")
+    unsigned = dict(receipt)
+    digest = unsigned.pop("transition_digest", None)
+    preview_binding = receipt.get("preview")
+    expected_fields = {
+        "schema_version",
+        "approved_at_utc",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "phase",
+        "candidate_id",
+        "attempt_id",
+        "attempt_digest",
+        "evidence_boundary_sha256",
+        "from_tool_files_sha256",
+        "to_tool_files_sha256",
+        "from_production_sha256",
+        "to_production_sha256",
+        "from_evaluation_sha256",
+        "to_evaluation_sha256",
+        "changed_files",
+        "allowed_operations",
+        "recovery_controls",
+        "preview",
+        "review_sha256",
+        "raw_evidence_scanned_bytes",
+        "status",
+        "transition_digest",
+    }
+    if (
+        set(receipt) != expected_fields
+        or receipt.get("schema_version") != TOOL_EVALUATION_TRANSITION_SCHEMA
+        or receipt.get("status") != "approved"
+        or not _is_rfc3339_timestamp(receipt.get("approved_at_utc"))
+        or digest != _fingerprint(unsigned)
+    ):
+        raise ConfigurationError("评估工具 transition 结构或自摘要非法。")
+    _require_file_binding(preview_binding, "评估工具 transition 预览")
+    preview_path = _campaign_file(campaign_dir, str(preview_binding["path"]))
+    if (
+        preview_path != _evaluation_transition_preview_path(attempt_root)
+        or preview_path.is_symlink()
+        or not preview_path.is_file()
+        or file_sha256(preview_path) != preview_binding["sha256"]
+    ):
+        raise ConfigurationError("评估工具 transition 预览绑定漂移。")
+    preview = _read_json(preview_path, "评估工具 transition 预览")
+    phase = str(attempt.get("phase"))
+    candidate_id = attempt.get("candidate_id")
+    recovery_controls = _validate_phase_recovery_controls(
+        campaign_dir,
+        manifest,
+        preview.get("recovery_controls"),
+        current_tool,
+    )
+    expected_preview = _build_phase_evaluation_transition_preview(
+        campaign_dir,
+        manifest,
+        phase=phase,
+        candidate_id=(str(candidate_id) if candidate_id is not None else None),
+        attempt_root=attempt_root,
+        attempt=attempt,
+        current_tool=current_tool,
+        recovery_controls=recovery_controls,
+    )
+    projected = {
+        key: value
+        for key, value in receipt.items()
+        if key
+        not in {
+            "schema_version",
+            "approved_at_utc",
+            "preview",
+            "status",
+            "transition_digest",
+        }
+    }
+    preview_projection = {
+        key: value
+        for key, value in preview.items()
+        if key not in {"schema_version", "campaign_mode", "campaign_purpose", "status"}
+    }
+    if (
+        preview != expected_preview
+        or projected != preview_projection
+        or receipt.get("campaign_id") != manifest.get("campaign_id")
+        or receipt.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or receipt.get("attempt_id") != attempt.get("attempt_id")
+        or receipt.get("attempt_digest") != attempt.get("attempt_digest")
+        or receipt.get("raw_evidence_scanned_bytes") != 0
+    ):
+        raise ConfigurationError("评估工具 transition 身份、范围或工具摘要漂移。")
+    return receipt
+
+
+def _load_phase_evaluation_transition(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    operation: str,
+    current_tool: Mapping[str, Any],
+    drift: Mapping[str, list[str]],
+) -> dict[str, str]:
+    if set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES):
+        raise ConfigurationError("评估 transition 不能放行产出侧工具漂移。")
+    receipt = _validate_phase_evaluation_transition(
+        campaign_dir,
+        manifest,
+        attempt_root=attempt_root,
+        attempt=attempt,
+        current_tool=current_tool,
+    )
+    if operation not in receipt.get("allowed_operations", []):
+        raise ConfigurationError(f"评估 transition 未授权当前操作：{operation}")
+    path = _evaluation_transition_path(attempt_root)
+    return {
+        "path": path.relative_to(campaign_dir).as_posix(),
+        "sha256": file_sha256(path),
+    }
+
+
+def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[str, Any]:
+    """两步审批只影响评估阶段的工具过渡，绝不读取原始证据内容。"""
+
+    campaign_dir = arguments.campaign_dir
+    manifest = _require_formal_campaign(campaign_dir)
+    phase = arguments.phase
+    candidate_id = arguments.candidate_id if phase == "candidate" else None
+    if phase == "official" and arguments.candidate_id is not None:
+        raise ConfigurationError("official transition 不得携带 --candidate-id。")
+    if phase == "candidate" and not candidate_id:
+        raise ConfigurationError("candidate transition 必须提供 --candidate-id。")
+    attempt_root, attempt = _load_capture_attempt(
+        campaign_dir,
+        phase,
+        candidate_id,
+        arguments.attempt_id,
+    )
+    current_tool = _tool_identity(include_git=False)
+    recovery_controls = _phase_recovery_controls_from_arguments(
+        arguments,
+        campaign_dir,
+        manifest,
+        current_tool,
+    )
+    preview = _build_phase_evaluation_transition_preview(
+        campaign_dir,
+        manifest,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_root=attempt_root,
+        attempt=attempt,
+        current_tool=current_tool,
+        recovery_controls=recovery_controls,
+    )
+    preview_path = _evaluation_transition_preview_path(attempt_root)
+    _write_or_verify_json(preview_path, preview)
+    approval = arguments.approve_transition_sha256
+    if approval is None:
+        return {
+            "status": "approval_required",
+            "phase": phase,
+            "candidate_id": candidate_id,
+            "attempt_id": attempt["attempt_id"],
+            "preview": str(preview_path),
+            "review_sha256": preview["review_sha256"],
+            "changed_files": preview["changed_files"],
+            "raw_evidence_scanned_bytes": 0,
+        }
+    if not SHA256_RE.fullmatch(str(approval)) or approval != preview["review_sha256"]:
+        raise ConfigurationError("评估 transition 批准摘要与预览不一致。")
+    receipt_path = _evaluation_transition_path(attempt_root)
+    if receipt_path.is_file() and not receipt_path.is_symlink():
+        receipt = _validate_phase_evaluation_transition(
+            campaign_dir,
+            manifest,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            current_tool=current_tool,
+        )
+    else:
+        preview_projection = {
+            key: value
+            for key, value in preview.items()
+            if key not in {"schema_version", "campaign_mode", "campaign_purpose", "status"}
+        }
+        core: dict[str, Any] = {
+            "schema_version": TOOL_EVALUATION_TRANSITION_SCHEMA,
+            "approved_at_utc": _utc_now(),
+            "campaign_id": manifest["campaign_id"],
+            "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+            "phase": phase,
+            "candidate_id": candidate_id,
+            "attempt_id": attempt["attempt_id"],
+            "attempt_digest": attempt["attempt_digest"],
+            "evidence_boundary_sha256": preview["evidence_boundary_sha256"],
+            "from_tool_files_sha256": preview["from_tool_files_sha256"],
+            "to_tool_files_sha256": preview["to_tool_files_sha256"],
+            "from_production_sha256": preview["from_production_sha256"],
+            "to_production_sha256": preview["to_production_sha256"],
+            "from_evaluation_sha256": preview["from_evaluation_sha256"],
+            "to_evaluation_sha256": preview["to_evaluation_sha256"],
+            "changed_files": preview["changed_files"],
+            "allowed_operations": preview["allowed_operations"],
+            "recovery_controls": preview["recovery_controls"],
+            "preview": {
+                "path": preview_path.relative_to(campaign_dir).as_posix(),
+                "sha256": file_sha256(preview_path),
+            },
+            "review_sha256": preview["review_sha256"],
+            "raw_evidence_scanned_bytes": 0,
+            "status": "approved",
+        }
+        receipt = {**core, "transition_digest": _fingerprint(core)}
+        _write_or_verify_json(receipt_path, receipt)
+        receipt = _validate_phase_evaluation_transition(
+            campaign_dir,
+            manifest,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            current_tool=current_tool,
+        )
+    return {
+        "status": "approved",
+        "phase": phase,
+        "candidate_id": candidate_id,
+        "attempt_id": attempt["attempt_id"],
+        "transition": str(receipt_path),
+        "transition_digest": receipt["transition_digest"],
+        "raw_evidence_scanned_bytes": 0,
+    }
 
 
 def _directory_tree_digest(root: Path) -> str:
@@ -9128,6 +10278,489 @@ def _write_or_verify_json(path: Path, payload: dict[str, Any]) -> None:
     _secure_write_json_once(path, payload)
 
 
+def _evidence_manifest_path(attempt_root: Path) -> Path:
+    return attempt_root / "evidence-manifest.json"
+
+
+def _evidence_manifest_checkpoint_path(attempt_root: Path) -> Path:
+    return attempt_root / "evidence-manifest.checkpoint.json"
+
+
+def _seal_draft_path(attempt_root: Path) -> Path:
+    return attempt_root / "seal-draft.json"
+
+
+def _secret_environment_names() -> list[str]:
+    return [
+        name
+        for name in (
+            "ADMIN_BEARER_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "SUB2API_API_KEY",
+        )
+        if os.environ.get(name)
+    ]
+
+
+def _load_evidence_manifest(path: Path) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError(f"EvidenceManifest 不存在或路径不可信：{path}")
+    payload = _read_json(path, "EvidenceManifest")
+    try:
+        return codex_upgrade_evidence_manifest.validate_manifest_document(payload)
+    except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+        raise ConfigurationError(str(error)) from error
+
+
+def _stage_evidence_manifest(
+    campaign_dir: Path,
+    stage_payload: Mapping[str, Any],
+    *,
+    verify_boundary: bool,
+) -> dict[str, Any]:
+    binding = stage_payload.get("evidence_manifest")
+    _require_file_binding(binding, "EvidenceManifest")
+    path = _campaign_file(campaign_dir, str(binding["path"]))
+    if path.is_symlink() or not path.is_file() or file_sha256(path) != binding["sha256"]:
+        raise ConfigurationError("EvidenceManifest 文件绑定漂移。")
+    manifest = _load_evidence_manifest(path)
+    roots = [Path(value) for value in stage_payload.get("evidence_roots", [])]
+    if not roots:
+        raise ConfigurationError("EvidenceManifest 阶段缺少证据根。")
+    if manifest.get("inventory") != stage_payload.get("evidence_inventory"):
+        raise ConfigurationError("EvidenceManifest 与阶段 inventory 不一致。")
+    expected_security = stage_payload.get("security")
+    manifest_security = manifest.get("security")
+    if (
+        not isinstance(expected_security, dict)
+        or not isinstance(manifest_security, dict)
+        or expected_security
+        != {"raw_evidence_private": True, **manifest_security}
+    ):
+        raise ConfigurationError("EvidenceManifest 与阶段安全收据不一致。")
+    if verify_boundary:
+        try:
+            codex_upgrade_evidence_manifest.verify_manifest_boundary(
+                manifest,
+                roots,
+            )
+        except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+            raise ConfigurationError(str(error)) from error
+    return manifest
+
+
+def _seal_draft(
+    campaign_dir: Path,
+    attempt_root: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt: Mapping[str, Any],
+    stage_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    core: dict[str, Any] = {
+        "schema_version": SEAL_DRAFT_SCHEMA,
+        "campaign_id": attempt["campaign_id"],
+        "phase": phase,
+        "candidate_id": candidate_id,
+        "attempt_id": attempt["attempt_id"],
+        "attempt_digest": attempt["attempt_digest"],
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "stage_payload": dict(stage_payload),
+        "stage_payload_sha256": _fingerprint(stage_payload),
+    }
+    draft = {**core, "draft_digest": _fingerprint(core)}
+    _write_or_verify_json(_seal_draft_path(attempt_root), draft)
+    return draft
+
+
+def _load_seal_draft(
+    campaign_dir: Path,
+    attempt_root: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt: Mapping[str, Any],
+) -> dict[str, Any]:
+    path = _seal_draft_path(attempt_root)
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError("seal 批准缺少冻结 seal-draft.json。")
+    draft = _read_json(path, "seal 冻结草案")
+    unsigned = dict(draft)
+    digest = unsigned.pop("draft_digest", None)
+    stage_payload = draft.get("stage_payload")
+    if (
+        set(draft)
+        != {
+            "schema_version",
+            "campaign_id",
+            "phase",
+            "candidate_id",
+            "attempt_id",
+            "attempt_digest",
+            "campaign_manifest_sha256",
+            "stage_payload",
+            "stage_payload_sha256",
+            "draft_digest",
+        }
+        or draft.get("schema_version") != SEAL_DRAFT_SCHEMA
+        or draft.get("campaign_id") != attempt.get("campaign_id")
+        or draft.get("phase") != phase
+        or draft.get("candidate_id") != candidate_id
+        or draft.get("attempt_id") != attempt.get("attempt_id")
+        or draft.get("attempt_digest") != attempt.get("attempt_digest")
+        or draft.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or not isinstance(stage_payload, dict)
+        or draft.get("stage_payload_sha256") != _fingerprint(stage_payload)
+        or digest != _fingerprint(unsigned)
+    ):
+        raise ConfigurationError("seal 冻结草案身份或摘要不一致。")
+    return draft
+
+
+def _verification_manifest_paths(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+) -> tuple[Path, Path]:
+    suffix = canonical if candidate_id is None else f"{canonical}-{candidate_id}"
+    root = campaign_dir / "verification-checkpoints" / "evidence-manifests"
+    return root / f"{suffix}.json", root / f"{suffix}.checkpoint.json"
+
+
+def _materialize_stage_evidence_manifest(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+    projected: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """用一次联合 hash／secret 扫描为历史阶段建立本地 manifest 投影。"""
+
+    roots = [Path(value) for value in projected.get("evidence_roots", [])]
+    if not roots:
+        raise ConfigurationError(f"{canonical} 历史阶段缺少证据根。")
+    manifest_path, scanner_checkpoint = _verification_manifest_paths(
+        campaign_dir,
+        canonical,
+        candidate_id,
+    )
+    ensure_private_directory(manifest_path.parent, campaign_dir)
+    if manifest_path.exists() or manifest_path.is_symlink():
+        evidence_manifest = _load_evidence_manifest(manifest_path)
+        try:
+            codex_upgrade_evidence_manifest.verify_manifest_boundary(
+                evidence_manifest,
+                roots,
+            )
+        except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+            raise ConfigurationError(str(error)) from error
+    else:
+        try:
+            evidence_manifest = codex_upgrade_evidence_manifest.build_evidence_manifest(
+                roots,
+                checkpoint_path=scanner_checkpoint,
+                secret_env_names=_secret_environment_names(),
+            )
+        except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+            raise ConfigurationError(str(error)) from error
+        _write_or_verify_json(manifest_path, evidence_manifest)
+    expected_security = projected.get("security")
+    if (
+        evidence_manifest.get("inventory") != projected.get("evidence_inventory")
+        or not isinstance(expected_security, dict)
+        or expected_security
+        != {"raw_evidence_private": True, **evidence_manifest["security"]}
+        or evidence_manifest["security"].get("known_secret_scan_passed") is not True
+    ):
+        raise ConfigurationError(
+            f"{canonical} 历史阶段与新 EvidenceManifest 的清单或安全结论不一致。"
+        )
+    overlay = dict(projected)
+    overlay["evidence_manifest"] = {
+        "path": manifest_path.relative_to(campaign_dir).as_posix(),
+        "sha256": file_sha256(manifest_path),
+    }
+    overlay["scan_summary"] = evidence_manifest["scan"]
+    _validate_stage_contract(overlay)
+    return overlay, evidence_manifest
+
+
+def _deep_verify_receipt_path(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+) -> Path:
+    suffix = canonical if candidate_id is None else f"{canonical}-{candidate_id}"
+    return campaign_dir / "verification-checkpoints" / f"deep-verify-{suffix}.json"
+
+
+def _write_deep_verify_receipt(
+    campaign_dir: Path,
+    canonical: str,
+    candidate_id: str | None,
+    *,
+    stage_path: Path,
+    evidence_manifest_binding: Mapping[str, Any] | None,
+    imported_checkpoint: Path | None,
+    scan: Mapping[str, Any],
+    evaluation_transition: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    core: dict[str, Any] = {
+        "schema_version": DEEP_VERIFY_RECEIPT_SCHEMA,
+        "completed_at_utc": _utc_now(),
+        "campaign_id": load_campaign_manifest(campaign_dir)["campaign_id"],
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "stage": canonical,
+        "candidate_id": candidate_id,
+        "stage_result_sha256": file_sha256(stage_path),
+        "evidence_manifest": (
+            dict(evidence_manifest_binding)
+            if evidence_manifest_binding is not None
+            else None
+        ),
+        "imported_checkpoint": (
+            {
+                "path": imported_checkpoint.relative_to(campaign_dir).as_posix(),
+                "sha256": file_sha256(imported_checkpoint),
+            }
+            if imported_checkpoint is not None
+            else None
+        ),
+        "scan": dict(scan),
+        "evaluation_transition": (
+            dict(evaluation_transition)
+            if evaluation_transition is not None
+            else None
+        ),
+        "status": "passed",
+    }
+    receipt = {**core, "receipt_digest": _fingerprint(core)}
+    path = _deep_verify_receipt_path(campaign_dir, canonical, candidate_id)
+    if path.is_file() and not path.is_symlink():
+        existing = _read_json(path, "deep-verify 收据")
+        existing_completed_at = existing.get("completed_at_utc")
+        if not _is_rfc3339_timestamp(existing_completed_at):
+            raise ConfigurationError("deep-verify 收据完成时间非法。")
+        expected_core = {
+            **core,
+            "completed_at_utc": existing_completed_at,
+        }
+        expected = {
+            **expected_core,
+            "receipt_digest": _fingerprint(expected_core),
+        }
+        if existing != expected:
+            raise ConfigurationError("deep-verify 收据与当前预期事实不一致。")
+        return existing
+    _write_or_verify_json(path, receipt)
+    return receipt
+
+
+def deep_verify_campaign(
+    campaign_dir: Path,
+    *,
+    candidate_id: str | None,
+    attempt_id: str | None,
+) -> dict[str, Any]:
+    """显式建立历史导入 checkpoint，并按需重哈希已封存 candidate。"""
+
+    _reject_contaminated_campaign(campaign_dir)
+    manifest = _require_formal_campaign(campaign_dir)
+    evaluation_transition: dict[str, str] | None = None
+    if attempt_id is not None:
+        if not candidate_id:
+            raise ConfigurationError("deep-verify 绑定 attempt 时必须提供 --candidate-id。")
+        attempt_root, attempt = _load_capture_attempt(
+            campaign_dir,
+            "candidate",
+            candidate_id,
+            attempt_id,
+        )
+        evaluation_transition = _verify_plan_identity(
+            campaign_dir,
+            manifest,
+            operation="deep-verify",
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+    else:
+        _verify_plan_identity(campaign_dir, manifest)
+
+    cache: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    for canonical in ("capture-official", "classify"):
+        try:
+            local = _load_stage_result(
+                campaign_dir,
+                canonical,
+                _replay_machine_receipts=False,
+                _shallow=True,
+            )
+        except ConfigurationError as error:
+            if "尚未封存" in str(error):
+                continue
+            raise
+        if local.get("predecessor_import") is None:
+            if canonical == "capture-official" and local.get("evidence_manifest") is not None:
+                manifest_path = _campaign_file(
+                    campaign_dir,
+                    str(local["evidence_manifest"]["path"]),
+                )
+                evidence_manifest = _load_evidence_manifest(manifest_path)
+                _, scanner_checkpoint = _verification_manifest_paths(
+                    campaign_dir,
+                    canonical,
+                    None,
+                )
+                try:
+                    scan = codex_upgrade_evidence_manifest.deep_verify_manifest(
+                        evidence_manifest,
+                        [Path(value) for value in local["evidence_roots"]],
+                        checkpoint_path=scanner_checkpoint,
+                        secret_env_names=_secret_environment_names(),
+                    )
+                except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+                    raise ConfigurationError(str(error)) from error
+                receipt = _write_deep_verify_receipt(
+                    campaign_dir,
+                    canonical,
+                    None,
+                    stage_path=campaign_dir / "official" / "result.json",
+                    evidence_manifest_binding=local["evidence_manifest"],
+                    imported_checkpoint=None,
+                    scan=scan,
+                    evaluation_transition=evaluation_transition,
+                )
+                rows.append({"stage": canonical, "receipt_digest": receipt["receipt_digest"], **scan})
+            continue
+        projected = _load_stage_result(
+            campaign_dir,
+            canonical,
+            _replay_machine_receipts=False,
+            _ignore_checkpoint=True,
+            _import_cache=cache,
+            _skip_evidence_scan=True,
+        )
+        evidence_manifest: dict[str, Any] | None = None
+        if canonical == "capture-official":
+            if projected.get("evidence_manifest") is None:
+                projected, evidence_manifest = _materialize_stage_evidence_manifest(
+                    campaign_dir,
+                    canonical,
+                    None,
+                    projected,
+                )
+            else:
+                evidence_manifest = _stage_evidence_manifest(
+                    campaign_dir,
+                    projected,
+                    verify_boundary=True,
+                )
+        checkpoint_path = _write_imported_stage_checkpoint(
+            campaign_dir,
+            canonical,
+            None,
+            local,
+            projected,
+        )
+        scan = (
+            evidence_manifest["scan"]
+            if evidence_manifest is not None
+            else {
+                "full_scan_count": 0,
+                "scanned_bytes": 0,
+                "reused_bytes": 0,
+                "total_bytes": 0,
+                "elapsed_seconds": 0.0,
+            }
+        )
+        stage_path = (
+            campaign_dir / "official" / "result.json"
+            if canonical == "capture-official"
+            else campaign_dir / "classification" / "result.json"
+        )
+        receipt = _write_deep_verify_receipt(
+            campaign_dir,
+            canonical,
+            None,
+            stage_path=stage_path,
+            evidence_manifest_binding=projected.get("evidence_manifest"),
+            imported_checkpoint=checkpoint_path,
+            scan=scan,
+            evaluation_transition=evaluation_transition,
+        )
+        rows.append(
+            {
+                "stage": canonical,
+                "receipt_digest": receipt["receipt_digest"],
+                **scan,
+            }
+        )
+
+    if candidate_id is not None:
+        candidate_path = campaign_dir / "candidates" / candidate_id / "result.json"
+        if candidate_path.is_file() and not candidate_path.is_symlink():
+            candidate = _load_stage_result(
+                campaign_dir,
+                "capture-candidate",
+                candidate_id,
+                _replay_machine_receipts=False,
+                _skip_evidence_scan=True,
+            )
+            binding = candidate.get("evidence_manifest")
+            _require_file_binding(binding, "candidate EvidenceManifest")
+            evidence_manifest_path = _campaign_file(
+                campaign_dir,
+                str(binding["path"]),
+            )
+            evidence_manifest = _load_evidence_manifest(evidence_manifest_path)
+            _, scanner_checkpoint = _verification_manifest_paths(
+                campaign_dir,
+                "capture-candidate",
+                candidate_id,
+            )
+            try:
+                scan = codex_upgrade_evidence_manifest.deep_verify_manifest(
+                    evidence_manifest,
+                    [Path(value) for value in candidate["evidence_roots"]],
+                    checkpoint_path=scanner_checkpoint,
+                    secret_env_names=_secret_environment_names(),
+                )
+            except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+                raise ConfigurationError(str(error)) from error
+            receipt = _write_deep_verify_receipt(
+                campaign_dir,
+                "capture-candidate",
+                candidate_id,
+                stage_path=candidate_path,
+                evidence_manifest_binding=binding,
+                imported_checkpoint=None,
+                scan=scan,
+                evaluation_transition=evaluation_transition,
+            )
+            rows.append(
+                {
+                    "stage": "capture-candidate",
+                    "candidate_id": candidate_id,
+                    "receipt_digest": receipt["receipt_digest"],
+                    **scan,
+                }
+            )
+    return {
+        "schema_version": "codex-upgrade-deep-verify-result/v1",
+        "status": "passed",
+        "campaign_id": manifest["campaign_id"],
+        "candidate_id": candidate_id,
+        "stages": rows,
+        "full_scan_count": sum(int(row.get("full_scan_count", 0)) for row in rows),
+        "scanned_bytes": sum(int(row.get("scanned_bytes", 0)) for row in rows),
+        "reused_bytes": sum(int(row.get("reused_bytes", 0)) for row in rows),
+        "total_bytes": sum(int(row.get("total_bytes", 0)) for row in rows),
+    }
+
+
 def _seal_preview(
     campaign_dir: Path,
     attempt_root: Path,
@@ -9140,8 +10773,14 @@ def _seal_preview(
 ) -> tuple[dict[str, Any], bool]:
     """生成或复核 seal 预览；人工只批准机器事实联合摘要。"""
 
+    evidence_manifest = stage_payload.get("evidence_manifest")
+    preview_schema = (
+        SEAL_PREVIEW_SCHEMA
+        if isinstance(evidence_manifest, dict)
+        else LEGACY_SEAL_PREVIEW_SCHEMA
+    )
     core = {
-        "schema_version": SEAL_PREVIEW_SCHEMA,
+        "schema_version": preview_schema,
         "campaign_id": attempt["campaign_id"],
         "campaign_mode": attempt["campaign_mode"],
         "campaign_purpose": attempt["campaign_purpose"],
@@ -9159,6 +10798,28 @@ def _seal_preview(
             "sha256"
         ],
     }
+    if preview_schema == SEAL_PREVIEW_SCHEMA:
+        manifest = _stage_evidence_manifest(
+            campaign_dir,
+            stage_payload,
+            verify_boundary=True,
+        )
+        draft = _seal_draft(
+            campaign_dir,
+            attempt_root,
+            phase=phase,
+            candidate_id=candidate_id,
+            attempt=attempt,
+            stage_payload=stage_payload,
+        )
+        core.update(
+            {
+                "evidence_manifest_sha256": evidence_manifest["sha256"],
+                "evidence_manifest_digest": manifest["manifest_digest"],
+                "seal_draft_sha256": file_sha256(_seal_draft_path(attempt_root)),
+                "scan_summary": stage_payload["scan_summary"],
+            }
+        )
     if phase == "candidate":
         core["post_client_restoration_sha256"] = stage_payload["restoration"][
             "post_client"
@@ -9558,6 +11219,212 @@ def _run_capture_attempt(
     }
 
 
+def _approve_frozen_capture_seal(
+    arguments: argparse.Namespace,
+    *,
+    phase: str,
+    campaign_dir: Path,
+    attempt_root: Path,
+    attempt: dict[str, Any],
+    candidate_id: str | None,
+) -> dict[str, Any]:
+    """只重放冻结草案与 stat 边界完成批准，不重新读取证据内容。"""
+
+    draft = _load_seal_draft(
+        campaign_dir,
+        attempt_root,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt=attempt,
+    )
+    payload = dict(draft["stage_payload"])
+    if payload.get("status") != "complete":
+        raise ConfigurationError("seal 冻结草案不是可批准的完整阶段。")
+    if phase == "candidate":
+        candidate_purpose = getattr(arguments, "candidate_purpose", None)
+        if candidate_purpose != payload.get("candidate_purpose"):
+            raise ConfigurationError("seal 批准用途与冻结草案不一致。")
+    preview, approved = _seal_preview(
+        campaign_dir,
+        attempt_root,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt=attempt,
+        stage_payload=payload,
+        approve_sha256=getattr(arguments, "approve_seal_sha256", None),
+    )
+    if not approved:
+        raise ConfigurationError("seal 批准缺少 --approve-seal-sha256。")
+    payload["seal_preview"] = {
+        "path": str((attempt_root / "seal-preview.json").relative_to(campaign_dir)),
+        "sha256": file_sha256(attempt_root / "seal-preview.json"),
+    }
+    save_stage_result(
+        campaign_dir,
+        "capture-official" if phase == "official" else "capture-candidate",
+        payload,
+        candidate_id=candidate_id,
+    )
+    return {
+        **payload,
+        "status": "complete",
+        "review_sha256": preview["review_sha256"],
+        "approval_scan": {
+            "full_scan_count": 0,
+            "scanned_bytes": 0,
+        },
+    }
+
+
+def _manifest_surface_files(evidence_manifest: Mapping[str, Any]) -> list[Path]:
+    """由已冻结 manifest 显式定位表面文件，不再递归遍历证据目录。"""
+
+    roots = evidence_manifest.get("roots")
+    entries = evidence_manifest.get("entries")
+    if not isinstance(roots, list) or not isinstance(entries, list):
+        raise ConfigurationError("EvidenceManifest 缺少表面文件定位信息。")
+    root_index: dict[str, Path] = {}
+    for item in roots:
+        if (
+            not isinstance(item, Mapping)
+            or not isinstance(item.get("prefix"), str)
+            or not isinstance(item.get("path"), str)
+        ):
+            raise ConfigurationError("EvidenceManifest 的证据根结构非法。")
+        prefix = str(item["prefix"])
+        root = Path(str(item["path"]))
+        if prefix in root_index:
+            raise ConfigurationError("EvidenceManifest 的证据根前缀重复。")
+        root_index[prefix] = root
+
+    selected: set[Path] = set()
+    for item in entries:
+        logical = item.get("path") if isinstance(item, Mapping) else None
+        if not isinstance(logical, str) or "/" not in logical:
+            raise ConfigurationError("EvidenceManifest 的逻辑文件路径非法。")
+        prefix, relative = logical.split("/", 1)
+        if (
+            not relative
+            or relative.startswith("/")
+            or "\\" in relative
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+        ):
+            raise ConfigurationError("EvidenceManifest 的逻辑文件路径不规范。")
+        root = root_index.get(prefix)
+        if root is None:
+            raise ConfigurationError("EvidenceManifest 文件引用未知证据根。")
+        if root.is_file():
+            if relative != root.name:
+                raise ConfigurationError("EvidenceManifest 的单文件根映射非法。")
+            path = root
+        else:
+            path = root / relative
+            try:
+                path.resolve(strict=True).relative_to(root.resolve(strict=True))
+            except (OSError, RuntimeError, ValueError) as error:
+                raise ConfigurationError(
+                    "EvidenceManifest 表面文件越过证据根。"
+                ) from error
+        if path.is_symlink() or not path.is_file():
+            raise ConfigurationError("EvidenceManifest 表面文件路径发生漂移。")
+        if path.suffix.lower() in {".json", ".jsonl", ".pcap", ".bin"}:
+            selected.add(path.resolve(strict=True))
+    return sorted(selected)
+
+
+def _validate_surface_document(
+    payload: Any,
+    *,
+    label: str,
+    input_paths: list[Path],
+    expected_file_count: int,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema_version",
+        "label",
+        "input_paths",
+        "file_count",
+        "surface_count",
+        "surfaces",
+        "warnings",
+    }:
+        raise ConfigurationError("抓包表面结构非法。")
+    surfaces = payload.get("surfaces")
+    warnings = payload.get("warnings")
+    if (
+        payload.get("schema_version") != SURFACE_SCHEMA
+        or payload.get("label") != label
+        or payload.get("input_paths") != [str(path) for path in input_paths]
+        or payload.get("file_count") != expected_file_count
+        or not isinstance(surfaces, list)
+        or payload.get("surface_count") != len(surfaces)
+        or not isinstance(warnings, list)
+        or not all(isinstance(value, str) for value in warnings)
+    ):
+        raise ConfigurationError("抓包表面与 attempt／manifest 边界不一致。")
+    for item in surfaces:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("kind"), str)
+            or not isinstance(item.get("sources"), list)
+            or not all(isinstance(value, str) for value in item["sources"])
+            or item.get("fingerprint")
+            != _fingerprint(
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"fingerprint", "sources"}
+                }
+            )
+        ):
+            raise ConfigurationError("抓包表面的条目摘要非法。")
+    return payload
+
+
+def _load_or_build_attempt_surface(
+    campaign_dir: Path,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    evidence_manifest: Mapping[str, Any],
+    *,
+    label: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """优先复用既有 surface；缺失时只按 manifest 文件清单做有界解析。"""
+
+    input_paths = [Path(str(value)) for value in attempt.get("evidence_roots", [])]
+    files = _manifest_surface_files(evidence_manifest)
+    derived_root = ensure_private_directory(attempt_root / "finalized", campaign_dir)
+    surface_path = derived_root / "surface.json"
+    if surface_path.exists() or surface_path.is_symlink():
+        if surface_path.is_symlink() or not surface_path.is_file():
+            raise ConfigurationError("既有抓包表面路径不可信。")
+        surface = _validate_surface_document(
+            _read_json(surface_path, "既有抓包表面"),
+            label=label,
+            input_paths=input_paths,
+            expected_file_count=len(files),
+        )
+    else:
+        surface = _scan_evidence_files(
+            files,
+            label,
+            input_paths=input_paths,
+        )
+        surface = _validate_surface_document(
+            surface,
+            label=label,
+            input_paths=input_paths,
+            expected_file_count=len(files),
+        )
+        _write_or_verify_json(surface_path, surface)
+    if surface["file_count"] == 0:
+        raise ConfigurationError("attempt 没有可封存抓包证据。")
+    return surface, {
+        "path": str(surface_path.relative_to(campaign_dir)),
+        "sha256": file_sha256(surface_path),
+    }
+
+
 def _seal_capture_attempt(
     arguments: argparse.Namespace,
     phase: str,
@@ -9567,7 +11434,6 @@ def _seal_capture_attempt(
     campaign_dir = arguments.campaign_dir
     _reject_contaminated_campaign(campaign_dir)
     manifest = _require_formal_campaign(campaign_dir)
-    _verify_plan_identity(campaign_dir, manifest)
     attempt_id = getattr(arguments, "attempt_id", None)
     if not attempt_id:
         raise ConfigurationError("seal 必须提供 --attempt-id。")
@@ -9575,8 +11441,26 @@ def _seal_capture_attempt(
     attempt_root, attempt = _load_capture_attempt(
         campaign_dir, phase, candidate_id, attempt_id
     )
+    evaluation_transition = _verify_plan_identity(
+        campaign_dir,
+        manifest,
+        operation=f"capture-{phase}-seal",
+        attempt_root=attempt_root,
+        attempt=attempt,
+    )
     if attempt.get("status") != "awaiting_receipts":
         raise ConfigurationError("只有 awaiting_receipts attempt 可以 seal。")
+    if getattr(arguments, "approve_seal_sha256", None) and _seal_draft_path(
+        attempt_root
+    ).is_file():
+        return _approve_frozen_capture_seal(
+            arguments,
+            phase=phase,
+            campaign_dir=campaign_dir,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            candidate_id=candidate_id,
+        )
     if phase == "official":
         try:
             _load_stage_result(campaign_dir, "capture-official")
@@ -9666,6 +11550,12 @@ def _seal_capture_attempt(
             raise ConfigurationError(
                 "seal 的 --evidence-root 不能扩展 run 已绑定的证据边界。"
             )
+    try:
+        preflight = codex_upgrade_evidence_manifest.preflight_evidence_roots(roots)
+    except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+        raise ConfigurationError(
+            f"seal 廉价前检失败（scanned_bytes=0）：{error}"
+        ) from error
     environment = attempt.get("environment")
     if not isinstance(environment, dict):
         raise ConfigurationError("抓包 attempt 缺少自动环境探针绑定。")
@@ -9871,29 +11761,43 @@ def _seal_capture_attempt(
             candidate_id=str(candidate_id),
         )
 
-    surface = scan_evidence(
-        [Path(value) for value in attempt["evidence_roots"]],
-        "target-official" if phase == "official" else "target-sub2api",
-    )
-    if surface["file_count"] == 0:
-        raise ConfigurationError(f"{phase} attempt 没有可封存抓包证据。")
-    derived_root = ensure_private_directory(attempt_root / "finalized", campaign_dir)
-    surface_path = derived_root / "surface.json"
-    _write_or_verify_json(surface_path, surface)
-
-    evidence_inventory = _evidence_inventory(roots)
-    security = _evidence_security(roots)
-    raw_evidence_private = _evidence_permissions_private(roots)
+    manifest_path = _evidence_manifest_path(attempt_root)
+    if manifest_path.exists() or manifest_path.is_symlink():
+        evidence_manifest = _load_evidence_manifest(manifest_path)
+        try:
+            codex_upgrade_evidence_manifest.verify_manifest_boundary(
+                evidence_manifest,
+                roots,
+            )
+        except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+            raise ConfigurationError(str(error)) from error
+    else:
+        try:
+            evidence_manifest = (
+                codex_upgrade_evidence_manifest.build_evidence_manifest(
+                    roots,
+                    checkpoint_path=_evidence_manifest_checkpoint_path(attempt_root),
+                    secret_env_names=_secret_environment_names(),
+                )
+            )
+        except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+            raise ConfigurationError(str(error)) from error
+        _write_or_verify_json(manifest_path, evidence_manifest)
+    evidence_inventory = evidence_manifest["inventory"]
+    security = evidence_manifest["security"]
+    raw_evidence_private = True
     if not security["known_secret_scan_passed"]:
         raise ConfigurationError(
             f"{phase} 证据秘密扫描失败：{len(security['findings'])} 个命中。"
         )
-    if not raw_evidence_private:
-        raise ConfigurationError(f"{phase} 原始证据权限不是目录 0700／文件 0600。")
-    surface_binding = {
-        "path": str(surface_path.relative_to(campaign_dir)),
-        "sha256": file_sha256(surface_path),
-    }
+
+    _, surface_binding = _load_or_build_attempt_surface(
+        campaign_dir,
+        attempt_root,
+        attempt,
+        evidence_manifest,
+        label="target-official" if phase == "official" else "target-sub2api",
+    )
     payload: dict[str, Any] = {
         "status": "complete",
         "campaign_mode": manifest["campaign_mode"],
@@ -9911,6 +11815,11 @@ def _seal_capture_attempt(
         "results": attempt["results"],
         "evidence_roots": [str(root) for root in roots],
         "evidence_inventory": evidence_inventory,
+        "evidence_manifest": {
+            "path": str(manifest_path.relative_to(campaign_dir)),
+            "sha256": file_sha256(manifest_path),
+        },
+        "scan_summary": evidence_manifest["scan"],
         "surface": surface_binding,
         "client_bindings": client_bindings,
         "assertion_context": assertion_context,
@@ -9918,6 +11827,8 @@ def _seal_capture_attempt(
         "restoration": restoration,
         "security": {"raw_evidence_private": raw_evidence_private, **security},
     }
+    if evaluation_transition is not None:
+        payload["evaluation_transition"] = evaluation_transition
     if observed_profile is not None:
         payload["observed_profile"] = observed_profile
     if phase == "official":
@@ -11132,13 +13043,27 @@ def _verify_catalog_stage_output(output: Path, receipt: dict[str, Any]) -> None:
         raise ConfigurationError("候选 RuntimeCatalog inventory 未精确覆盖输出文件。")
 
 
-def _verify_stage_evidence(stage: dict[str, Any], label: str) -> None:
+def _verify_stage_evidence(
+    stage: dict[str, Any],
+    label: str,
+    *,
+    campaign_dir: Path | None = None,
+) -> None:
     expected_inventory = stage.get("evidence_inventory")
     if not isinstance(expected_inventory, dict):
         raise ConfigurationError(f"{label}缺少封存证据清单。")
     roots = [Path(value) for value in stage.get("evidence_roots", [])]
     if not roots:
         raise ConfigurationError(f"{label}缺少证据根。")
+    if stage.get("evidence_manifest") is not None:
+        if campaign_dir is None:
+            raise ConfigurationError(f"{label}EvidenceManifest 校验缺少 Campaign 路径。")
+        _stage_evidence_manifest(
+            campaign_dir,
+            stage,
+            verify_boundary=True,
+        )
+        return
     current = _evidence_inventory(roots)
     if current["digest"] != expected_inventory.get("digest"):
         raise ConfigurationError(f"{label}原始证据摘要在封存后发生变化。")
@@ -11204,17 +13129,50 @@ def _verify_sealed_official_binaries(
     )
 
 
+def _capture_stage_attempt_context(
+    campaign_dir: Path,
+    stage: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+) -> tuple[Path, dict[str, Any]]:
+    reference = stage.get("attempt")
+    _require_file_binding(reference, "抓包 attempt")
+    attempt_path = _campaign_file(campaign_dir, str(reference["path"]))
+    attempt_root, attempt = _load_capture_attempt(
+        campaign_dir,
+        phase,
+        candidate_id,
+        attempt_path.parent.name,
+    )
+    if attempt_path != attempt_root / "attempt.json":
+        raise ConfigurationError("抓包阶段 attempt 绑定路径不一致。")
+    return attempt_root, attempt
+
+
 def compare_campaign(campaign_dir: Path, candidate_id: str) -> dict[str, Any]:
     """只读取封存材料并写比较收据；本函数不运行任何命令或网络请求。"""
 
     _reject_contaminated_campaign(campaign_dir)
     manifest = _require_formal_campaign(campaign_dir)
-    _verify_plan_identity(campaign_dir, manifest)
-    official = _load_stage_result(campaign_dir, "capture-official")
-    classification = _load_stage_result(campaign_dir, "classify")
     candidate = _load_stage_result(
         campaign_dir, "capture-candidate", candidate_id
     )
+    attempt_root, attempt = _capture_stage_attempt_context(
+        campaign_dir,
+        candidate,
+        phase="candidate",
+        candidate_id=candidate_id,
+    )
+    _verify_plan_identity(
+        campaign_dir,
+        manifest,
+        operation="compare",
+        attempt_root=attempt_root,
+        attempt=attempt,
+    )
+    official = _load_stage_result(campaign_dir, "capture-official")
+    classification = _load_stage_result(campaign_dir, "classify")
     for label, value in (
         ("官方", official),
         ("分类", classification),
@@ -11228,8 +13186,8 @@ def compare_campaign(campaign_dir: Path, candidate_id: str) -> dict[str, Any]:
         raise ConfigurationError("候选抓包环境恢复门禁未通过。")
     if not _verify_sealed_official_binaries(official, manifest):
         raise ConfigurationError("官方抓包未绑定全部目标 Codex 二进制身份。")
-    _verify_stage_evidence(official, "官方")
-    _verify_stage_evidence(candidate, "候选")
+    _verify_stage_evidence(official, "官方", campaign_dir=campaign_dir)
+    _verify_stage_evidence(candidate, "候选", campaign_dir=campaign_dir)
     official_surface = _surface_from_stage(campaign_dir, "capture-official")
     candidate_surface = _surface_from_stage(
         campaign_dir, "capture-candidate", candidate_id=candidate_id
@@ -12259,12 +14217,24 @@ def accept_campaign(
     if assertions_path.is_symlink() or not assertions_path.is_file():
         raise ConfigurationError("逐规则断言结果必须是非符号链接普通文件。")
     manifest = _require_formal_campaign(campaign_dir)
-    _verify_plan_identity(campaign_dir, manifest)
-    official = _load_stage_result(campaign_dir, "capture-official")
-    classification = _load_stage_result(campaign_dir, "classify")
     candidate = _load_stage_result(
         campaign_dir, "capture-candidate", candidate_id
     )
+    attempt_root, attempt = _capture_stage_attempt_context(
+        campaign_dir,
+        candidate,
+        phase="candidate",
+        candidate_id=candidate_id,
+    )
+    _verify_plan_identity(
+        campaign_dir,
+        manifest,
+        operation="accept",
+        attempt_root=attempt_root,
+        attempt=attempt,
+    )
+    official = _load_stage_result(campaign_dir, "capture-official")
+    classification = _load_stage_result(campaign_dir, "classify")
     comparison = _load_stage_result(campaign_dir, "compare", candidate_id)
     candidate_purpose = candidate.get("candidate_purpose")
     if (
@@ -12280,8 +14250,8 @@ def accept_campaign(
         candidate_id=candidate_id,
         candidate=candidate,
     )
-    _verify_stage_evidence(official, "官方")
-    _verify_stage_evidence(candidate, "候选")
+    _verify_stage_evidence(official, "官方", campaign_dir=campaign_dir)
+    _verify_stage_evidence(candidate, "候选", campaign_dir=campaign_dir)
     rules = _approved_rules(campaign_dir, manifest, require_approved=True)
     assertions = _read_json(assertions_path, "逐规则断言结果")
     assertion_gate = _validate_assertion_results(
@@ -12775,6 +14745,16 @@ def main(argv: list[str] | None = None) -> int:
                 "完成 Kilo witness、机器 finalizer 与 seal 摘要复核；封存后再执行 compare。"
             )
             return_code = 2
+        elif command == "evaluation-transition":
+            result = create_phase_evaluation_transition(arguments)
+            return_code = 0 if result.get("status") == "approved" else 2
+        elif command == "deep-verify":
+            result = deep_verify_campaign(
+                arguments.campaign_dir,
+                candidate_id=arguments.candidate_id,
+                attempt_id=arguments.attempt_id,
+            )
+            return_code = 0
         elif command == "status":
             result = campaign_status(arguments.campaign_dir, arguments.candidate_id)
             return_code = 0

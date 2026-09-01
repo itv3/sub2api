@@ -193,6 +193,32 @@ func imagesRetirementReferenceWasSuperseded(path, priorDigest, currentDigest str
 // 精确的 path/from/to 链可以解释后续合法维护；两份闭集收据自身另由 service 门禁
 // 固定原文摘要。
 func compatibilityCodeRetirementTransitionSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
+	receipt, err := loadCodex0151EvaluationRecovery()
+	if err == nil {
+		for _, transition := range receipt.Transitions {
+			if transition.Path == path &&
+				compatibilityCodeRetirementTransitionSupersedesBeforeCodex0151Recovery(
+					path, priorDigest, transition.FromSHA256,
+				) && codex0151EvaluationRecoverySupersedes(
+				path, transition.FromSHA256, currentDigest,
+			) {
+				return true
+			}
+		}
+	}
+	return compatibilityCodeRetirementTransitionSupersedesBeforeCodex0151Recovery(
+		path, priorDigest, currentDigest,
+	)
+}
+
+// compatibilityCodeRetirementTransitionSupersedesBeforeCodex0151Recovery
+// 只重放本次评估恢复 transition 之前已经冻结的摘要承接链。
+func compatibilityCodeRetirementTransitionSupersedesBeforeCodex0151Recovery(
+	path, priorDigest, currentDigest string,
+) bool {
 	if upstreamMergeFrameworkTransitionSupersedes(path, priorDigest, currentDigest) {
 		return true
 	}
