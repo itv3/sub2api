@@ -93,7 +93,7 @@ FROZEN_MAPPING_SHA256 = (
 # 2026-08-31：断言画像升级为 0.151.0，加入 Files C2PA 条件分支的三条检查，
 # 规则总数仍为 42。
 FROZEN_PROFILE_SHA256 = (
-    "b58ff72be915d77893cb21fa5422f0633872d016dd996fc410f0bf21615f4cca"
+    "600672542688dd591fcef7d6d3eda3d19ab98f9612ba1d81fbf2f92c163c3272"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")

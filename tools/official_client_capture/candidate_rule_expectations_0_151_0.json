@@ -2088,6 +2088,16 @@
             "record_type": "file_upload_chain",
             "scenario_ids": [
               "A14"
+            ],
+            "where": [
+              {
+                "operator": "present",
+                "path": "data.create_upload_url_sha256"
+              },
+              {
+                "operator": "present",
+                "path": "data.put_url_sha256"
+              }
             ]
           }
         },

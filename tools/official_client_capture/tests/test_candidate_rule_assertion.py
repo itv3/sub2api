@@ -23,12 +23,14 @@ from tools.official_client_capture.candidate_rule_assertion import (
     load_profile,
     main as assertion_main,
     source_spec_section_sha256,
+    _select_observations,
 )
 
 
 TOOL_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = TOOL_ROOT / "candidate_rule_expectations_0_149_1.json"
 RULE_MANIFEST_PATH = TOOL_ROOT / "codex_upgrade_rules_0_149_1.json"
+TARGET_PROFILE_PATH = TOOL_ROOT / "candidate_rule_expectations_0_151_0.json"
 
 
 def write_manifest(
@@ -189,6 +191,70 @@ class CandidateRuleExpectationTest(unittest.TestCase):
             [observation("misplaced-cookie", misplaced_cookie)], assertion
         )
         self.assertFalse(passed)
+
+    def test_0151_file_url_selector_excludes_other_file_facts(self) -> None:
+        """URL 链断言只选择同时具备两个 URL 摘要的记录。"""
+
+        profile = json.loads(TARGET_PROFILE_PATH.read_text(encoding="utf-8"))
+        check = next(
+            check
+            for rule in profile["rules"]
+            if rule["rule_id"] == "SPEC-EP-002"
+            for check in rule["checks"]
+            if check["id"] == "file-url-chain"
+        )
+        conditions = check["select"]["where"]
+        self.assertEqual(
+            conditions,
+            [
+                {
+                    "operator": "present",
+                    "path": "data.create_upload_url_sha256",
+                },
+                {
+                    "operator": "present",
+                    "path": "data.put_url_sha256",
+                },
+            ],
+        )
+
+        def observation(record_id: str, data: dict[str, object]) -> Observation:
+            return Observation(
+                record_id=record_id,
+                scenario_id="A14",
+                record_type="file_upload_chain",
+                artifact_path=f"candidate/A14/{record_id}.json",
+                evidence_paths=(f"candidate/A14/{record_id}.json",),
+                labels={},
+                data=data,
+            )
+
+        selected = _select_observations(
+            [
+                observation(
+                    "url-chain",
+                    {
+                        "create_upload_url_sha256": "same",
+                        "put_url_sha256": "same",
+                    },
+                ),
+                observation(
+                    "c2pa-negative",
+                    {"c2pa_condition": "negative", "body_mode": "empty_object"},
+                ),
+                observation(
+                    "only-create",
+                    {"create_upload_url_sha256": "only-create"},
+                ),
+                observation(
+                    "only-put",
+                    {"put_url_sha256": "only-put"},
+                ),
+            ],
+            check["select"],
+            ["A01", "A11", "A13", "A14"],
+        )
+        self.assertEqual([item.record_id for item in selected], ["url-chain"])
 
     def test_profile_is_independent_from_candidate_go_profile(self) -> None:
         checker_source = (TOOL_ROOT / "candidate_rule_assertion.py").read_text(
