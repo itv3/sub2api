@@ -392,7 +392,9 @@ candidate 或批准事实。
   承接历史收据；已登记的旧 producer 只能只读重放，不能用来生成新事实，未知摘要必须停线。
 - Job 执行树不是 producer 仓库，禁止从该目录生成控制收据；producer 迁移时只更新执行坐标和过渡收据，
   不得改写历史 producer 身份或触发无关 Job 全量重跑。
-- 深度读取前先完成路径、符号链接、权限、属主、磁盘、身份和必需收据等廉价检查；廉价检查失败时
+- 深度读取前先完成路径、符号链接、权限、属主、磁盘、身份和必需收据等廉价检查；ARM64 主机上
+  `capture-cli` bind mount 的受管执行树必须由实际执行用户持有（root:root），文件不得有组／其他写权限，
+  并须在容器内再次检查；廉价检查失败时
   `scanned_bytes` 必须为 0。新 attempt 由 seal 预览、缺少 manifest 的历史导入边界由一次显式
   `deep-verify` 完成唯一内容扫描并生成逐文件 `EvidenceManifest`；二者不得对同一边界重复扫描。后续
   seal 批准、`status`、compare、accept 和 successor 只验证小型摘要与 stat 边界。
