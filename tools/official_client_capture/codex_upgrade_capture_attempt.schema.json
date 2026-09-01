@@ -158,6 +158,10 @@
     "incremental_tool_transition": {
       "$ref": "#/$defs/incrementalToolTransition"
     },
+    "evaluation_transition": {
+      "description": "评估工具 transition 的受控绑定；失败源 attempt 仅授权 capture-run，补跑闭集完成的新 attempt 承接同一绑定后才可进行离线 seal/compare/accept。",
+      "$ref": "#/$defs/fileBinding"
+    },
     "incremental_plan": {
       "$ref": "#/$defs/attemptIncrementalPlan"
     },

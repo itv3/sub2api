@@ -722,9 +722,14 @@ ready_for_operator_release
   在原 Campaign／attempt 上生成首份 `EvidenceManifest` 并续作；不得重发请求或新建 candidate／Campaign。
   产出侧工具变化不得进入该恢复路径，仍须按前述边界新建 Campaign。
 - 上述原地恢复顺序固定为：绑定旧停线 checkpoint、新 active `UpgradeTimingLedger`、新 ARM64 P0 收据
-  和新完整 Job 演练；两步批准 attempt／phase 限定的评估 transition（读取原始证据 0 字节）；仅为缺少
-  manifest 的历史导入阶段执行一次 `deep-verify`；返回原 attempt 完成 seal 预览与零扫描批准。任一步
-  身份、边界、摘要或控制收据不一致即继续停线，不得自动重试、建 successor 或重新发送 live 请求。
+  和新完整 Job 演练；两步批准 attempt／phase 限定的评估 transition（读取原始证据 0 字节）。失败
+  partial attempt 可以建立 transition，但源 attempt 的 `allowed_operations` 永远只有 `capture-run`。
+  `resume --rerun-failed` 必须创建绑定同一 transition 的新 attempt，并严格复用源 attempt 的已完成 Job，
+  只执行失败／未完成闭集；新 attempt 的 checkpoint 必须完整、无额外执行项且状态为 `awaiting_receipts`，
+  才能把同一 transition 用于 seal、`deep-verify`、compare 或 accept。源 attempt 不得直接 seal；任一步
+  身份、边界、摘要或控制收据不一致即继续停线，不得自动重试、建 successor 或重新发送已完成请求。
+- 失败项为空时必须在 reservation 前立即写 `incremental-noop` 并退出：不创建 reservation／attempt，不启动
+  容器或环境探针，不读取大证据，也不发送请求；该收据不改变阶段状态。
 - `classification_fact_correction` 后继若 Formal target 场景仅因受管 `source_spec.sha256` 更新而与当前场景
   不同，恢复 preflight 必须绑定当前受管场景，并以该场景重算完整 Job 合同；历史官方执行合同仍只读保留，
   不得复用旧场景合同或因此重发官方请求。该规则不适用于仅修正 Candidate 运行时身份的后继。

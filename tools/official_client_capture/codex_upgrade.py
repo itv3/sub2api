@@ -80,6 +80,7 @@ from tools.official_client_capture.codex_upgrade_environment_probe import (
     STATE_FILES as ENVIRONMENT_STATE_FILES,
     run_probe as run_environment_probe,
 )
+from tools.official_client_capture import codex_upgrade_environment_probe
 from tools.official_client_capture import codex_upgrade_arm64_environment_receipt
 from tools.official_client_capture import codex_upgrade_evidence_manifest
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
@@ -2860,6 +2861,38 @@ def _latest_failed_attempt_identity_hint(
         identity = payload.get("identity")
         if isinstance(identity, dict):
             return dict(identity)
+    return None
+
+
+def _latest_failed_attempt_for_identity(
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    identity: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any]] | None:
+    """返回最近且身份完全相同的失败 attempt，供 transition 只读承接。"""
+
+    for attempt_root, _ in _ordered_capture_attempts(
+        campaign_dir, phase, candidate_id
+    ):
+        attempt_path = attempt_root / "attempt.json"
+        if not attempt_path.is_file() or attempt_path.is_symlink():
+            continue
+        _, payload = _load_capture_attempt(
+            campaign_dir,
+            phase,
+            candidate_id,
+            attempt_root.name,
+        )
+        if payload.get("status") != "failed":
+            continue
+        if _fingerprint(payload.get("identity")) != _fingerprint(identity):
+            raise ConfigurationError(
+                "最近失败 attempt 身份与本次恢复不一致；不得混用身份，"
+                "请新建 Campaign。"
+            )
+        return attempt_root, payload
     return None
 
 
@@ -10145,6 +10178,85 @@ def _verify_plan_identity(
         return None
     component_drift = _tool_component_drift(expected_tool, current_tool)
     changed_components = set(component_drift.get("changed_components", []))
+    # 失败 attempt 或新 attempt 上显式绑定的 transition 是唯一允许绕过旧
+    # active Ledger 的路径。transition 自身会重放新 Ledger、ARM64 P0 和
+    # 完整 Job 演练；这里不能再要求已经 stop_the_line 的旧 Ledger active。
+    if (
+        operation is not None
+        and isinstance(attempt, Mapping)
+        and attempt_root is not None
+        and (
+            attempt.get("evaluation_transition") is not None
+            or (
+                operation == "capture-run"
+                and attempt.get("status") == "failed"
+            )
+        )
+    ):
+        transition = _load_phase_evaluation_transition(
+            campaign_dir,
+            manifest,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            operation=operation,
+            current_tool=current_tool,
+            drift=_tool_identity_drift(current_tool, expected_tool),
+        )
+        source_root, source_attempt, _, _ = _phase_evaluation_transition_source(
+            campaign_dir,
+            phase=str(attempt.get("phase", "")),
+            candidate_id=(
+                str(attempt.get("candidate_id"))
+                if attempt.get("candidate_id") is not None
+                else None
+            ),
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+        recovery_scope = None
+        if source_attempt.get("status") == "failed":
+            recovery_scope = _phase_evaluation_recovery_scope(
+                campaign_dir,
+                manifest,
+                phase=str(source_attempt.get("phase", "")),
+                candidate_id=(
+                    str(source_attempt.get("candidate_id"))
+                    if source_attempt.get("candidate_id") is not None
+                    else None
+                ),
+                attempt_root=source_root,
+                attempt=source_attempt,
+            )
+        _record_evaluation_side_drift(
+            campaign_dir,
+            current_tool,
+            expected_tool,
+            {
+                "evaluation": sorted(
+                    path
+                    for paths in component_drift.get("changed_paths", {}).values()
+                    for path in paths
+                )
+            },
+        )
+        return {
+            "kind": "phase_evaluation_transition",
+            "changed_components": sorted(changed_components),
+            "changed_paths": component_drift.get("changed_paths", {}),
+            "affected_job_ids": (
+                list(recovery_scope.get("execute_job_ids", []))
+                if recovery_scope is not None
+                else []
+            ),
+            "evaluation_transition": transition,
+            "recovery_scope": recovery_scope,
+            "from_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(expected_tool)
+            ),
+            "to_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(current_tool)
+            ),
+        }
     if (
         changed_components
         and changed_components.issubset({"orchestrator", "evaluator"})
@@ -10365,6 +10477,26 @@ _PHASE_EVALUATION_OPERATIONS = {
     "candidate": ("capture-candidate-seal", "compare", "accept", "deep-verify"),
 }
 MAX_PHASE_EVALUATION_TRANSITIONS = 3
+_PHASE_EVALUATION_TRANSITION_FILE_RE = re.compile(
+    r"^evaluation-transition(?:-(?P<index>[0-9]{2}))?\.json$"
+)
+
+
+def _phase_evaluation_allowed_operations(
+    phase: str,
+    attempt_status: Any,
+) -> tuple[str, ...]:
+    """返回与 attempt 状态匹配的 transition 操作白名单。
+
+    失败 attempt 的 transition 是恢复专用授权，只能创建新的 capture-run
+    并执行失败／未完成闭集；不能借此直接 seal、compare 或 accept。
+    """
+
+    if phase not in _PHASE_EVALUATION_OPERATIONS:
+        raise ConfigurationError("评估 transition phase 非法。")
+    if attempt_status == "failed":
+        return ("capture-run",)
+    return tuple(_PHASE_EVALUATION_OPERATIONS[phase])
 
 
 def _evaluation_transition_preview_path(
@@ -10733,6 +10865,584 @@ def _phase_evaluation_changed_files(
     return changed
 
 
+def _phase_evaluation_environment_boundary(
+    campaign_dir: Path,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+) -> str:
+    """校验失败 attempt 的小型前后环境收据，不读取原始抓包证据。
+
+    评估 transition 只能承接已经完成且可恢复的 attempt。这里只读取
+    probe／ARM64／restoration 收据和其摘要，任何 pcap、JSONL 或二进制正文
+    都留到显式 seal/deep-verify 阶段处理。
+    """
+
+    environment = attempt.get("environment")
+    if not isinstance(environment, Mapping):
+        raise ConfigurationError("失败 attempt 缺少环境探针绑定。")
+    raw_evidence_root = environment.get("evidence_root")
+    evidence_root = Path(str(raw_evidence_root))
+    if (
+        not evidence_root.is_absolute()
+        or evidence_root.is_symlink()
+        or not evidence_root.is_dir()
+    ):
+        raise ConfigurationError("失败 attempt 的环境证据根不存在或不可信。")
+    try:
+        resolved_evidence_root = evidence_root.resolve(strict=True)
+        resolved_attempt_root = attempt_root.resolve(strict=True)
+        resolved_evidence_root.relative_to(resolved_attempt_root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ConfigurationError("失败 attempt 的环境证据根越出 attempt。") from error
+
+    required_bindings = (
+        "before_probe",
+        "after_probe",
+        "arm64_before_receipt",
+        "arm64_after_receipt",
+        "restoration_report",
+    )
+    bindings: dict[str, dict[str, Any]] = {}
+    paths: dict[str, Path] = {}
+    for name in required_bindings:
+        value = environment.get(name)
+        if (
+            not isinstance(value, Mapping)
+            or set(value) != {"path", "sha256", "bytes"}
+            or not isinstance(value.get("path"), str)
+            or not value.get("path")
+            or Path(str(value["path"])).is_absolute()
+            or "\\" in str(value["path"])
+            or str(PurePosixPath(str(value["path"]))) != str(value["path"])
+            or any(
+                part in {"", ".", ".."}
+                for part in PurePosixPath(str(value["path"])).parts
+            )
+            or not SHA256_RE.fullmatch(str(value.get("sha256", "")))
+            or not isinstance(value.get("bytes"), int)
+            or isinstance(value.get("bytes"), bool)
+            or int(value.get("bytes", 0)) <= 0
+        ):
+            raise ConfigurationError(f"失败 attempt 缺少完整 {name} 收据绑定。")
+        path = evidence_root / str(value["path"])
+        try:
+            path.resolve(strict=True).relative_to(resolved_evidence_root)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ConfigurationError(f"失败 attempt 的 {name} 越出证据根。") from error
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size != value["bytes"]
+            or file_sha256(path) != value["sha256"]
+        ):
+            raise ConfigurationError(f"失败 attempt 的 {name} 摘要漂移。")
+        bindings[name] = dict(value)
+        paths[name] = path
+
+    # probe manifest 只验证结构和快照绑定，绝不遍历快照之外的证据目录。
+    for name, expected_phase in (("before_probe", "before"), ("after_probe", "after")):
+        probe = _read_json(paths[name], f"失败 attempt {name}")
+        if (
+            probe.get("schema_version")
+            != codex_upgrade_environment_probe.PROBE_MANIFEST_SCHEMA
+            or probe.get("phase") != expected_phase
+            or not _is_rfc3339_timestamp(probe.get("observed_at_utc"))
+            or not isinstance(probe.get("snapshots"), list)
+        ):
+            raise ConfigurationError(f"失败 attempt 的 {name} 内容不完整。")
+        snapshot_kinds = {
+            item.get("kind")
+            for item in probe["snapshots"]
+            if isinstance(item, Mapping)
+        }
+        if not {"service", "containers", "database", "account", "configuration"}.issubset(
+            snapshot_kinds
+        ):
+            raise ConfigurationError(f"失败 attempt 的 {name} 缺少环境快照。")
+
+    arm64_values: dict[str, Mapping[str, Any]] = {}
+    for name, expected_phase in (
+        ("arm64_before_receipt", "attempt_before"),
+        ("arm64_after_receipt", "attempt_after"),
+    ):
+        try:
+            receipt = codex_upgrade_arm64_environment_receipt.replay(
+                paths[name].parent,
+                paths[name].name,
+            )
+        except (
+            OSError,
+            codex_upgrade_arm64_environment_receipt.Arm64EnvironmentReceiptError,
+        ) as error:
+            raise ConfigurationError(f"失败 attempt 的 {name} 无法重放。") from error
+        if (
+            receipt.get("status") != "passed"
+            or receipt.get("phase") != expected_phase
+            or receipt.get("subject_id") != attempt.get("attempt_id")
+        ):
+            raise ConfigurationError(f"失败 attempt 的 {name} 身份不一致。")
+        arm64_values[name] = receipt
+    if (
+        arm64_values["arm64_before_receipt"].get("continuity_identity_sha256")
+        != arm64_values["arm64_after_receipt"].get("continuity_identity_sha256")
+    ):
+        raise ConfigurationError("失败 attempt 前后 ARM64 环境身份不连续。")
+
+    try:
+        _validate_restoration_report(
+            paths["restoration_report"],
+            [resolved_evidence_root],
+            phase=str(attempt.get("phase")),
+            candidate_id=(
+                str(attempt.get("candidate_id"))
+                if attempt.get("candidate_id") is not None
+                else None
+            ),
+        )
+    except ConfigurationError as error:
+        raise ConfigurationError("失败 attempt 的环境恢复收据无法重放。") from error
+
+    return _fingerprint(
+        {
+            "evidence_root": str(resolved_evidence_root),
+            "bindings": bindings,
+            "arm64_continuity_identity_sha256": arm64_values[
+                "arm64_before_receipt"
+            ].get("continuity_identity_sha256"),
+        }
+    )
+
+
+def _phase_evaluation_recovery_scope(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """建立失败 attempt 的确定性重跑闭集。
+
+    只有至少一个 Job 已完成、至少一个 Job 需要补跑，且 checkpoint 与环境
+    收据均可重放时才允许建立 transition。返回值会写入 transition 摘要，
+    使下一轮不能扩大执行范围。
+    """
+
+    if attempt.get("status") != "failed":
+        raise ConfigurationError("只有 failed attempt 可以建立恢复 transition。")
+    if (
+        attempt.get("phase") != phase
+        or attempt.get("candidate_id") != candidate_id
+        or attempt.get("campaign_id") != manifest.get("campaign_id")
+        or attempt.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or not isinstance(attempt.get("attempt_id"), str)
+        or not SHA256_RE.fullmatch(str(attempt.get("run_nonce", "")))
+        or not SHA256_RE.fullmatch(str(attempt.get("attempt_digest", "")))
+    ):
+        raise ConfigurationError("失败 attempt 的 Campaign／phase／nonce 身份不完整。")
+
+    reservation = _load_capture_reservation(
+        campaign_dir,
+        attempt_root,
+        phase=phase,
+        candidate_id=candidate_id,
+    )
+    planned_rows = reservation.get("planned_jobs")
+    if not isinstance(planned_rows, list) or not planned_rows:
+        raise ConfigurationError("失败 attempt 缺少已冻结 Job 计划。")
+    planned: dict[str, str] = {}
+    for row in planned_rows:
+        if (
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("id"), str)
+            or not SAFE_ID_RE.fullmatch(str(row.get("id")))
+            or not SHA256_RE.fullmatch(str(row.get("execution_sha256", "")))
+            or row["id"] in planned
+        ):
+            raise ConfigurationError("失败 attempt 的 Job 计划身份非法。")
+        planned[str(row["id"])] = str(row["execution_sha256"])
+
+    results = attempt.get("results")
+    if not isinstance(results, list):
+        raise ConfigurationError("失败 attempt 缺少 Job 结果。")
+    result_by_id: dict[str, Mapping[str, Any]] = {}
+    for result in results:
+        if not isinstance(result, Mapping) or not isinstance(result.get("id"), str):
+            raise ConfigurationError("失败 attempt 的 Job 结果身份非法。")
+        job_id = str(result["id"])
+        if job_id in result_by_id or job_id not in planned:
+            raise ConfigurationError("失败 attempt 的 Job 结果不在冻结计划内。")
+        if result.get("execution_sha256") != planned[job_id]:
+            raise ConfigurationError("失败 attempt 的 Job 执行摘要漂移。")
+        if result.get("status") not in {"complete", "failed"}:
+            raise ConfigurationError("失败 attempt 的 Job 状态非法。")
+        result_by_id[job_id] = result
+    completed_ids = sorted(
+        job_id for job_id, result in result_by_id.items() if result.get("status") == "complete"
+    )
+    failed_ids = sorted(
+        job_id for job_id, result in result_by_id.items() if result.get("status") == "failed"
+    )
+    pending_ids = sorted(set(planned) - set(result_by_id))
+    execute_ids = sorted(set(failed_ids) | set(pending_ids))
+    if not completed_ids:
+        raise ConfigurationError("失败 attempt 没有已完成 Job，禁止原地 transition。")
+    if not execute_ids:
+        raise ConfigurationError("失败 attempt 没有可重跑 Job，禁止建立 transition。")
+
+    checkpoint = attempt.get("job_checkpoint")
+    if not isinstance(checkpoint, Mapping) or int(checkpoint.get("record_count", 0)) <= 0:
+        raise ConfigurationError("失败 attempt 缺少可重放 Job checkpoint。")
+    checkpoint_path = _resolve_attempt_binding(
+        campaign_dir,
+        attempt_root,
+        checkpoint,
+        label="失败 attempt Job checkpoint",
+        expected_name="checkpoints",
+        directory=True,
+    )
+    assert checkpoint_path is not None
+    try:
+        records = incremental_recovery.CheckpointStore(
+            checkpoint_path,
+            create=False,
+        ).records()
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError("失败 attempt Job checkpoint 链无法重放。") from error
+    if len(records) != checkpoint.get("record_count"):
+        raise ConfigurationError("失败 attempt Job checkpoint 数量漂移。")
+    _validate_checkpoint_records(
+        records,
+        attempt,
+        planned_job_ids=set(planned),
+        strict_context=True,
+    )
+    environment_boundary_sha256 = _phase_evaluation_environment_boundary(
+        campaign_dir,
+        attempt_root,
+        attempt,
+    )
+    return {
+        "schema_version": "codex-upgrade-failed-attempt-scope/v1",
+        "source_attempt_id": str(attempt["attempt_id"]),
+        "source_attempt_digest": str(attempt["attempt_digest"]),
+        "run_nonce": str(attempt["run_nonce"]),
+        "planned_job_ids": sorted(planned),
+        "completed_job_ids": completed_ids,
+        "failed_job_ids": failed_ids,
+        "pending_job_ids": pending_ids,
+        "execute_job_ids": execute_ids,
+        "checkpoint": {
+            "path": str(checkpoint.get("path")),
+            "record_count": int(checkpoint["record_count"]),
+            "last_sequence": checkpoint.get("last_sequence"),
+            "last_sha256": checkpoint.get("last_sha256"),
+        },
+        "environment_boundary_sha256": environment_boundary_sha256,
+    }
+
+
+def _phase_evaluation_transition_source(
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any], Path | None, int | None]:
+    """解析新 attempt 上的 transition 绑定，返回真正的源 attempt。"""
+
+    binding = attempt.get("evaluation_transition")
+    if binding is None:
+        return attempt_root, dict(attempt), None, None
+    _require_file_binding(binding, "attempt 评估工具 transition")
+    raw_path = str(binding["path"])
+    parsed = PurePosixPath(raw_path)
+    if (
+        parsed.is_absolute()
+        or str(parsed) != raw_path
+        or "\\" in raw_path
+        or any(part in {"", ".", ".."} for part in parsed.parts)
+    ):
+        raise ConfigurationError("attempt 评估工具 transition 路径非法。")
+    bound_path = _campaign_file(campaign_dir, raw_path)
+    if (
+        bound_path.is_symlink()
+        or not bound_path.is_file()
+        or file_sha256(bound_path) != binding["sha256"]
+    ):
+        raise ConfigurationError("attempt 评估工具 transition 摘要漂移。")
+    match = _PHASE_EVALUATION_TRANSITION_FILE_RE.fullmatch(bound_path.name)
+    if match is None:
+        raise ConfigurationError("attempt 评估工具 transition 文件名非法。")
+    index = int(match.group("index") or "1")
+    if index < 1 or index > MAX_PHASE_EVALUATION_TRANSITIONS:
+        raise ConfigurationError("attempt 评估 transition 序号非法。")
+
+    matches: list[Path] = []
+    for current_phase, current_candidate_id, root in _campaign_attempt_roots(
+        campaign_dir
+    ):
+        if current_phase != phase or current_candidate_id != candidate_id:
+            continue
+        try:
+            if root.resolve(strict=True) == bound_path.parent.resolve(strict=True):
+                matches.append(root)
+        except (OSError, RuntimeError):
+            continue
+    if len(matches) != 1:
+        raise ConfigurationError("attempt 评估 transition 未绑定同 Campaign 的唯一源 attempt。")
+    source_root = matches[0]
+    if source_root.resolve(strict=True) == attempt_root.resolve(strict=True):
+        raise ConfigurationError("attempt 评估 transition 不得自绑定当前 attempt。")
+    expected_path = _evaluation_transition_path(source_root, index)
+    if expected_path.resolve(strict=True) != bound_path.resolve(strict=True):
+        raise ConfigurationError("attempt 评估 transition 路径与序号不一致。")
+    source_root, source_attempt = _load_capture_attempt(
+        campaign_dir,
+        phase,
+        candidate_id,
+        source_root.name,
+    )
+    return source_root, source_attempt, bound_path, index
+
+
+def _phase_evaluation_recovery_successor_operations(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    source_root: Path,
+    source_attempt: Mapping[str, Any],
+    successor_root: Path,
+    successor_attempt: Mapping[str, Any],
+    transition: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """验证失败 attempt 的补跑闭集，并返回后继可用的离线操作。
+
+    失败源 attempt 的 transition 本身只授权 ``capture-run``。补跑完成后，
+    新 attempt 必须逐项承接源 attempt 的已完成结果、只执行源 attempt 的
+    失败／未完成闭集，并以完整 checkpoint 进入 ``awaiting_receipts``；只有
+    这些事实全部成立，才能把同一份 transition 用于 seal、compare、accept
+    或 deep-verify。这里仅读取 attempt、reservation 和 checkpoint 等小型
+    控制收据，不读取原始抓包证据。
+    """
+
+    if phase not in _PHASE_EVALUATION_OPERATIONS:
+        raise ConfigurationError("评估 transition phase 非法。")
+    if source_attempt.get("status") != "failed":
+        raise ConfigurationError(
+            "只有 failed source attempt 可以把 transition 承接到后继 attempt。"
+        )
+    if successor_root.resolve(strict=True) == source_root.resolve(strict=True):
+        raise ConfigurationError("失败 source attempt 不得直接执行离线后续操作。")
+    if successor_attempt.get("status") != "awaiting_receipts":
+        raise ConfigurationError(
+            "恢复后继 attempt 未完成闭集，暂不允许 seal／compare／accept。"
+        )
+    if (
+        successor_attempt.get("phase") != phase
+        or successor_attempt.get("candidate_id") != candidate_id
+        or source_attempt.get("phase") != phase
+        or source_attempt.get("candidate_id") != candidate_id
+        or successor_attempt.get("campaign_id") != manifest.get("campaign_id")
+        or source_attempt.get("campaign_id") != manifest.get("campaign_id")
+        or _fingerprint(successor_attempt.get("identity"))
+        != _fingerprint(source_attempt.get("identity"))
+    ):
+        raise ConfigurationError("恢复后继 attempt 与失败 source 身份不一致。")
+
+    scope = transition.get("recovery_scope")
+    if not isinstance(scope, Mapping):
+        raise ConfigurationError("失败 transition 缺少恢复闭集。")
+
+    def _scope_ids(name: str) -> list[str]:
+        values = scope.get(name)
+        if (
+            not isinstance(values, list)
+            or values != sorted(set(values))
+            or not all(
+                isinstance(value, str) and SAFE_ID_RE.fullmatch(value)
+                for value in values
+            )
+        ):
+            raise ConfigurationError(f"失败 transition 的 {name} 非法。")
+        return [str(value) for value in values]
+
+    planned_ids = _scope_ids("planned_job_ids")
+    completed_ids = _scope_ids("completed_job_ids")
+    failed_ids = _scope_ids("failed_job_ids")
+    pending_ids = _scope_ids("pending_job_ids")
+    execute_ids = _scope_ids("execute_job_ids")
+    planned_set = set(planned_ids)
+    completed_set = set(completed_ids)
+    failed_set = set(failed_ids)
+    pending_set = set(pending_ids)
+    execute_set = set(execute_ids)
+    if (
+        not planned_set
+        or completed_set & execute_set
+        or completed_set & pending_set
+        or failed_set & completed_set
+        or failed_set & pending_set
+        or failed_set | pending_set != execute_set
+        or completed_set | execute_set != planned_set
+    ):
+        raise ConfigurationError("失败 transition 的 Job 闭集关系非法。")
+
+    def _planned(reservation: Mapping[str, Any], label: str) -> dict[str, str]:
+        rows = reservation.get("planned_jobs")
+        if not isinstance(rows, list) or not rows:
+            raise ConfigurationError(f"{label}缺少冻结 Job 计划。")
+        output: dict[str, str] = {}
+        for row in rows:
+            if (
+                not isinstance(row, Mapping)
+                or not isinstance(row.get("id"), str)
+                or not SAFE_ID_RE.fullmatch(str(row.get("id")))
+                or not SHA256_RE.fullmatch(str(row.get("execution_sha256", "")))
+                or row["id"] in output
+            ):
+                raise ConfigurationError(f"{label}的 Job 计划身份非法。")
+            output[str(row["id"])] = str(row["execution_sha256"])
+        return output
+
+    source_reservation = _load_capture_reservation(
+        campaign_dir,
+        source_root,
+        phase=phase,
+        candidate_id=candidate_id,
+    )
+    successor_reservation = _load_capture_reservation(
+        campaign_dir,
+        successor_root,
+        phase=phase,
+        candidate_id=candidate_id,
+    )
+    source_planned = _planned(source_reservation, "失败 source attempt ")
+    successor_planned = _planned(successor_reservation, "恢复后继 attempt ")
+    if set(source_planned) != planned_set or successor_planned != source_planned:
+        raise ConfigurationError("恢复后继 attempt 的 Job 计划超出失败闭集。")
+
+    def _results(payload: Mapping[str, Any], label: str) -> dict[str, Mapping[str, Any]]:
+        values = payload.get("results")
+        if not isinstance(values, list):
+            raise ConfigurationError(f"{label}缺少 Job 结果。")
+        output: dict[str, Mapping[str, Any]] = {}
+        for value in values:
+            if (
+                not isinstance(value, Mapping)
+                or not isinstance(value.get("id"), str)
+                or value["id"] in output
+                or value["id"] not in planned_set
+                or value.get("execution_sha256") != source_planned[value["id"]]
+            ):
+                raise ConfigurationError(f"{label}的 Job 结果身份非法。")
+            output[str(value["id"])] = value
+        return output
+
+    source_results = _results(source_attempt, "失败 source attempt ")
+    successor_results = _results(successor_attempt, "恢复后继 attempt ")
+    if set(source_results) != completed_set | failed_set:
+        raise ConfigurationError("失败 source attempt 的结果未与恢复闭集对齐。")
+    if set(successor_results) != planned_set:
+        raise ConfigurationError("恢复后继 attempt 未覆盖全部冻结 Job。")
+    if any(source_results[item].get("status") != "complete" for item in completed_ids):
+        raise ConfigurationError("失败 source attempt 的已完成 Job 状态非法。")
+    if any(source_results[item].get("status") != "failed" for item in failed_ids):
+        raise ConfigurationError("失败 source attempt 的失败 Job 状态非法。")
+
+    expected_source_receipt = {
+        "path": str((source_root / "attempt.json").relative_to(campaign_dir)),
+        "sha256": file_sha256(source_root / "attempt.json"),
+        "bytes": (source_root / "attempt.json").stat().st_size,
+    }
+
+    def _without_reuse_metadata(value: Mapping[str, Any]) -> dict[str, Any]:
+        output = dict(value)
+        for key in ("carried_from_attempt", "disposition", "source_receipt"):
+            output.pop(key, None)
+        return output
+
+    for job_id in completed_ids:
+        source_result = source_results[job_id]
+        successor_result = successor_results[job_id]
+        if (
+            successor_result.get("status") != "complete"
+            or successor_result.get("disposition") != "reused"
+            or successor_result.get("carried_from_attempt") != source_root.name
+            or successor_result.get("source_receipt") != expected_source_receipt
+            or _without_reuse_metadata(successor_result)
+            != _without_reuse_metadata(source_result)
+        ):
+            raise ConfigurationError(
+                f"恢复后继 attempt 未只读承接已完成 Job：{job_id}"
+            )
+    for job_id in execute_ids:
+        result = successor_results[job_id]
+        if result.get("status") != "complete" or result.get("disposition") != "executed":
+            raise ConfigurationError(
+                f"恢复后继 attempt 的闭集 Job 未成功执行：{job_id}"
+            )
+
+    plan = successor_attempt.get("incremental_plan")
+    if not isinstance(plan, Mapping):
+        raise ConfigurationError("恢复后继 attempt 缺少增量计划。")
+    if (
+        set(plan.get("planned_job_ids", [])) != planned_set
+        or set(plan.get("reused_job_ids", [])) != completed_set
+        or set(plan.get("executed_job_ids", [])) != execute_set
+        or set(plan.get("failed_job_ids", []))
+        or set(plan.get("pending_job_ids", []))
+    ):
+        raise ConfigurationError("恢复后继 attempt 的增量计划未完成闭集。")
+
+    checkpoint = successor_attempt.get("job_checkpoint")
+    if not isinstance(checkpoint, Mapping) or int(checkpoint.get("record_count", 0)) <= 0:
+        raise ConfigurationError("恢复后继 attempt 缺少完整 Job checkpoint。")
+    checkpoint_path = _resolve_attempt_binding(
+        campaign_dir,
+        successor_root,
+        checkpoint,
+        label="恢复后继 Job checkpoint",
+        expected_name="checkpoints",
+        directory=True,
+    )
+    assert checkpoint_path is not None
+    try:
+        records = incremental_recovery.CheckpointStore(
+            checkpoint_path,
+            create=False,
+        ).records()
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError("恢复后继 Job checkpoint 链无法重放。") from error
+    if len(records) != checkpoint.get("record_count"):
+        raise ConfigurationError("恢复后继 Job checkpoint 数量漂移。")
+    _validate_checkpoint_records(
+        records,
+        successor_attempt,
+        planned_job_ids=planned_set,
+        strict_context=True,
+    )
+    checkpoint_by_id = {str(record.get("item_id")): record for record in records}
+    if set(checkpoint_by_id) != planned_set:
+        raise ConfigurationError("恢复后继 Job checkpoint 未覆盖闭集。")
+    for job_id in completed_ids:
+        if checkpoint_by_id[job_id].get("disposition") != "reused":
+            raise ConfigurationError(
+                f"恢复后继 Job checkpoint 未记录 reused：{job_id}"
+            )
+    for job_id in execute_ids:
+        if checkpoint_by_id[job_id].get("disposition") != "executed":
+            raise ConfigurationError(
+                f"恢复后继 Job checkpoint 未记录 executed：{job_id}"
+            )
+    return tuple(_PHASE_EVALUATION_OPERATIONS[phase])
+
+
 def _build_phase_evaluation_transition_preview(
     campaign_dir: Path,
     manifest: Mapping[str, Any],
@@ -10768,8 +11478,20 @@ def _build_phase_evaluation_transition_preview(
         )
     if phase not in _PHASE_EVALUATION_OPERATIONS:
         raise ConfigurationError("评估 transition phase 非法。")
-    if attempt.get("status") != "awaiting_receipts":
-        raise ConfigurationError("评估 transition 只允许已完成请求、等待封存的 attempt。")
+    recovery_scope: dict[str, Any] | None = None
+    if attempt.get("status") == "failed":
+        # 失败 attempt 只允许在所有小型控制收据完整、checkpoint 可重放且
+        # 至少有一个已完成 Job 时原地恢复；具体执行闭集写入 transition 摘要。
+        recovery_scope = _phase_evaluation_recovery_scope(
+            campaign_dir,
+            manifest,
+            phase=phase,
+            candidate_id=candidate_id,
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+    elif attempt.get("status") != "awaiting_receipts":
+        raise ConfigurationError("评估 transition 只允许 awaiting_receipts 或可恢复的 failed attempt。")
     if (
         attempt.get("phase") != phase
         or attempt.get("candidate_id") != candidate_id
@@ -10806,10 +11528,14 @@ def _build_phase_evaluation_transition_preview(
         "from_evaluation_sha256": expected_tool["evaluation_sha256"],
         "to_evaluation_sha256": current_tool["evaluation_sha256"],
         "changed_files": changed,
-        "allowed_operations": list(_PHASE_EVALUATION_OPERATIONS[phase]),
+        "allowed_operations": list(
+            _phase_evaluation_allowed_operations(phase, attempt.get("status"))
+        ),
         "recovery_controls": dict(recovery_controls),
         "raw_evidence_scanned_bytes": 0,
     }
+    if recovery_scope is not None:
+        core["recovery_scope"] = recovery_scope
     return {
         **core,
         "status": "approval_required",
@@ -10866,6 +11592,8 @@ def _validate_phase_evaluation_transition(
         "status",
         "transition_digest",
     }
+    if attempt.get("status") == "failed":
+        expected_fields.add("recovery_scope")
     if (
         set(receipt) != expected_fields
         or receipt.get("schema_version") != TOOL_EVALUATION_TRANSITION_SCHEMA
@@ -10946,22 +11674,61 @@ def _load_phase_evaluation_transition(
 ) -> dict[str, str]:
     if set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES):
         raise ConfigurationError("评估 transition 不能放行产出侧工具漂移。")
+    source_root, source_attempt, bound_path, bound_index = (
+        _phase_evaluation_transition_source(
+            campaign_dir,
+            phase=str(attempt.get("phase", "")),
+            candidate_id=(
+                str(attempt.get("candidate_id"))
+                if attempt.get("candidate_id") is not None
+                else None
+            ),
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+    )
     transition_index = _phase_evaluation_transition_index(
-        attempt_root,
+        source_root,
         current_tool,
         allocate=False,
     )
+    if bound_index is not None and transition_index != bound_index:
+        raise ConfigurationError("attempt 评估 transition 当前工具摘要不匹配绑定槽位。")
     receipt = _validate_phase_evaluation_transition(
         campaign_dir,
         manifest,
-        attempt_root=attempt_root,
-        attempt=attempt,
+        attempt_root=source_root,
+        attempt=source_attempt,
         current_tool=current_tool,
         transition_index=transition_index,
     )
-    if operation not in receipt.get("allowed_operations", []):
+    allowed_operations = set(receipt.get("allowed_operations", []))
+    if source_attempt.get("status") == "failed" and bound_path is not None:
+        # 失败源 attempt 的 transition 默认只授权 capture-run。新 attempt
+        # 只有在完整承接／补跑闭集后，才获得本 phase 的离线后续授权；源
+        # attempt 本身永远不能借 transition 直接 seal 或 accept。
+        allowed_operations.update(
+            _phase_evaluation_recovery_successor_operations(
+                campaign_dir,
+                manifest,
+                phase=str(attempt.get("phase", "")),
+                candidate_id=(
+                    str(attempt.get("candidate_id"))
+                    if attempt.get("candidate_id") is not None
+                    else None
+                ),
+                source_root=source_root,
+                source_attempt=source_attempt,
+                successor_root=attempt_root,
+                successor_attempt=attempt,
+                transition=receipt,
+            )
+        )
+    if operation not in allowed_operations:
         raise ConfigurationError(f"评估 transition 未授权当前操作：{operation}")
-    path = _evaluation_transition_path(attempt_root, transition_index)
+    path = _evaluation_transition_path(source_root, transition_index)
+    if bound_path is not None and path.resolve(strict=True) != bound_path.resolve(strict=True):
+        raise ConfigurationError("attempt 评估 transition 绑定路径漂移。")
     return {
         "path": path.relative_to(campaign_dir).as_posix(),
         "sha256": file_sha256(path),
@@ -11070,6 +11837,10 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
             "raw_evidence_scanned_bytes": 0,
             "status": "approved",
         }
+        if "recovery_scope" in preview:
+            # 失败源 attempt 的 transition 必须把冻结的失败／未完成闭集
+            # 原样写入批准收据；后继 attempt 只能按这份不可变摘要补跑。
+            core["recovery_scope"] = preview["recovery_scope"]
         receipt = {**core, "transition_digest": _fingerprint(core)}
         _write_or_verify_json(receipt_path, receipt)
         receipt = _validate_phase_evaluation_transition(
@@ -12662,6 +13433,19 @@ def _validate_attempt_incremental_fields(
         if not isinstance(result, Mapping):
             raise ConfigurationError("attempt Job 结果必须是对象。")
         _validate_incremental_job_result(result, label=f"attempt:{result.get('id', '')}")
+    evaluation_transition = payload.get("evaluation_transition")
+    if evaluation_transition is not None:
+        _require_file_binding(evaluation_transition, "attempt 评估工具 transition")
+        raw_path = str(evaluation_transition.get("path", ""))
+        parsed = PurePosixPath(raw_path)
+        if (
+            parsed.is_absolute()
+            or str(parsed) != raw_path
+            or "\\" in raw_path
+            or any(part in {"", ".", ".."} for part in parsed.parts)
+            or _PHASE_EVALUATION_TRANSITION_FILE_RE.fullmatch(parsed.name) is None
+        ):
+            raise ConfigurationError("attempt 评估工具 transition 路径非法。")
     _validate_attempt_watchdog_fields(payload, planned_job_ids)
 
 
@@ -12798,6 +13582,18 @@ def _load_capture_attempt(
         payload,
         planned_job_ids={str(item["id"]) for item in reservation["planned_jobs"]},
     )
+    evaluation_transition = payload.get("evaluation_transition")
+    if evaluation_transition is not None:
+        transition_path = _campaign_file(
+            campaign_dir,
+            str(evaluation_transition["path"]),
+        )
+        if (
+            transition_path.is_symlink()
+            or not transition_path.is_file()
+            or file_sha256(transition_path) != evaluation_transition["sha256"]
+        ):
+            raise ConfigurationError("attempt 评估工具 transition 文件丢失或摘要漂移。")
     return attempt_root, payload
 
 
@@ -14084,7 +14880,17 @@ def _run_capture_attempt(
         str(item) for item in cheap_impact.get("changed_components", [])
     )
     prior_results: list[dict[str, Any]] = []
+    recovery_source_root: Path | None = None
+    recovery_source_attempt: dict[str, Any] | None = None
     if getattr(arguments, "rerun_failed", False):
+        source = _latest_failed_attempt_for_identity(
+            campaign_dir,
+            phase=phase,
+            candidate_id=candidate_id,
+            identity=identity,
+        )
+        if source is not None:
+            recovery_source_root, recovery_source_attempt = source
         prior_results = _prior_complete_results(
             campaign_dir,
             attempt_relative,
@@ -14146,8 +14952,11 @@ def _run_capture_attempt(
         campaign_dir,
         manifest,
         operation="capture-run",
+        attempt_root=recovery_source_root,
+        attempt=recovery_source_attempt,
         deadline=deadline,
     )
+    evaluation_transition: dict[str, str] | None = None
     if isinstance(tool_impact, Mapping):
         changed_components.update(
             str(item) for item in tool_impact.get("changed_components", [])
@@ -14162,12 +14971,44 @@ def _run_capture_attempt(
                     tool_impact.get("changed_components", []),
                 )
             )
+        if tool_impact.get("kind") == "phase_evaluation_transition":
+            bound = tool_impact.get("evaluation_transition")
+            if not isinstance(bound, Mapping):
+                raise ConfigurationError("恢复 transition 缺少受控文件绑定。")
+            evaluation_transition = {
+                "path": str(bound.get("path", "")),
+                "sha256": str(bound.get("sha256", "")),
+            }
+            _require_file_binding(evaluation_transition, "恢复评估工具 transition")
+            scope = tool_impact.get("recovery_scope")
+            if not isinstance(scope, Mapping):
+                raise ConfigurationError("恢复 transition 缺少失败 Job 闭集。")
+            expected_execute = {
+                str(item) for item in scope.get("execute_job_ids", [])
+            }
+            actual_execute = {job.job_id for job in jobs}
+            if actual_execute != expected_execute:
+                raise ConfigurationError(
+                    "恢复 transition 的失败 Job 闭集与本轮计划不一致："
+                    f"expected={sorted(expected_execute)}, actual={sorted(actual_execute)}"
+                )
+            reused_ids = {str(item.get("id")) for item in prior_results}
+            expected_completed = {
+                str(item) for item in scope.get("completed_job_ids", [])
+            }
+            if reused_ids != expected_completed:
+                raise ConfigurationError(
+                    "恢复 transition 的已完成 Job 未被完整只读承接。"
+                )
     else:
         tool_impact = cheap_impact
     incremental_transition: dict[str, Any] | None = None
     if (
         isinstance(tool_impact, Mapping)
-        and tool_impact.get("kind") == "component_drift"
+        and tool_impact.get("kind") in {
+            "component_drift",
+            "phase_evaluation_transition",
+        }
         and set(str(item) for item in tool_impact.get("changed_components", []))
         .issubset({"orchestrator", "evaluator"})
     ):
@@ -14637,6 +15478,7 @@ def _run_capture_attempt(
                 else None
             ),
             "incremental_tool_transition": incremental_transition,
+            "evaluation_transition": evaluation_transition,
             "incremental_plan": {
                 "schema_version": incremental_recovery.SCHEMA_VERSION,
                 "planned_job_ids": sorted(job.job_id for job in planned_jobs),

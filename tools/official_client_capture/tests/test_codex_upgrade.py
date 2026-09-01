@@ -903,6 +903,308 @@ class CodexUpgradeTest(unittest.TestCase):
             ):
                 codex_upgrade.create_phase_evaluation_transition(arguments)
 
+    def test_failed_transition_keeps_source_capture_only_and_unlocks_closed_successor(self) -> None:
+        """失败源只可补跑；后继闭集完成后才可进入离线阶段。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign = root / "campaign"
+            source_root = campaign / "official" / "attempts" / "source"
+            successor_root = campaign / "official" / "attempts" / "successor"
+            for path in (campaign, source_root, successor_root):
+                path.mkdir(parents=True, exist_ok=True)
+                path.chmod(0o700)
+            source_attempt_path = source_root / "attempt.json"
+            successor_attempt_path = successor_root / "attempt.json"
+            source_attempt_path.write_text("source\n", encoding="utf-8")
+            successor_attempt_path.write_text("successor\n", encoding="utf-8")
+            campaign_id = "transition-recovery"
+            identity = {"identity": "same"}
+            planned = {
+                "job-a": "a" * 64,
+                "job-b": "b" * 64,
+                "job-c": "c" * 64,
+            }
+
+            def result(job_id: str, status: str, disposition: str = "executed") -> dict[str, object]:
+                return {
+                    "id": job_id,
+                    "phase": "official",
+                    "required": True,
+                    "execution_sha256": planned[job_id],
+                    "status": status,
+                    "disposition": disposition,
+                    "incremental_result_key": "d" * 64,
+                    "evidence_roots": [],
+                }
+
+            source_results = [result("job-a", "complete"), result("job-b", "failed")]
+            scope = {
+                "planned_job_ids": ["job-a", "job-b", "job-c"],
+                "completed_job_ids": ["job-a"],
+                "failed_job_ids": ["job-b"],
+                "pending_job_ids": ["job-c"],
+                "execute_job_ids": ["job-b", "job-c"],
+            }
+            expected_source_receipt = {
+                "path": str(source_attempt_path.relative_to(campaign)),
+                "sha256": codex_upgrade.file_sha256(source_attempt_path),
+                "bytes": source_attempt_path.stat().st_size,
+            }
+            successor_results = [
+                {
+                    **source_results[0],
+                    "disposition": "reused",
+                    "carried_from_attempt": source_root.name,
+                    "source_receipt": expected_source_receipt,
+                },
+                result("job-b", "complete"),
+                result("job-c", "complete"),
+            ]
+            checkpoint_root = successor_root / "checkpoints"
+            checkpoint_root.mkdir(mode=0o700)
+            checkpoint_store = codex_upgrade.incremental_recovery.CheckpointStore(
+                checkpoint_root
+            )
+            for item in successor_results:
+                previous = checkpoint_store.records()
+                checkpoint_store.append(
+                    {
+                        "checkpoint_schema_version": codex_upgrade.JOB_CHECKPOINT_SCHEMA,
+                        "campaign_id": campaign_id,
+                        "phase": "official",
+                        "attempt_id": successor_root.name,
+                        "run_nonce": "e" * 64,
+                        "item_id": item["id"],
+                        "status": "complete",
+                        "disposition": item["disposition"],
+                        "result_sha256": codex_upgrade.incremental_recovery.digest(item),
+                        "result_key": item["incremental_result_key"],
+                        "result": item,
+                        "previous_checkpoint_sha256": (
+                            previous[-1]["checkpoint_sha256"] if previous else None
+                        ),
+                    }
+                )
+            checkpoint = {
+                "path": "checkpoints",
+                "record_count": len(checkpoint_store.records()),
+            }
+            source_attempt = {
+                "campaign_id": campaign_id,
+                "phase": "official",
+                "candidate_id": None,
+                "status": "failed",
+                "attempt_id": source_root.name,
+                "run_nonce": "f" * 64,
+                "identity": identity,
+                "results": source_results,
+            }
+            successor_attempt = {
+                "campaign_id": campaign_id,
+                "phase": "official",
+                "candidate_id": None,
+                "status": "awaiting_receipts",
+                "attempt_id": successor_root.name,
+                "run_nonce": "e" * 64,
+                "identity": identity,
+                "results": successor_results,
+                "incremental_plan": {
+                    "planned_job_ids": scope["planned_job_ids"],
+                    "reused_job_ids": scope["completed_job_ids"],
+                    "executed_job_ids": scope["execute_job_ids"],
+                    "failed_job_ids": [],
+                    "pending_job_ids": [],
+                },
+                "job_checkpoint": checkpoint,
+            }
+            reservations = {
+                source_root: {"planned_jobs": [
+                    {"id": job_id, "execution_sha256": digest}
+                    for job_id, digest in planned.items()
+                ]},
+                successor_root: {"planned_jobs": [
+                    {"id": job_id, "execution_sha256": digest}
+                    for job_id, digest in planned.items()
+                ]},
+            }
+            transition = {"recovery_scope": scope}
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_reservation",
+                    side_effect=lambda _campaign, attempt_root, **_kwargs: reservations[attempt_root],
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_resolve_attempt_binding",
+                    return_value=checkpoint_root,
+                ),
+            ):
+                allowed = codex_upgrade._phase_evaluation_recovery_successor_operations(
+                    campaign,
+                    {"campaign_id": campaign_id},
+                    phase="official",
+                    candidate_id=None,
+                    source_root=source_root,
+                    source_attempt=source_attempt,
+                    successor_root=successor_root,
+                    successor_attempt=successor_attempt,
+                    transition=transition,
+                )
+            self.assertEqual(
+                allowed,
+                ("capture-official-seal", "deep-verify"),
+            )
+
+            source_attempt["status"] = "awaiting_receipts"
+            with self.assertRaisesRegex(
+                codex_upgrade.ConfigurationError,
+                "只有 failed source attempt",
+            ):
+                with mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_reservation",
+                    side_effect=lambda _campaign, attempt_root, **_kwargs: reservations[attempt_root],
+                ):
+                    codex_upgrade._phase_evaluation_recovery_successor_operations(
+                        campaign,
+                        {"campaign_id": campaign_id},
+                        phase="official",
+                        candidate_id=None,
+                        source_root=source_root,
+                        source_attempt=source_attempt,
+                        successor_root=successor_root,
+                        successor_attempt=successor_attempt,
+                        transition=transition,
+                    )
+
+            source_attempt["status"] = "failed"
+            successor_results[0]["disposition"] = "executed"
+            with self.assertRaisesRegex(
+                codex_upgrade.ConfigurationError,
+                "未只读承接",
+            ):
+                with (
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_load_capture_reservation",
+                        side_effect=lambda _campaign, attempt_root, **_kwargs: reservations[attempt_root],
+                    ),
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_resolve_attempt_binding",
+                        return_value=checkpoint_root,
+                    ),
+                ):
+                    codex_upgrade._phase_evaluation_recovery_successor_operations(
+                        campaign,
+                        {"campaign_id": campaign_id},
+                        phase="official",
+                        candidate_id=None,
+                        source_root=source_root,
+                        source_attempt=source_attempt,
+                        successor_root=successor_root,
+                        successor_attempt=successor_attempt,
+                        transition=transition,
+                    )
+
+    def test_failed_transition_authorization_does_not_widen_source_attempt(self) -> None:
+        """同一 transition 在源 attempt 上仍严格限制为 capture-run。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = Path(directory) / "campaign"
+            source_root = campaign / "official" / "attempts" / "source"
+            successor_root = campaign / "official" / "attempts" / "successor"
+            source_root.mkdir(parents=True)
+            successor_root.mkdir(parents=True)
+            transition_path = source_root / "evaluation-transition.json"
+            transition_path.write_text("{}\n", encoding="utf-8")
+            source_attempt = {
+                "phase": "official",
+                "candidate_id": None,
+                "status": "failed",
+            }
+            current_tool = {"files_sha256": "b" * 64}
+            drift = {"production": [], "evaluation": ["codex_upgrade.py"]}
+            receipt = {"allowed_operations": ["capture-run"]}
+
+            common = (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_evaluation_transition_index",
+                    return_value=1,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_validate_phase_evaluation_transition",
+                    return_value=receipt,
+                ),
+            )
+            with common[0], common[1], mock.patch.object(
+                codex_upgrade,
+                "_phase_evaluation_transition_source",
+                return_value=(source_root, source_attempt, None, None),
+            ):
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    "未授权当前操作",
+                ):
+                    codex_upgrade._load_phase_evaluation_transition(
+                        campaign,
+                        {"campaign_id": "campaign"},
+                        attempt_root=source_root,
+                        attempt=source_attempt,
+                        operation="capture-official-seal",
+                        current_tool=current_tool,
+                        drift=drift,
+                    )
+
+            successor_attempt = {
+                "phase": "official",
+                "candidate_id": None,
+                "status": "awaiting_receipts",
+                "evaluation_transition": {
+                    "path": str(transition_path.relative_to(campaign)),
+                    "sha256": codex_upgrade.file_sha256(transition_path),
+                },
+            }
+            with (
+                common[0],
+                common[1],
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_evaluation_transition_source",
+                    return_value=(
+                        source_root,
+                        source_attempt,
+                        transition_path,
+                        1,
+                    ),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_evaluation_recovery_successor_operations",
+                    return_value=("capture-official-seal", "deep-verify"),
+                ),
+            ):
+                binding = codex_upgrade._load_phase_evaluation_transition(
+                    campaign,
+                    {"campaign_id": "campaign"},
+                    attempt_root=successor_root,
+                    attempt=successor_attempt,
+                    operation="capture-official-seal",
+                    current_tool=current_tool,
+                    drift=drift,
+                )
+            self.assertEqual(
+                binding,
+                {
+                    "path": "official/attempts/source/evaluation-transition.json",
+                    "sha256": codex_upgrade.file_sha256(transition_path),
+                },
+            )
+
     def test_campaign_loader_rejects_missing_invalid_and_tampered_mode(self) -> None:
         for mutation, update_digest, message in (
             ("missing", True, "campaign_mode"),

@@ -1353,9 +1353,16 @@ Job 合同必须以恢复 preflight 的当前受管场景重算，同时保留�
 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger、ARM64 收据和完整 Job 演练。
 若原 attempt 已完成 live 请求、Kilo 后检查点完整且证据字节未变，严格按下列顺序恢复：
 
-1. `evaluation-transition` 两步批准，绑定旧停线 checkpoint、新 Ledger、ARM64 收据和 Job 演练；
-2. `deep-verify` 只为缺少 manifest 的 imported official／classify 建立 checkpoint；
-3. 返回原 attempt 执行 §4.4.3 的 seal 预览和批准，再继续 compare／accept。
+1. `evaluation-transition` 两步批准，绑定旧停线 checkpoint、新 Ledger、ARM64 收据和完整 Job 演练；
+   失败 partial attempt 允许建立 transition，但源 attempt 的授权仅为 `capture-run`。
+2. 用 `resume --rerun-failed` 创建绑定同一 transition 的新 attempt；只复用源 attempt 已完成 Job，执行
+   失败／未完成闭集。新 attempt 必须以完整 checkpoint 覆盖源计划、无额外执行项并进入 `awaiting_receipts`；
+   源 attempt 永远不能直接 seal。
+3. 仅为缺少 manifest 的 imported official／classify 建立一次 `deep-verify` checkpoint；恢复 attempt 的
+   seal、`deep-verify`、compare 和 accept 才能使用该 transition，且仍为离线操作。
+
+失败项为空时在 reservation 前立即写 `incremental-noop` 并成功退出：不创建 reservation／attempt，不启动
+容器或探针，不读取大证据，不发请求；该收据不改变阶段状态。
 
 ~~~bash
 python3 tools/official_client_capture/codex_upgrade.py evaluation-transition \
