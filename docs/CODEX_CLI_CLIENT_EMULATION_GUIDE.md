@@ -1236,8 +1236,9 @@ transition；合并后必须从干净 HEAD 执行 P0。P0 只发现阻断，不�
 `candidate_rule_expectations_0_149_1.json`、`codex_upgrade_scenarios_0_147_0.json`、
 `codex_upgrade_scenarios_0_149_1.json`，规范锚点与依赖基线统一使用
 `tools/spec_ref_anchors.json` 和 `tools/spec_source_deps/manifest.json`。这些文件只提供目标版本和工具能力输入；该次 DOC-PRE 冻结的
-历史 production active／previous 为 0.147.0／0.145.0，当前值必须从文首基线、Runtime Catalog 和最新
-有效激活收据共同复算，不能据 DOC-PRE 文件推断 Catalog 晋升、生产激活或部署完成。
+历史 production active／previous 为 0.147.0／0.145.0，仅用于解释旧收据。0.145 已在 0.149.1 升级后
+退出，本次不得恢复、删除或处理；当前 previous 只允许 0.147。当前值必须从文首基线、Runtime Catalog
+和最新有效激活收据共同复算，不能据历史 DOC-PRE 文件推断运行状态。
 
 | 类别 | P0 通过条件 |
 |---|---|
@@ -1257,6 +1258,7 @@ P0 还必须执行以下机器预检；临时画像和合成证据只验证工�
 | 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本；逐项复算 test fact map 的测试／源码 SHA-256；目标版本证据标签声明必须逐 Job 精确覆盖正式清单，禁止遗留版本硬编码 |
 | 执行身份 | 逐字核对受管工具树与实际执行副本；确认候选源码、测试树、目标架构和镜像构建输入可形成同源摘要链 |
 | 官方证据 | 按 Framework §5.3.5 冻结并验证唯一 `reuse／recapture` 决定 |
+| 成本模型 | 用不小于本次最大证据集的 ARM64 夹具测量完整扫描；证明 preview 只扫描一次，批准、`status` 和 successor 的原始证据扫描字节均为 0 |
 | ARM64 执行 | 逐项通过 §4.0.5 的网络、运行时、模型目录、坐标、依赖、时间和存储门禁 |
 
 所有 P0 输出都必须带输入和工具摘要、原始错误、退出码及临时资产 inventory；无法证明通过的
@@ -1326,24 +1328,26 @@ official surface；旧分类结果只作为被纠正事实绑定摘要，不复�
 官方／分类事实；每个后继 Campaign 必须通过 `--codex-account-id` 重新显式选择当前可用账号。
 工具只允许这一项运行配置改变，并在 v2 `predecessor-import.json` 中冻结前序值、后继值和原因；
 历史 v1 收据仍按“配置逐字不变”只读重放。该命令只逐字复制计划期 inputs／analysis、五份批准
-清单和规范化 official surface，并生成 `predecessor-import.json`。原始官方 evidence、attempt、
-inventory 与安全收据继续位于前序 Campaign，保持只读；后继的 `status`、`compare`、`accept`
-每次都从前序路径重放 Campaign manifest、官方 stage seal、证据 inventory／security、批准五件套
-及其联合摘要；多级后继必须递归回到最初官方 attempt 的原始绝对 Campaign 目录校验，禁止把上游
-相对 attempt 路径重新解释到中间后继目录。任一路径、文件摘要、package digest 或原始证据漂移均失败关闭。后继 Campaign
+清单和规范化 official surface，并生成 `predecessor-import.json`。原始官方 evidence 与 attempt 继续
+位于前序 Campaign，保持只读；后继只绑定直接前序 checkpoint、`EvidenceManifest` 根摘要、阶段 seal
+和批准联合摘要。`status`、`compare`、`accept` 只重放这条小型摘要链，不递归读取任一级原始 evidence。
+前序没有可信 manifest 时，必须在创建 successor 前执行唯一一次显式 `deep-verify` 建立迁移 checkpoint。
+任一路径、manifest 根摘要、package digest 或不可变边界漂移均失败关闭。后继 Campaign
 普通运行时纠正后继只能新跑 candidate 与第三方客户端验证；分类事实纠正后继允许重新批准规则、
 场景、画像和断言，但仍不得改变目标版本、官方身份或已封存官方证据语义。后面三项发生变化时
 必须按版本 Campaign 重新执行相应阶段。
+
+successor 不得用于超时、扫描过慢、评估侧工具修复或临时失败，也不得由工具自动创建。同一根因最多
+允许一次人工批准的 successor；后继再次命中同一根因时必须停线，禁止继续形成 rN 链。
 
 若后继由产出侧工具变化触发，先按 §4.0.5 用当前工具建立恢复用 `preflight_only` 并完成完整 Job
 演练，再在 `successor` 命令追加 `--job-rehearsal-root <root> --job-rehearsal-receipt <receipt>`。
 工具会按后继当前执行合同重放收据并替换旧绑定；缺少、部分提供或合同不一致均失败关闭。
 
-旧 Ledger 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger 和 ARM64 收据。
-`successor` 还须成组提供 `--predecessor-stop-ledger-dir/--predecessor-stop-receipt`、
-`--recovery-timing-ledger-dir/--recovery-timing-receipt` 与
-`--recovery-arm64-environment-root/--recovery-arm64-environment-receipt`；工具会验证新演练来自同一 preflight。
-新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`；不得再追加同阶段 `stage_started`。
+旧 Ledger 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger 和 ARM64 收据。若原
+attempt 已完成 live 请求、Kilo 后检查点完整且证据字节未变，受管评估工具 transition 可以在原
+Campaign／attempt 上创建首份 `EvidenceManifest` 并继续 seal；不得重发 91 个请求，也不得新建
+successor。新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`；不得再追加同阶段 `stage_started`。
 
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；
@@ -1388,8 +1392,10 @@ Campaign 工具状态只按以下顺序前进：
 planned → official_sealed → profile_approved → candidate_sealed → compared → ready
 ~~~
 
-`status` 只读推导状态；`resume` 只能为身份未变化的允许重试创建 attempt。`ready` 之后的
-promotion、activation 和 rollback 不改变 Campaign 状态，由生产收据独立证明。
+`status` 只读推导状态且必须是廉价操作：只读取 Campaign、阶段收据、checkpoint 和 manifest，禁止
+递归枚举或重哈希原始证据。完整内容复验只能显式执行 `deep-verify`；`resume` 只能为身份未变化的
+允许重试创建 attempt。`ready` 之后的 promotion、activation 和 rollback 不改变 Campaign 状态，由
+生产收据独立证明。
 
 Campaign 状态与 candidate 的生产状态相互独立。生产状态按 candidate 单调记录：
 
@@ -1427,6 +1433,7 @@ candidate 必须由最新有效激活收据、运行容器 digest 和 activation
 | post-promotion gate receipt | 已实现 | 同一工具生成并独立重放 `post_promotion` 收据，绑定 acceptance、promotion、production tree 和目标架构；六项固定门禁均须零失败、零跳过 |
 | production activation receipt | 已实现 | `production_activation_receipt.py` v2 强制消费 promotion、post-promotion gate、acceptance、production tree 和四阶段原始事实，生成不可覆盖收据并独立重放；历史 v1／K80 收据只证明当时事实 |
 | 时间、ARM64 环境与门禁承接 | 条件就绪 | 相关工具可生成并重放收据；只有目标版本全部生成 Job 通过 ARM64 离线演练后，才可视为已实现 |
+| 单次深度验证与廉价状态 | 修复前阻断 | preview 必须生成 `EvidenceManifest` 和冻结 seal 草案；批准、`status`、compare、accept、successor 的原始证据扫描字节必须为 0；另提供显式 `deep-verify` |
 | 官方 Release 制品取得 | 已实现 | `codex_upgrade_official_asset_receipt.py` 逐个预连接 CDN IPv4，冻结 Release metadata、asset 摘要、证书和唯一精确地址；离线重放通过后才能下载 |
 | 第三方客户端绑定 | 当前固定为 Kilo 双入口 | 工具和 Schema 明确要求 `kilo-compatible`、`kilo-responses`，文档不得单独泛化 |
 
@@ -1483,6 +1490,11 @@ ARM64 的 Go 固定使用 `/root/oauth-capture/state/local/go1.27.0/bin`；构�
 | 完整 Job 演练 | 展开目标版本全部官方／candidate Job，在 ARM64 实际 `capture-cli` 内逐项验证路径、依赖、环境变量、Job 身份和执行树摘要；演练不得发送官方请求 |
 
 完整 Job 演练必须生成并重放工具就绪收据。任一 Job 未通过时禁止创建 Formal Campaign；修复后须重新完整演练并冻结工具摘要。
+
+P0 还必须在 ARM64 使用不小于本次最大 evidence set 的实规模夹具（本轮至少 45 GiB）验证：廉价前检
+失败时读取 0 字节；preview 完整扫描恰好一次；批准、普通 `status` 和 successor 读取原始证据 0 字节；
+同一根因的第二个 successor 被拒绝；中断后从 checkpoint 续作而不是重跑。每项记录字节数和墙钟，任一
+最坏耗时无法装入 Framework §5.3.5 预算即为 P0 阻断。该测试不得改变两张固定 Docker 网络或公网出口。
 演练合同还必须绑定目标版本证据标签声明摘要，并验证声明与正式 official／candidate Job 集逐项完全一致；缺失、多余或旧版本声明均在 P0 失败关闭。
 
 执行顺序固定为：先创建 `preflight_only` Campaign，再在 ARM64 运行以下三个离线命令；`collect` 只做路径、
@@ -1763,7 +1775,7 @@ Kilo Responses 的 `@ai-sdk/openai` provider 必须显式设置 `options.websock
    observed-profile 和两份 Kilo 收据。`build_*` 产物只是 finalizer 输入，不能直接提交给 seal；
    正式收据必须由受管 finalizer 生成。activation fact 必须由运行服务产生；测试 trace 必须来自
    同源树上的冻结测试日志，生成器不得合成二者。
-3. **生成预览**：
+3. **生成预览并完成唯一深度扫描**：
 
    ~~~bash
    python3 tools/official_client_capture/codex_upgrade.py capture-candidate seal \
@@ -1778,9 +1790,17 @@ Kilo Responses 的 `@ai-sdk/openai` provider 必须显式设置 `options.websock
      --client-evidence kilo-responses=/绝对路径/kilo-responses-receipt.json
    ~~~
 
-   工具重验身份、任务、时间窗、恢复、安全、inventory 和机器断言，返回 `review_sha256`。
-4. **批准封存**：人工复核预览，以相同参数追加
-   `--approve-seal-sha256 <review_sha256>`；Campaign 进入 `candidate_sealed`。
+   工具先检查路径、符号链接、权限、属主、磁盘、身份和必需收据；任何廉价检查失败时不得读取原始
+   内容。通过后只进行一次完整扫描，生成只写一次的 `evidence-manifest.json`、`seal-draft.json` 和
+   `seal-preview.json`，记录扫描字节、耗时和根摘要并返回 `review_sha256`。扫描中断时从逐文件
+   checkpoint 继续，已完成且边界未变的条目不得重新读取。
+4. **批准封存**：人工复核预览后，只用 Campaign、candidate、attempt、用途和
+   `--approve-seal-sha256 <review_sha256>` 批准。批准阶段只验证冻结草案、manifest 根摘要和不可变
+   stat 边界，`scanned_bytes=0`；不得重新生成 surface、inventory 或 secret scan。通过后 Campaign
+   进入 `candidate_sealed`。
+
+普通 `status`、compare、accept 和 successor 都只重放 manifest／摘要链。只有人工明确要求内容复验时
+才执行 `deep-verify`；该命令重新哈希并与既有 manifest 比较，但不覆盖任何历史文件。
 
 四路输入的路径和来源固定如下：
 

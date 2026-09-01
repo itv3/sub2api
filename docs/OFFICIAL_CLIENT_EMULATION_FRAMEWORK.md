@@ -384,10 +384,18 @@ candidate 或批准事实。
   递归和删除历史证据。
 - 代理取证须在 P0 验证目标版本的代理路由策略。若目标客户端默认关闭系统代理，采集 Job 必须显式绑定
   仅影响取证路由的开关，并在删除临时目录前把失败原因写入 attempt 日志；不得用反复 live 重试代替诊断。
+- 深度读取前先完成路径、符号链接、权限、属主、磁盘、身份和必需收据等廉价检查；廉价检查失败时
+  `scanned_bytes` 必须为 0。对同一不可变 attempt 只允许一次完整内容扫描，产出逐文件
+  `EvidenceManifest`、根摘要和不可变边界收据；后续 seal 批准、`status`、compare、accept 和 successor
+  只验证上述小型收据，不得再次递归读取原始证据。
+- `status` 必须是廉价只读操作；完整重哈希只能由显式 `deep-verify` 触发。任何普通状态查询、恢复判断
+  或 successor 创建都不得隐式调用 `deep-verify`。
 
 预算到期必须保存最后合法身份并输出阶段、根因、墙钟、重试／live 请求计数、资源水位、最后成功收据及
 唯一下一动作。缺少可重放的计时、连续性或资源收据时只能停在首阶段；客户端升级的固定预算见 §5.3.5。
 计时事件的 `live_request_count` 只记录自上一事件以来的新增请求数，不得重复填写 Campaign 累计值。
+每个阶段完成后必须立即汇总开始时间、结束时间、实际耗时、live 请求数、完整扫描次数、扫描／复用字节数
+和下一阶段；不得等到升级结束后补写。
 
 ## 5.2 合并 Sub2API 上游更新
 
@@ -621,11 +629,18 @@ ready_for_operator_release
 - 前序官方证据仍可信时，后继必须以受管收据只读承接：仅修正 candidate 运行时身份时从 `VC-4` 继续；
   分类事实纠正时从 `VC-2` 重做分类与批准。缺少必要官方事实、官方身份变化或证据语义失真才返回 `VC-1`
   重新取证。
-- `VC-1` 以后发现产出侧工具变化时，旧 Formal 不得用新工具续跑。允许在当前 active 阶段新建只离线
-  运行的 `preflight_only`，重做 P0 和完整 Job 演练；它不推进阶段。新 Formal `plan` 仍只允许 `VC-0`，
-  已有官方事实则由客户端受管 `successor` 绑定当前执行合同和新演练收据后继续。
-- 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复 P0 使用新 Ledger，`successor` 必须同时
-  绑定旧停线 checkpoint、新计时／ARM64 收据和新演练。新 Ledger 不得删除或改写旧耗时与 live 请求总数。
+- `successor` 只处理规则、画像、场景、产出语义或冻结运行身份变化；超时、性能问题、评估侧工具修复和
+  普通临时失败不得创建 successor。工具不得自动创建 successor，同一根因最多允许一次人工批准的
+  successor；后继再次命中同一根因必须停线。
+- `VC-1` 以后发现工具缺陷时先 `stop_the_line`，在独立 `preflight_only` 完成修复、离线回归和实规模
+  演练。若原 attempt 已完成 live 请求、检查点完整且证据字节未变，允许用受管评估工具 transition 在
+  原 Campaign／attempt 上生成首份 `EvidenceManifest` 并续作；不得重发请求或新建 candidate／Campaign。
+- successor 只绑定直接前序的 checkpoint、`EvidenceManifest` 根摘要和 transition 收据。前序尚无可信
+  manifest 时只允许一次显式 `deep-verify` 建立迁移 checkpoint；此后多级历史只验证摘要链，禁止递归
+  重扫任一级原始证据。
+- 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复使用新 Ledger，并绑定旧停线 checkpoint、
+  新计时／ARM64 收据和新演练。新 Ledger 不得删除或改写旧耗时与 live 请求总数，也不得以恢复为由
+  创建 successor。
 - 证据 producer 换版时，新事实只能由新版本生成；已登记的旧摘要必须保留原算法只读重放，禁止用新算法
   改写旧结论，未登记旧摘要继续失败关闭。
 - 任一阶段失败或摘要漂移时保留旧制品和收据，按状态机回到最近合法身份；不得覆盖、跳过门禁或手工清除
@@ -651,6 +666,11 @@ ready_for_operator_release
 `UpgradeTimingLedger`；P0 还须冻结唯一 `reuse／recapture` 决定。身份、摘要、原始字节、安全和场景覆盖
 均可信时只读复用；仅缺少必要事实、官方身份变化或证据语义失真允许重抓，candidate、账号或模型变化
 不构成理由。
+
+P0 必须用目标环境的实际证据规模测量完整扫描吞吐量，并为唯一一次 `deep-verify` 计算最坏耗时；阶段预算
+不得小于该已测上限。若测算后总计会超过 6 小时，P0 直接阻断，先优化工具或拆分显式 manifest 边界，
+不得进入 live 阶段。预算到期只允许停线和原地 checkpoint 恢复，禁止用 successor 重置计时。seal 预览
+可执行该阶段唯一一次完整扫描；批准 seal 的 `scanned_bytes` 必须为 0。
 
 ## 5.4 修改共享合同或共享运行时
 
