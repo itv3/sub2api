@@ -5220,6 +5220,9 @@ _EVALUATION_SIDE_FILES = frozenset(
         "candidate_capture_manifest.schema.json",
         # 对已完成 attempt 做单次 hash／secret scan，并生成只读 manifest；不发送请求。
         "codex_upgrade_evidence_manifest.py",
+        # finalizer 只按已封存输入重放/校验收据；历史 producer 的工作树根迁移
+        # 不改变证据字节，故归入评估侧，允许阶段限定的离线承接。
+        "codex_upgrade_receipt_finalizer.py",
         # seal 预览与阶段收据 schema 只约束评估结果，不参与采集 Job。
         "codex_upgrade_seal_preview.schema.json",
         "codex_upgrade_stage_result.schema.json",

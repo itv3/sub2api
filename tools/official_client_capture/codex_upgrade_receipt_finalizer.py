@@ -42,6 +42,18 @@ CLIENT_REQUEST_PROOF_SCHEMA = "codex-egress-client-request-evidence/v1"
 CLIENT_RESPONSE_PROOF_SCHEMA = "codex-egress-client-response-evidence/v1"
 STATE_SCHEMA = "codex-candidate-normalized-state/v1"
 
+# 收据会在不同的受管工作树之间迁移；绝对根目录不是 producer 身份的一部分。
+# 新收据仍只由当前文件生成，历史收据重放仅接受已登记且内容寻址的旧版本。
+PRODUCER_TOOL_RELATIVE = (
+    "tools/official_client_capture/codex_upgrade_receipt_finalizer.py"
+)
+LEGACY_REPLAY_PRODUCER_HASHES = frozenset(
+    {
+        # 0.151 ARM64 取证期间使用的同字节 finalizer（仅允许只读重放）。
+        "06fe9886cf3bdab552dc61e556011bf8377f04389fa52a3536a457636052d788",
+    }
+)
+
 MAX_JSON_BYTES = 16 * 1024 * 1024
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
@@ -846,6 +858,23 @@ def _producer(
         "input_bindings": input_bindings,
     }
     return {**core, "command_sha256": _fingerprint(core)}
+
+
+def _producer_tool_coordinate(value: Any) -> tuple[str, ...] | None:
+    """提取 producer 的受管相对坐标，忽略可迁移的工作树绝对根。"""
+
+    if not isinstance(value, str) or not value.startswith("/"):
+        return None
+    parsed = PurePosixPath(value)
+    relative = PurePosixPath(PRODUCER_TOOL_RELATIVE).parts
+    if (
+        str(parsed) != value
+        or any(part in {"", ".", ".."} for part in parsed.parts)
+        or len(parsed.parts) < len(relative)
+        or parsed.parts[-len(relative) :] != relative
+    ):
+        return None
+    return relative
 
 
 def _output_location(
@@ -1906,10 +1935,16 @@ def _validate_replay_producer(
         raise ReceiptFinalizerError("producer.tool 必须是对象")
     _expect_exact(tool, {"path", "sha256"}, "producer.tool")
     tool_path = Path(__file__).resolve(strict=True)
-    if tool.get("path") != str(tool_path):
-        raise ReceiptFinalizerError("producer.tool.path 不是当前 finalizer")
-    if tool.get("sha256") != _file_sha256(tool_path):
-        raise ReceiptFinalizerError("producer.tool.sha256 与当前 finalizer 不一致")
+    tool_coordinate = _producer_tool_coordinate(tool.get("path"))
+    current_coordinate = _producer_tool_coordinate(str(tool_path))
+    tool_sha256 = tool.get("sha256")
+    if tool_coordinate is None or tool_coordinate != current_coordinate:
+        raise ReceiptFinalizerError("producer.tool.path 不是受管 finalizer 坐标")
+    if not isinstance(tool_sha256, str) or not SHA256_RE.fullmatch(tool_sha256):
+        raise ReceiptFinalizerError("producer.tool.sha256 格式非法")
+    current_sha256 = _file_sha256(tool_path)
+    if tool_sha256 != current_sha256 and tool_sha256 not in LEGACY_REPLAY_PRODUCER_HASHES:
+        raise ReceiptFinalizerError("producer.tool.sha256 不是已登记 finalizer")
 
     command_sha256 = _sha256(
         producer.get("command_sha256"),
@@ -1981,6 +2016,11 @@ def replay_receipt(
     else:
         recomputed = finalize_kilo_binding(arguments, write_output=False)
     receipt = _reload_same(root, receipt, "待重放收据")
+    # 重放可迁移的历史收据时，算法结果必须与当前代码一致，但 producer
+    # 的历史绝对路径和摘要本身是只读事实，不能被当前工作树改写。
+    if isinstance(recomputed, dict) and isinstance(receipt.payload.get("producer"), dict):
+        recomputed = dict(recomputed)
+        recomputed["producer"] = receipt.payload["producer"]
     if recomputed != receipt.payload:
         raise ReceiptFinalizerError("收据内容与只读重放结果不一致")
     return recomputed

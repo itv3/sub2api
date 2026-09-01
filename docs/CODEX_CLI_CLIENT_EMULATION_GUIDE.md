@@ -1382,6 +1382,10 @@ transition、imported checkpoint、seal 批准、`status`、compare 和 accept �
 新建 successor。新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`，不得再追加同阶段
 `stage_started`。
 
+机器 finalizer 收据的 producer 绑定使用受管相对坐标和已登记摘要，不绑定生成时工作树的绝对根；
+重放时保留历史 producer 字段并重新计算业务结果。坐标或摘要未登记仍失败关闭，工作树迁移本身不使
+已完成 Job 失效，也不触发官方请求重发。
+
 历史 Inventory 与新 manifest 只允许排序差异：去重后的 `(path,size,sha256)` 全集和安全结论必须完全
 一致，旧 Inventory 摘要保持不变。若已批准 transition 后才发现新的评估侧缺陷，停线该控制链；每次
 修复均须用新 Ledger、P0、完整 Job 演练和上述全链离线回归追加替代 transition，禁止覆盖旧 transition。

@@ -542,6 +542,60 @@ class ReceiptFinalizerTests(unittest.TestCase):
         with self.assertRaises(finalizer.ReceiptFinalizerError):
             finalizer.replay_receipt(output, self.root, "restoration")
 
+    def test_replay_restoration_accepts_registered_relocated_producer(self) -> None:
+        self.assertEqual(self._run(self._restoration_argv()), 0)
+        output = self.root / "restoration-report.json"
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        payload["producer"]["tool"]["path"] = (
+            "/root/archived-worktree/tools/official_client_capture/"
+            "codex_upgrade_receipt_finalizer.py"
+        )
+        payload["producer"]["tool"]["sha256"] = next(
+            iter(finalizer.LEGACY_REPLAY_PRODUCER_HASHES)
+        )
+        core = {
+            key: value
+            for key, value in payload["producer"].items()
+            if key != "command_sha256"
+        }
+        payload["producer"]["command_sha256"] = hashlib.sha256(
+            json.dumps(
+                core,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        self._write_json(output.name, payload)
+        replayed = finalizer.replay_receipt(output, self.root, "restoration")
+        self.assertEqual(replayed["producer"], payload["producer"])
+
+    def test_replay_restoration_rejects_unregistered_producer_hash(self) -> None:
+        self.assertEqual(self._run(self._restoration_argv()), 0)
+        output = self.root / "restoration-report.json"
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        payload["producer"]["tool"]["path"] = (
+            "/root/archived-worktree/tools/official_client_capture/"
+            "codex_upgrade_receipt_finalizer.py"
+        )
+        payload["producer"]["tool"]["sha256"] = "f" * 64
+        core = {
+            key: value
+            for key, value in payload["producer"].items()
+            if key != "command_sha256"
+        }
+        payload["producer"]["command_sha256"] = hashlib.sha256(
+            json.dumps(
+                core,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        self._write_json(output.name, payload)
+        with self.assertRaises(finalizer.ReceiptFinalizerError):
+            finalizer.replay_receipt(output, self.root, "restoration")
+
     def test_observed_profile_binds_runtime_event_and_identity(self) -> None:
         self.assertEqual(self._run(self._observed_argv()), 0)
         payload = json.loads(

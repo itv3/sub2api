@@ -745,6 +745,8 @@ ready_for_operator_release
   transition（原始一份、替代两份）；第三份再失败即永久停线，禁止形成循环。
 - 摘要链必须用确定性的有界图可达验证；最多读取 64 份 transition 收据，遇到环、缺失、摘要漂移或
   超过上限立即失败关闭，禁止逐层创建 successor 或自动重试来“追平”当前摘要。
+- 机器收据的 producer 不得把工作树绝对根当作身份：重放按受管相对坐标与已登记 SHA-256 校验，
+  并保留历史 producer 字段；未知摘要或坐标仍失败关闭。这样仅迁移工作树不会迫使已完成 Job 重跑。
 - 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复使用新 Ledger，并绑定旧停线 checkpoint、
   新计时／ARM64 收据和新演练。新 Ledger 不得删除或改写旧耗时与 live 请求总数，也不得以恢复为由
   创建 successor。
