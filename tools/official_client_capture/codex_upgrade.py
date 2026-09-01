@@ -5329,17 +5329,31 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             arguments,
             successor_manifest,
         )
+        # 分类事实纠正后继可能继续承接历史 Formal 的 target 场景字节，
+        # 但恢复 preflight 必须使用当前受管场景。两者只要存在合法的
+        # source_spec 摘要差异，完整 Job 演练合同就应以恢复 preflight
+        # 的当前场景重算；否则会把同一组 Job 错误判成工具／合同漂移。
+        if recovery_control_transition is not None and reclassification_successor:
+            recovery_preflight_dir, recovery_preflight_manifest = (
+                _assert_recovery_rehearsal_uses_successor_controls(
+                    arguments,
+                    successor_manifest,
+                )
+            )
+            recovery_scenario_override = _recovery_rehearsal_target_scenario_override(
+                staging_dir,
+                successor_manifest,
+                recovery_preflight_dir,
+                recovery_preflight_manifest,
+            )
+            if recovery_scenario_override is not None:
+                rehearsal_scenario_override = recovery_scenario_override
         job_rehearsal_transition = _successor_job_rehearsal_transition(
             arguments,
             staging_dir,
             successor_manifest,
             target_scenario_override=rehearsal_scenario_override,
         )
-        if recovery_control_transition is not None:
-            _assert_recovery_rehearsal_uses_successor_controls(
-                arguments,
-                successor_manifest,
-            )
         _rebuild_successor_plan(
             staging_dir,
             successor_dir,
