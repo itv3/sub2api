@@ -380,15 +380,20 @@ class CodexUpgradeTest(unittest.TestCase):
                 controls["recovery"]["upgrade_timing"]["upgrade_id"],
                 recovery_id,
             )
-            self.assertEqual(
-                codex_upgrade._validate_phase_recovery_controls(
-                    campaign_dir,
-                    manifest,
+            with mock.patch.object(
+                codex_upgrade,
+                "_recovery_rehearsal_target_scenario_override",
+                return_value=None,
+            ):
+                self.assertEqual(
+                    codex_upgrade._validate_phase_recovery_controls(
+                        campaign_dir,
+                        manifest,
+                        controls,
+                        current_tool,
+                    ),
                     controls,
-                    current_tool,
-                ),
-                controls,
-            )
+                )
 
     def test_recovery_rehearsal_only_accepts_managed_scenario_source_digest_drift(
         self,

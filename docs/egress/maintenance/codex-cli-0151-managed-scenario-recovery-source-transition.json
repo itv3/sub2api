@@ -30,7 +30,7 @@
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "15ffcbd6975fc0cbd798d893aa50ecd1ea428cdc10c0ff91b9fb490733eb8039",
-      "to_sha256": "f8fa6a7299b4d7ad79a5fb2308601f6b52a54aa27c63c18e511a4c20f3e3d438",
+      "to_sha256": "7b405fba5ea25d38de899be90cf0e888ba19851a0c4c86f9bd5cb9dc457aabd4",
       "reason": "覆盖受管原场景、历史章节摘要和其他字段漂移的正反测试。"
     }
   ],
@@ -46,5 +46,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_managed_scenario_recovery",
-  "identity_sha256": "475a3be22b1aa0d1be06d39ce9203c349bed0fa698b77da46608c42830f05829"
+  "identity_sha256": "7ccf207e74eda4a2179cc52990d649758ce3c15cbff6dc2defba17818fad3758"
 }
