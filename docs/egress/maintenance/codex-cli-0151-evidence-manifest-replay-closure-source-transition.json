@@ -1,0 +1,75 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-evidence-manifest-replay-closure-source-transition/v1",
+  "issued_at_utc": "2026-09-01T07:36:20Z",
+  "base_commit": "70c3144882b706c0aadcff9e0858e3372324e68b",
+  "scope": "codex-cli-0.151-evidence-manifest-replay-closure",
+  "predecessor": {
+    "kind": "codex_cli_0151_evidence_manifest_order_recovery",
+    "path": "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+    "sha256": "77d0e4e256c3fcdf90061f36d794952ca7eaa01dec12c3ef2fa30c2d6827690a"
+  },
+  "transitions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
+      "from_sha256": "fa1f8582cfa96d09d094c112f515502f766e25e0f9ee2ae2bfb3aa2ce0f719c5",
+      "to_sha256": "e3920c8b45c8f1b265b1036ba3d22a4537ce1ab9fceb9fe1caa5063beb04bcdd",
+      "reason": "承接最终闭合 transition 的只追加摘要边。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
+      "from_sha256": "1168a0a0fbf475649251f9bb4d8dbe6476bf686c494d0cd37a4483b58475f7e9",
+      "to_sha256": "4a25d28940e86ebd006bfb600aa434989ba17fa66af70b3b489646dc62ce166d",
+      "reason": "独立承接最终闭合 transition 的只追加摘要边。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "from_sha256": "ec71ba5605953f9b4584032efe595cc2fbb7aca062d0148846643cd5ca54b8ac",
+      "to_sha256": "b6d1529be6f35b7822a58a9da380dbd19f1b7cd1da04c585b6c90c0ec7026acd",
+      "reason": "要求历史导入夹具跑通完整只读重放链，并固定三份 transition 上限。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "from_sha256": "6ab93d7f3aa01f5c14163cf3c2a13004951a8b53b24dce4bc36457567d3aee58",
+      "to_sha256": "488def30d1dccccf4daa5080da71d7fc083e2e9ce2aa95878628ab44c8ab76ba",
+      "reason": "允许一次最终闭合修复，同时以第三份失败永久停线阻断循环。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "from_sha256": "9388177d89a380b9a0d6e3fa575a00ec60393e796a60658bfe9249359017a72e",
+      "to_sha256": "4fc0d42b3f42fe513e1fd02fc4992b45d5d5e848f405eda35f02849f26b9dd6c",
+      "reason": "让 compare 共用重放入口仅对历史导入阶段接受条目全集相同的排序差异。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "from_sha256": "848ce51843cf6076c8730530887a64a33f5b0a7f6778f18c559ae37ea5a40fa8",
+      "to_sha256": "d7d78efb07598c5b1e8e7d317b29820089b8344a28c953534d19742c151b361d",
+      "reason": "覆盖下游阶段重放、内容漂移拒绝、第三份闭合和第四份拒绝。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/internal/officialegress/codex_0151_evidence_manifest_replay_closure_source_transition_test.go",
+      "sha256": "f7e5e78fa07d211695efd0b0ba4725be0575b3f8c6e6d3e0b4500aa982e0563d",
+      "reason": "在 officialegress 独立重放最终闭合 source transition。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_evidence_manifest_replay_closure_source_transition_test.go",
+      "sha256": "23d03ea802a3d9f81b9866a8b9b8a83a941a6b7d090155984a4408211e4f39bb",
+      "reason": "在 service 独立重放最终闭合 source transition。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade",
+    "make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+    "go test ./internal/officialegress ./internal/service -run 'TestCodex0151(EvidenceManifestReplayClosure|EvidenceManifestOrderRecovery|ManagedScenarioRecovery|FrameworkClarification|EvaluationRecovery)' -count=1",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_evidence_manifest_replay_closure",
+  "identity_sha256": "dfc65c2517b7b54f56d1b3a0fa3e44ddd7052c2b53b5aecc02f83797e33bd2ba"
+}

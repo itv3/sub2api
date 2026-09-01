@@ -8077,7 +8077,7 @@ _PHASE_EVALUATION_OPERATIONS = {
     "official": ("capture-official-seal", "deep-verify"),
     "candidate": ("capture-candidate-seal", "compare", "accept", "deep-verify"),
 }
-MAX_PHASE_EVALUATION_TRANSITIONS = 2
+MAX_PHASE_EVALUATION_TRANSITIONS = 3
 
 
 def _evaluation_transition_preview_path(
@@ -8104,7 +8104,7 @@ def _phase_evaluation_transition_index(
     *,
     allocate: bool,
 ) -> int:
-    """选择当前工具的只追加 transition 槽位，并把替代次数限制为两次。"""
+    """选择当前工具的只追加 transition 槽位，并把总数限制为三次。"""
 
     current_sha256 = str(current_tool.get("files_sha256", ""))
     if not SHA256_RE.fullmatch(current_sha256):
@@ -8149,7 +8149,7 @@ def _phase_evaluation_transition_index(
     for index in range(1, MAX_PHASE_EVALUATION_TRANSITIONS + 1):
         if index not in occupied:
             return index
-    raise ConfigurationError("评估 transition 已达到两次上限，必须停线。")
+    raise ConfigurationError("评估 transition 已达到三次上限，必须永久停线。")
 
 
 def _phase_recovery_controls_from_arguments(
@@ -10522,7 +10522,12 @@ def _stage_evidence_manifest(
     roots = [Path(value) for value in stage_payload.get("evidence_roots", [])]
     if not roots:
         raise ConfigurationError("EvidenceManifest 阶段缺少证据根。")
-    if manifest.get("inventory") != stage_payload.get("evidence_inventory"):
+    manifest_inventory = manifest.get("inventory")
+    stage_inventory = stage_payload.get("evidence_inventory")
+    if manifest_inventory != stage_inventory and (
+        stage_payload.get("predecessor_import") is None
+        or not _inventory_contents_equal(manifest_inventory, stage_inventory)
+    ):
         raise ConfigurationError("EvidenceManifest 与阶段 inventory 不一致。")
     expected_security = stage_payload.get("security")
     manifest_security = manifest.get("security")

@@ -204,6 +204,11 @@ func codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest stri
 		return false
 	}
 	receipts = append(receipts, manifestOrderRecovery)
+	replayClosure, replayClosureErr := loadCodex0151EvidenceManifestReplayClosure()
+	if replayClosureErr != nil {
+		return false
+	}
+	receipts = append(receipts, replayClosure)
 	reachable := map[string]struct{}{priorDigest: {}}
 	for {
 		changed := false
@@ -634,7 +639,13 @@ func validateCodex0151EvidenceManifestOrderRecovery(receipt codex0151ToolReadine
 			return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151EvidenceManifestReplayClosureSupersedes(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -653,12 +664,22 @@ func codex0151EvidenceManifestOrderRecoverySupersedes(path, priorDigest, current
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
-			return true
+		if transition.Path == path && transition.FromSHA256 == priorDigest {
+			if transition.ToSHA256 == currentDigest {
+				return true
+			}
+			return codex0151EvidenceManifestReplayClosureSupersedes(
+				path,
+				transition.ToSHA256,
+				currentDigest,
+			)
 		}
 	}
-	return false
+	return codex0151EvidenceManifestReplayClosureSupersedes(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151EvidenceManifestOrderRecoverySourceTransitionIsFrozen(t *testing.T) {

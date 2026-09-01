@@ -651,8 +651,9 @@ ready_for_operator_release
   `(path,size,sha256)` 全集逐项相等且安全结论一致时承接；保留旧 Inventory 摘要并另绑新 manifest
   摘要。重复、缺失、多余或内容摘要变化均失败关闭。
 - 已批准的评估 transition 若在生成阶段收据前暴露新的评估侧缺陷，原 transition 和控制链只读停线；
-  修复后须用新 Ledger、P0 和完整 Job 演练追加一次替代 transition，不得覆盖旧收据。替代 transition
-  再失败即停线，禁止形成循环。
+  每次修复均须用新 Ledger、P0 和完整 Job 演练追加替代 transition，不得覆盖旧收据。替代前必须用
+  历史导入夹具离线跑通 `deep-verify → status → seal → compare → accept` 全链。每个 phase 总计最多三份
+  transition（原始一份、替代两份）；第三份再失败即永久停线，禁止形成循环。
 - 摘要链必须用确定性的有界图可达验证；最多读取 64 份 transition 收据，遇到环、缺失、摘要漂移或
   超过上限立即失败关闭，禁止逐层创建 successor 或自动重试来“追平”当前摘要。
 - 若旧 Ledger 已超时，先签发 `stop_the_line` checkpoint；恢复使用新 Ledger，并绑定旧停线 checkpoint、

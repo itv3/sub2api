@@ -206,6 +206,11 @@ func codex0151EvaluationRecoverySupersedesService(path, priorDigest, currentDige
 		return false
 	}
 	receipts = append(receipts, manifestOrderRecovery)
+	replayClosure, replayClosureErr := loadCodex0151EvidenceManifestReplayClosureService()
+	if replayClosureErr != nil {
+		return false
+	}
+	receipts = append(receipts, replayClosure)
 	reachable := map[string]struct{}{priorDigest: {}}
 	for {
 		changed := false
@@ -637,7 +642,13 @@ func validateCodex0151EvidenceManifestOrderRecoveryService(receipt codex0151Tool
 			return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkServiceDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151EvidenceManifestReplayClosureSupersedesService(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -656,12 +667,22 @@ func codex0151EvidenceManifestOrderRecoverySupersedesService(path, priorDigest, 
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
-			return true
+		if transition.Path == path && transition.FromSHA256 == priorDigest {
+			if transition.ToSHA256 == currentDigest {
+				return true
+			}
+			return codex0151EvidenceManifestReplayClosureSupersedesService(
+				path,
+				transition.ToSHA256,
+				currentDigest,
+			)
 		}
 	}
-	return false
+	return codex0151EvidenceManifestReplayClosureSupersedesService(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151EvidenceManifestOrderRecoverySourceTransitionServiceIsFrozen(t *testing.T) {

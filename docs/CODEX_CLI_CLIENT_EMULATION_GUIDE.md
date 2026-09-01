@@ -1255,7 +1255,7 @@ P0 还必须执行以下机器预检；临时画像和合成证据只验证工�
 | 当前基线 | 在干净 HEAD 执行 `make test-capture-tools`、`make check-egress-spec`，记录命令、源码摘要、退出码和测试通过／失败／跳过数量 |
 | 目标版本坐标 | 用真实 baseline／target 坐标试运行 `plan` 加载；对空值、错误值和正确值做 mutation，禁止缺失坐标静默回退当前画像 |
 | 双版本与画像生成 | 用临时批准资产验证 `prepare-profile`／`stage-profile`、Active 不变、Active／Previous endpoint 并集和版本新增 route 的 fail-close 门禁 |
-| 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本；逐项复算 test fact map 的测试／源码 SHA-256；目标版本证据标签声明必须逐 Job 精确覆盖正式清单，禁止遗留版本硬编码 |
+| 候选工具链 | 验证 candidate core／aux、WS、relay、manifest、trace、finalizer、Schema 和逐规则断言能识别目标版本；用历史导入夹具离线跑通 `deep-verify → status → seal → compare → accept`；逐项复算 test fact map 的测试／源码 SHA-256；目标版本证据标签声明必须逐 Job 精确覆盖正式清单，禁止遗留版本硬编码 |
 | 执行身份 | 逐字核对受管工具树与实际执行副本；确认候选源码、测试树、目标架构和镜像构建输入可形成同源摘要链 |
 | 官方证据 | 按 Framework §5.3.5 冻结并验证唯一 `reuse／recapture` 决定 |
 | 成本模型 | 用不小于本次最大证据集的 ARM64 夹具测量完整扫描；证明 preview 只扫描一次，批准、`status` 和 successor 的原始证据扫描字节均为 0 |
@@ -1373,8 +1373,9 @@ transition、imported checkpoint、seal 批准、`status`、compare 和 accept �
 `stage_started`。
 
 历史 Inventory 与新 manifest 只允许排序差异：去重后的 `(path,size,sha256)` 全集和安全结论必须完全
-一致，旧 Inventory 摘要保持不变。若已批准 transition 后才发现新的评估侧缺陷，停线该控制链并用新
-Ledger、P0、完整 Job 演练追加一次替代 transition；禁止覆盖旧 transition，替代后仍失败则停止恢复。
+一致，旧 Inventory 摘要保持不变。若已批准 transition 后才发现新的评估侧缺陷，停线该控制链；每次
+修复均须用新 Ledger、P0、完整 Job 演练和上述全链离线回归追加替代 transition，禁止覆盖旧 transition。
+每个 phase 总计最多三份 transition（原始一份、替代两份），第三份失败后永久停止恢复。
 
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；

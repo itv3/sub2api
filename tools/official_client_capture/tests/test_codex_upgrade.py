@@ -796,6 +796,10 @@ class CodexUpgradeTest(unittest.TestCase):
 
             arguments.approve_transition_sha256 = None
             third = identity("e" * 64)
+            third_controls = {
+                "schema_version": codex_upgrade.TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA,
+                "marker": "recovery-c",
+            }
             with (
                 mock.patch.object(
                     codex_upgrade,
@@ -815,11 +819,86 @@ class CodexUpgradeTest(unittest.TestCase):
                 mock.patch.object(
                     codex_upgrade,
                     "_phase_recovery_controls_from_arguments",
-                    return_value=replacement_controls,
+                    return_value=third_controls,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_validate_phase_recovery_controls",
+                    return_value=third_controls,
+                ),
+            ):
+                third_preview = codex_upgrade.create_phase_evaluation_transition(
+                    arguments
+                )
+            self.assertEqual(third_preview["transition_index"], 3)
+            self.assertTrue(
+                third_preview["preview"].endswith(
+                    "evaluation-transition-03-preview.json"
+                )
+            )
+
+            arguments.approve_transition_sha256 = third_preview["review_sha256"]
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_require_formal_campaign",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_tool_identity",
+                    return_value=third,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_recovery_controls_from_arguments",
+                    return_value=third_controls,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_validate_phase_recovery_controls",
+                    return_value=third_controls,
+                ),
+            ):
+                third_approved = codex_upgrade.create_phase_evaluation_transition(
+                    arguments
+                )
+            self.assertEqual(third_approved["transition_index"], 3)
+            self.assertTrue(
+                (attempt_root / "evaluation-transition-03.json").is_file()
+            )
+
+            arguments.approve_transition_sha256 = None
+            fourth = identity("f" * 64)
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_require_formal_campaign",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_tool_identity",
+                    return_value=fourth,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_recovery_controls_from_arguments",
+                    return_value=third_controls,
                 ),
                 self.assertRaisesRegex(
                     codex_upgrade.ConfigurationError,
-                    "达到两次上限",
+                    "达到三次上限",
                 ),
             ):
                 codex_upgrade.create_phase_evaluation_transition(arguments)
@@ -5773,6 +5852,100 @@ class EvidenceManifestTest(unittest.TestCase):
         self.assertFalse(
             codex_upgrade._inventory_contents_equal(historical, duplicate)
         )
+
+    def test_imported_stage_replay_accepts_only_inventory_order_difference(
+        self,
+    ) -> None:
+        first = {"path": "evidence/a.json", "size": 1, "sha256": "a" * 64}
+        second = {"path": "run/b.json", "size": 2, "sha256": "b" * 64}
+        historical = {
+            "entry_count": 2,
+            "entries": [first, second],
+            "digest": "c" * 64,
+        }
+        manifest_inventory = {
+            "entry_count": 2,
+            "entries": [second, first],
+            "digest": "d" * 64,
+        }
+        security = {
+            "file_count": 2,
+            "findings": [],
+            "known_secret_env_names": [],
+            "known_secret_scan_passed": True,
+            "limitation": None,
+            "scanned_bytes": 3,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = Path(directory)
+            manifest_path = campaign / "evidence-manifest.json"
+            manifest_path.write_text("{}\n", encoding="utf-8")
+            stage = {
+                "predecessor_import": {
+                    "path": "predecessor-import.json",
+                    "sha256": "e" * 64,
+                },
+                "evidence_manifest": {
+                    "path": "evidence-manifest.json",
+                    "sha256": codex_upgrade.file_sha256(manifest_path),
+                },
+                "evidence_roots": [str(campaign / "evidence")],
+                "evidence_inventory": historical,
+                "security": {"raw_evidence_private": True, **security},
+            }
+            loaded_manifest = {
+                "inventory": manifest_inventory,
+                "security": security,
+            }
+            with mock.patch.object(
+                codex_upgrade,
+                "_load_evidence_manifest",
+                return_value=loaded_manifest,
+            ):
+                self.assertIs(
+                    codex_upgrade._stage_evidence_manifest(
+                        campaign,
+                        stage,
+                        verify_boundary=False,
+                    ),
+                    loaded_manifest,
+                )
+
+                local_stage = dict(stage)
+                local_stage.pop("predecessor_import")
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    "inventory 不一致",
+                ):
+                    codex_upgrade._stage_evidence_manifest(
+                        campaign,
+                        local_stage,
+                        verify_boundary=False,
+                    )
+
+                changed = json.loads(json.dumps(stage))
+                changed["evidence_inventory"]["entries"][0]["size"] = 9
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    "inventory 不一致",
+                ):
+                    codex_upgrade._stage_evidence_manifest(
+                        campaign,
+                        changed,
+                        verify_boundary=False,
+                    )
+
+                duplicate = json.loads(json.dumps(stage))
+                duplicate["evidence_inventory"]["entries"] = [first, first]
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    "inventory 不一致",
+                ):
+                    codex_upgrade._stage_evidence_manifest(
+                        campaign,
+                        duplicate,
+                        verify_boundary=False,
+                    )
 
     def test_interrupted_scan_resumes_from_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
