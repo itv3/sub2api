@@ -831,7 +831,9 @@ def _checkpoint_context(
     """
 
     core = {
-        "schema_version": CHECKPOINT_CONTEXT_SCHEMA,
+        # checkpoint 存储器自身使用 ``schema_version`` 标识记录格式；
+        # 运行上下文必须使用独立字段，避免在 append 时覆盖存储器 schema。
+        "context_schema_version": CHECKPOINT_CONTEXT_SCHEMA,
         "campaign_id": str(campaign_id),
         "execution_contract_sha256": execution_contract_sha256(dict(contract)),
         "component_identity_sha256": incremental_recovery.digest(component_summary),

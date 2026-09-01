@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.official_client_capture import codex_upgrade
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt as receipt
+from tools.official_client_capture import incremental_recovery
 from tools.official_client_capture.tests.control_receipt_fixtures import (
     create_job_rehearsal_receipt,
 )
@@ -141,6 +142,34 @@ class JobRehearsalReceiptTests(unittest.TestCase):
             replayed = receipt.replay(root, path.name)
         self.assertEqual(replayed["status"], "passed")
         self.assertEqual(replayed["job_count"], 38)
+
+    def test_checkpoint_context_keeps_storage_schema(self) -> None:
+        """运行上下文不得覆盖增量 checkpoint 存储器的 schema 字段。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            context = receipt._checkpoint_context(
+                campaign_id="preflight-0151",
+                contract=self._contract(root),
+                component_summary={},
+                plan={"plan_sha256": "a" * 64},
+                previous_source=None,
+            )
+            self.assertEqual(
+                context["context_schema_version"],
+                receipt.CHECKPOINT_CONTEXT_SCHEMA,
+            )
+            store = incremental_recovery.CheckpointStore(root)
+            record = store.append(
+                {
+                    **context,
+                    "item_id": "job-a",
+                    "status": "passed",
+                    "previous_checkpoint_sha256": None,
+                }
+            )
+        self.assertEqual(record["schema_version"], incremental_recovery.CHECKPOINT_SCHEMA)
 
     def test_missing_job_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
