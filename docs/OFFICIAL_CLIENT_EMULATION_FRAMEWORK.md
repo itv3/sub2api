@@ -633,6 +633,10 @@ ready_for_operator_release
 - 前序官方证据仍可信时，后继必须以受管收据只读承接：仅修正 candidate 运行时身份时从 `VC-4` 继续；
   分类事实纠正时从 `VC-2` 重做分类与批准。缺少必要官方事实、官方身份变化或证据语义失真才返回 `VC-1`
   重新取证。
+- 同一 `record_type` 可以承载多个事实时，机器 selector 必须用 `where` 明确事实的存在性和适用条件；
+  断言所读取的字段若不是每条记录必有，必须用 `operator=present` 排除不适用记录。不得通过放宽
+  `all_fields_equal`、改用 `any_equal` 或忽略缺失字段来掩盖 selector 误选；修正 selector 属于分类事实纠正，
+  必须按本节建立同版本后继 Campaign。
 - `successor` 只处理规则、画像、场景、产出语义或冻结运行身份变化；超时、性能问题、评估侧工具修复和
   普通临时失败不得创建 successor。工具不得自动创建 successor，同一根因最多允许一次人工批准的
   successor；后继再次命中同一根因必须停线。

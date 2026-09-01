@@ -1900,6 +1900,13 @@ python3 tools/official_client_capture/build_rule_assertion_results.py \
 配置必须绑定五份批准清单、目标版本和 profile digest，以及官方、candidate、comparison 的
 package digest、capture manifest、证据根和逻辑路径前缀。
 
+selector 选择的 `record_type` 可能承载多个事实时，必须在 `where` 中声明字段存在性和适用条件；
+断言读取的字段不是每条记录必有时，至少同时约束对应字段为 `operator=present`。例如 `SPEC-EP-002`
+的 `file-url-chain` 只能选择同时存在 `data.create_upload_url_sha256` 与
+`data.put_url_sha256` 的 `file_upload_chain` 记录，以免把 C2PA 正／负／retry 事实误纳入 URL 链断言。
+不得放宽 `all_fields_equal` 或用 `any_equal` 掩盖缺失字段；selector 修正须走 Framework §5.3.4 的
+`classification_fact_correction` 后继流程。
+
 | validation mode | 机器判定 |
 |---|---|
 | `dual_wire` | 在官方和候选封存证据上执行同一规则的侧别检查，两侧均须通过 |
