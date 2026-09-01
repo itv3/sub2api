@@ -468,6 +468,14 @@ Job 和门禁必须声明直接依赖，形成有向无环图；下游依赖摘�
 出口 `179.255.100.158`）和工具组件摘要。高风险变化默认禁用跨版本缓存；低风险评估修复不得清空无关缓存。
 该规则优先于客户端手册中任何“整轮重跑”的笼统描述；手册只能收紧范围。
 
+工作树搬迁的兼容范围必须保持封闭：历史 Job 只允许把
+`<repo_root>/tools/official_client_capture/...` 以及精确的 Docker 自挂载
+`-v <repo_root>:<repo_root>[:mode]`／`--volume <repo_root>:<repo_root>[:mode]`
+替换为当前受管 `repo_root`。`evidence_roots`、环境值、模型／参数和其它绝对路径不得归一化；
+替换后的完整 Job 定义必须与历史 `execution_sha256` **逐字精确相等**，否则按任务定义漂移停线。
+历史 attempt、收据和证据始终只读；允许迁移时仅在新 attempt 的 checkpoint 中重新绑定当前
+`execution_sha256`、工具组件摘要和 `result_key`，不得回写历史文件。
+
 ## 5.2 合并 Sub2API 上游更新
 
 ### 5.2.1 目标、边界与完成条件

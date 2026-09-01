@@ -194,6 +194,13 @@ RUN_NONCE_RE = SHA256_RE
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 RUNTIME_WINDOW_ID_PLACEHOLDER = "20000101T000000Z"
 SAFE_ABSOLUTE_PATH_RE = re.compile(r"^/[A-Za-z0-9._/+:-]+$")
+# Job 执行摘要中的仓库绝对根只是当次工作树坐标。历史重放只允许迁移到
+# 受管工具树的同一相对路径；证据根和其它运行参数不在此兼容范围内。
+MANAGED_TOOL_ROOT_SUFFIX = "/tools/official_client_capture"
+MANAGED_REPO_ROOT_RE = re.compile(
+    r"(?P<root>/[A-Za-z0-9._/+:\-]+?)/tools/official_client_capture(?=[:/]|$)"
+)
+MANAGED_REPO_ROOT_PLACEHOLDER = "/__codex_managed_repo_root__"
 IMMUTABLE_IMAGE_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[a-f0-9]{64}$"
 )
@@ -449,6 +456,26 @@ def _fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _job_execution_payload(job: Job) -> dict[str, Any]:
+    """返回参与 Job 执行摘要的完整、可序列化定义。"""
+
+    return {
+        "id": job.job_id,
+        "phase": job.phase,
+        "suites": list(job.suites),
+        "steps": [dict(step) for step in job.steps],
+        "evidence_roots": list(job.evidence_roots),
+        "required": job.required,
+        "required_scenario_receipts": list(job.required_scenario_receipts),
+        "track": getattr(job, "track", "main"),
+        "model_id": getattr(job, "model_id", ""),
+        "expected_use_responses_lite": getattr(
+            job, "expected_use_responses_lite", False
+        ),
+        "required_model_receipt": getattr(job, "required_model_receipt", False),
+    }
+
+
 def _job_execution_sha256(job: Job) -> str:
     """绑定真实执行定义，同时允许批准场景重新映射规则与场景说明。
 
@@ -457,23 +484,291 @@ def _job_execution_sha256(job: Job) -> str:
     _validate_capture_job_results 与 _prior_complete_results 都检测不到。
     """
 
-    return _fingerprint(
-        {
-            "id": job.job_id,
-            "phase": job.phase,
-            "suites": list(job.suites),
-            "steps": [dict(step) for step in job.steps],
-            "evidence_roots": list(job.evidence_roots),
-            "required": job.required,
-            "required_scenario_receipts": list(job.required_scenario_receipts),
-            "track": getattr(job, "track", "main"),
-            "model_id": getattr(job, "model_id", ""),
-            "expected_use_responses_lite": getattr(
-                job, "expected_use_responses_lite", False
-            ),
-            "required_model_receipt": getattr(job, "required_model_receipt", False),
-        }
+    return _fingerprint(_job_execution_payload(job))
+
+
+def _job_step_strings(payload: Mapping[str, Any]) -> Iterable[str]:
+    """枚举 Job 步骤中的命令和显式环境值。
+
+    工作树迁移只针对这些执行坐标。故意不枚举 ``evidence_roots``，避免把
+    证据边界或其它绝对路径误归一化。
+    """
+
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        return
+    for step in steps:
+        if not isinstance(step, Mapping):
+            continue
+        argv = step.get("argv")
+        if isinstance(argv, list):
+            for value in argv:
+                if isinstance(value, str):
+                    yield value
+        environment = step.get("environment")
+        if isinstance(environment, Mapping):
+            for value in environment.values():
+                if isinstance(value, str):
+                    yield value
+
+
+def _managed_repo_roots(payload: Mapping[str, Any]) -> set[str]:
+    """从步骤文本提取 ``<repo>/tools/official_client_capture`` 的仓库根。"""
+
+    roots: set[str] = set()
+    for value in _job_step_strings(payload):
+        roots.update(match.group("root") for match in MANAGED_REPO_ROOT_RE.finditer(value))
+    return roots
+
+
+def _is_safe_managed_repo_root(value: Any) -> bool:
+    """校验工作树根的词法坐标，不要求历史目录仍然存在。"""
+
+    if not isinstance(value, str) or not SAFE_ABSOLUTE_PATH_RE.fullmatch(value):
+        return False
+    path = Path(value)
+    return (
+        str(path) == value
+        and path.is_absolute()
+        and len(path.parts) > 1
+        and ".." not in path.parts
     )
+
+
+def _relocate_managed_repo_root_text(
+    value: str,
+    source_root: str,
+    target_root: str,
+) -> str:
+    """只迁移工具树前缀和精确的 Docker ``-v root:root`` 自挂载。
+
+    任意其它出现的绝对路径保持原样；这样环境变量、证据根或参数内容变化
+    不会因为“看起来像路径”而被吞掉。
+    """
+
+    if not _is_safe_managed_repo_root(source_root) or not _is_safe_managed_repo_root(
+        target_root
+    ):
+        raise ConfigurationError("历史 Job 工作树根不是安全绝对坐标。")
+    # 只替换完整的工具树路径组件；例如 source_root 后紧跟字母或 ``-``
+    # 的相似字符串不是受管坐标，不能被部分替换。
+    tool_root_pattern = re.compile(
+        rf"{re.escape(source_root + MANAGED_TOOL_ROOT_SUFFIX)}"
+        r"(?=$|[^A-Za-z0-9._-])"
+    )
+    relocated = tool_root_pattern.sub(
+        target_root + MANAGED_TOOL_ROOT_SUFFIX,
+        value,
+    )
+    for option in ("-v", "--volume"):
+        mount_pattern = re.compile(
+            rf"(?P<prefix>(?:^|[\s]){re.escape(option)}[\s]+)"
+            rf"{re.escape(source_root)}:{re.escape(source_root)}"
+            rf"(?=[:\s]|$)"
+        )
+        relocated = mount_pattern.sub(
+            lambda match: (
+                match.group("prefix") + target_root + ":" + target_root
+            ),
+            relocated,
+        )
+    return relocated
+
+
+def _relocate_docker_mount_spec(
+    value: str,
+    source_root: str,
+    target_root: str,
+) -> str:
+    """迁移一个已经被 argv 分词的精确 ``root:root[:mode]`` 挂载值。"""
+
+    if not _is_safe_managed_repo_root(source_root) or not _is_safe_managed_repo_root(
+        target_root
+    ):
+        raise ConfigurationError("历史 Job 工作树根不是安全绝对坐标。")
+    pattern = re.compile(
+        rf"^{re.escape(source_root)}:{re.escape(source_root)}"
+        r"(?::[A-Za-z0-9,._+-]+)?$"
+    )
+    return pattern.sub(
+        lambda match: match.group(0).replace(
+            source_root + ":" + source_root,
+            target_root + ":" + target_root,
+            1,
+        ),
+        value,
+    )
+
+
+def _relocate_job_execution_payload(
+    payload: Mapping[str, Any],
+    source_root: str,
+    target_root: str,
+) -> dict[str, Any]:
+    """复制执行定义，仅在允许的步骤字段中迁移工作树根。"""
+
+    relocated = dict(payload)
+    raw_steps = payload.get("steps")
+    if not isinstance(raw_steps, list):
+        return relocated
+    steps: list[dict[str, Any]] = []
+    for raw_step in raw_steps:
+        if not isinstance(raw_step, Mapping):
+            steps.append(dict(raw_step) if isinstance(raw_step, dict) else {})
+            continue
+        step = dict(raw_step)
+        argv = raw_step.get("argv")
+        if isinstance(argv, list):
+            relocated_argv: list[Any] = []
+            for index, value in enumerate(argv):
+                if not isinstance(value, str):
+                    relocated_argv.append(value)
+                    continue
+                relocated_value = _relocate_managed_repo_root_text(
+                    value,
+                    source_root,
+                    target_root,
+                )
+                # Docker 也接受 ``["-v", "root:root:ro"]`` 和
+                # ``["--volume", "root:root:ro"]`` 这种分词形式；仅在
+                # 选项与值相邻且两端完全相同的情况下迁移，避免放宽普通
+                # 参数字符串的比较边界。
+                if (
+                    index > 0
+                    and argv[index - 1] in {"-v", "--volume"}
+                ):
+                    relocated_value = _relocate_docker_mount_spec(
+                        relocated_value,
+                        source_root,
+                        target_root,
+                    )
+                if value in {"-v", "--volume"} and index + 1 < len(argv):
+                    # 选项自身不含路径；下一项在下一轮按上面的相邻规则处理。
+                    relocated_value = value
+                relocated_argv.append(relocated_value)
+            step["argv"] = relocated_argv
+        environment = raw_step.get("environment")
+        if isinstance(environment, Mapping):
+            step["environment"] = {
+                key: (
+                    _relocate_managed_repo_root_text(value, source_root, target_root)
+                    if isinstance(value, str)
+                    else value
+                )
+                for key, value in environment.items()
+            }
+        steps.append(step)
+    relocated["steps"] = steps
+    return relocated
+
+
+def _job_step_surface(
+    payload: Mapping[str, Any],
+    repo_root: str,
+) -> dict[tuple[int, str, int | str], str]:
+    """生成用于迁移审计的步骤文本表，归一化范围仍仅限受管坐标。"""
+
+    surface: dict[tuple[int, str, int | str], str] = {}
+    tool_root_pattern = re.compile(
+        rf"{re.escape(repo_root + MANAGED_TOOL_ROOT_SUFFIX)}"
+        r"(?=$|[^A-Za-z0-9._-])"
+    )
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        return surface
+    for step_index, step in enumerate(steps):
+        if not isinstance(step, Mapping):
+            continue
+        argv = step.get("argv")
+        if isinstance(argv, list):
+            for value_index, value in enumerate(argv):
+                if isinstance(value, str):
+                    surface[(step_index, "argv", value_index)] = (
+                        tool_root_pattern.sub(
+                            MANAGED_REPO_ROOT_PLACEHOLDER
+                            + MANAGED_TOOL_ROOT_SUFFIX,
+                            value,
+                        )
+                    )
+        environment = step.get("environment")
+        if isinstance(environment, Mapping):
+            for key, value in environment.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    surface[(step_index, "environment", key)] = tool_root_pattern.sub(
+                        MANAGED_REPO_ROOT_PLACEHOLDER + MANAGED_TOOL_ROOT_SUFFIX,
+                        value,
+                    )
+    return surface
+
+
+def _frozen_job_definition(
+    manifest: Mapping[str, Any],
+    job_id: str,
+) -> Mapping[str, Any] | None:
+    """读取 Campaign 冻结的同名 Job 定义，作为历史路径迁移的唯一坐标来源。"""
+
+    raw_jobs = manifest.get("jobs")
+    if not isinstance(raw_jobs, list):
+        return None
+    matches = [
+        item
+        for item in raw_jobs
+        if isinstance(item, Mapping) and item.get("id") == job_id
+    ]
+    if len(matches) != 1:
+        raise ConfigurationError(
+            f"历史 Campaign 的 Job {job_id} 定义缺失或重复，拒绝路径迁移。"
+        )
+    return matches[0]
+
+
+def _relocated_job_execution_matches(
+    job: Job,
+    recorded_sha256: Any,
+    frozen_job: Mapping[str, Any] | None,
+) -> bool:
+    """判断历史执行摘要是否仅发生受管工作树坐标迁移。"""
+
+    if not SHA256_RE.fullmatch(str(recorded_sha256)) or frozen_job is None:
+        return False
+    current_payload = _job_execution_payload(job)
+    current_roots = _managed_repo_roots(current_payload)
+    managed_root = str(Path(__file__).resolve().parents[2])
+    if current_roots != {managed_root} or not _is_safe_managed_repo_root(managed_root):
+        return False
+    historical_roots = _managed_repo_roots(frozen_job)
+    if len(historical_roots) != 1:
+        return False
+    historical_root = next(iter(historical_roots))
+    if (
+        historical_root == managed_root
+        or not _is_safe_managed_repo_root(historical_root)
+        or frozen_job.get("id") != job.job_id
+        or (
+            frozen_job.get("phase") is not None
+            and frozen_job.get("phase") != job.phase
+        )
+    ):
+        return False
+    if "evidence_roots" in frozen_job and frozen_job.get("evidence_roots") != list(
+        job.evidence_roots
+    ):
+        return False
+    relocated = _relocate_job_execution_payload(
+        current_payload,
+        managed_root,
+        historical_root,
+    )
+    if _managed_repo_roots(relocated) != {historical_root}:
+        return False
+    # Campaign 的冻结 Job 可能是旧版 plan 投影，省略 environment 等字段；对
+    # 它实际记录的每个步骤文本逐项比对，防止把脚本、参数或环境变化伪装成迁移。
+    frozen_surface = _job_step_surface(frozen_job, historical_root)
+    relocated_surface = _job_step_surface(relocated, historical_root)
+    for key, value in frozen_surface.items():
+        if relocated_surface.get(key) != value:
+            return False
+    return _fingerprint(relocated) == recorded_sha256
 
 
 def _is_rfc3339_timestamp(value: Any) -> bool:
@@ -11770,6 +12065,159 @@ def _load_capture_reservation(
     return payload
 
 
+def _tool_component_digest_map(
+    identity: Mapping[str, Any] | None,
+    *,
+    canonical: bool = False,
+) -> dict[str, str] | None:
+    """提取工具组件摘要；可选地应用历史 watchdog 组件归类兼容。"""
+
+    if not isinstance(identity, Mapping):
+        return None
+    try:
+        bundle = _tool_component_bundle(identity)
+        if canonical:
+            bundle = _canonicalize_watchdog_component_bundle(bundle)
+    except (ConfigurationError, incremental_recovery.IncrementalRecoveryError):
+        return None
+    components = bundle.get("components")
+    if not isinstance(components, Mapping):
+        return None
+    output: dict[str, str] = {}
+    for name, value in components.items():
+        if not isinstance(name, str) or not isinstance(value, Mapping):
+            return None
+        digest = value.get("sha256")
+        if not SHA256_RE.fullmatch(str(digest)):
+            return None
+        output[name] = str(digest)
+    return output
+
+
+def _historical_result_metadata_matches(
+    result: Mapping[str, Any],
+    job: Job,
+    identity: Mapping[str, Any],
+    frozen_tool: Mapping[str, Any] | None,
+    execution_sha256: str,
+    *,
+    current_tool: Mapping[str, Any],
+) -> bool:
+    """校验旧结果的增量元数据仍属于同一 Job／工具依赖闭集。"""
+
+    if result.get("execution_sha256") != execution_sha256:
+        return False
+    metadata_fields = {
+        "tool_components",
+        "tool_component_digests",
+        "input_sha256",
+        "environment_sha256",
+        "dependency_sha256",
+        "incremental_result_key",
+    }
+    if not metadata_fields.issubset(result):
+        return False
+    names = sorted(_job_tool_components(job))
+    recorded_names = result.get("tool_components")
+    recorded_digests = result.get("tool_component_digests")
+    if (
+        recorded_names != names
+        or not isinstance(recorded_digests, Mapping)
+        or set(recorded_digests) != set(names)
+    ):
+        return False
+    if not isinstance(current_tool, Mapping):
+        return False
+    historical_raw = _tool_component_digest_map(frozen_tool)
+    historical_canonical = _tool_component_digest_map(frozen_tool, canonical=True)
+    current_raw = _tool_component_digest_map(current_tool)
+    current_canonical = _tool_component_digest_map(current_tool, canonical=True)
+    if not all(
+        isinstance(value, str) and SHA256_RE.fullmatch(value)
+        for value in recorded_digests.values()
+    ):
+        return False
+    if not all(
+        name in (historical_raw or {})
+        and name in (historical_canonical or {})
+        and name in (current_raw or {})
+        and name in (current_canonical or {})
+        # 原始摘要可能因为组件重新归类而不同；真正不变的判据是历史与
+        # 当前的规范化摘要相同，同时旧收据的摘要必须确实来自历史原始
+        # 或规范化视图。这样只放宽归类变化，不会吞掉 producer 字节变化。
+        and historical_canonical[name] == current_canonical[name]
+        and str(recorded_digests[name])
+        in {
+            historical_raw[name],
+            historical_canonical[name],
+        }
+        for name in names
+    ):
+        return False
+    dependency_rows = [
+        {
+            "id": f"tool:{name}",
+            "status": "passed",
+            "result_sha256": str(recorded_digests[name]),
+        }
+        for name in names
+    ]
+    try:
+        dependency_sha256 = incremental_recovery.dependency_digest(dependency_rows)
+        environment_sha256 = _fingerprint(
+            {
+                "phase": job.phase,
+                "track": getattr(job, "track", "main"),
+                "model_id": getattr(job, "model_id", ""),
+                "identity_sha256": _fingerprint(dict(identity)),
+            }
+        )
+        result_key = incremental_recovery.result_key(
+            component="job",
+            item_id=job.job_id,
+            input_sha256=execution_sha256,
+            environment_sha256=environment_sha256,
+            dependency_sha256=dependency_sha256,
+        )
+    except incremental_recovery.IncrementalRecoveryError:
+        return False
+    return (
+        result.get("input_sha256") == execution_sha256
+        and result.get("environment_sha256") == environment_sha256
+        and result.get("dependency_sha256") == dependency_sha256
+        and result.get("incremental_result_key") == result_key
+    )
+
+
+def _rebase_reused_result(
+    result: Mapping[str, Any],
+    job: Job,
+    *,
+    identity: Mapping[str, Any],
+    tool_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """把承接结果绑定到本轮 Job 摘要，历史收据本身保持只读。"""
+
+    incremental = _job_incremental_metadata(
+        job,
+        identity=identity,
+        tool_identity=tool_identity,
+    )
+    rebased = dict(result)
+    rebased.update(
+        {
+            "execution_sha256": incremental["input_sha256"],
+            "tool_components": incremental["components"],
+            "tool_component_digests": incremental["component_digests"],
+            "input_sha256": incremental["input_sha256"],
+            "environment_sha256": incremental["environment_sha256"],
+            "dependency_sha256": incremental["dependency_sha256"],
+            "incremental_result_key": incremental["result_key"],
+        }
+    )
+    return rebased
+
+
 def _reserve_capture_attempt(
     campaign_dir: Path,
     *,
@@ -11912,6 +12360,21 @@ def _prior_complete_results(
     if not attempts_root.is_dir() or attempts_root.is_symlink():
         raise ConfigurationError("--rerun-failed 找不到先前失败 attempt。")
     expected_jobs = {job.job_id: job for job in jobs}
+    # 这些身份只读取一次：恢复规划必须基于同一份冻结 Campaign 和同一份
+    # 当前工具摘要，不能在遍历多个历史 attempt 时出现坐标漂移。
+    frozen_manifest = load_campaign_manifest(campaign_dir)
+    current_tool = tool_identity or _tool_identity(include_git=False)
+    if not isinstance(current_tool, Mapping):
+        raise ConfigurationError("当前工具身份不是对象，拒绝增量恢复。")
+    frozen_tool = frozen_manifest.get("tool_identity")
+    frozen_tool_files_sha256 = (
+        frozen_tool.get("files_sha256")
+        if isinstance(frozen_tool, Mapping)
+        else None
+    )
+    global_tool_unchanged = (
+        current_tool.get("files_sha256") == frozen_tool_files_sha256
+    )
     for attempt, _ in _ordered_capture_attempts(
         campaign_dir,
         phase,
@@ -11937,43 +12400,67 @@ def _prior_complete_results(
         if not isinstance(results, list):
             continue
         completed = []
-        current_tool = tool_identity or _tool_identity(include_git=False)
-        frozen_manifest = load_campaign_manifest(campaign_dir)
-        frozen_tool = frozen_manifest.get("tool_identity")
-        frozen_tool_files_sha256 = (
-            frozen_tool.get("files_sha256")
-            if isinstance(frozen_tool, Mapping)
-            else None
-        )
         affected = set(str(item) for item in affected_job_ids)
-        global_tool_unchanged = (
-            current_tool.get("files_sha256") == frozen_tool_files_sha256
-        )
         for item in results:
             if not isinstance(item, dict) or item.get("status") != "complete":
                 continue
             job_id = item.get("id")
-            if (
-                not isinstance(job_id, str)
-                or job_id not in expected_jobs
-                or item.get("execution_sha256")
-                != _job_execution_sha256(expected_jobs[job_id])
-            ):
+            if not isinstance(job_id, str) or job_id not in expected_jobs:
                 raise ConfigurationError("先前失败 attempt 的已完成任务定义漂移。")
+            expected_job = expected_jobs[job_id]
+            expected_execution_sha256 = _job_execution_sha256(expected_job)
+            recorded_execution_sha256 = item.get("execution_sha256")
+            relocated = False
+            if recorded_execution_sha256 != expected_execution_sha256:
+                # 历史 attempt 可能是在另一棵受管工作树中执行的。只有当
+                # 冻结 Job 的 hash 恰好等于“当前定义迁移回历史根”后的 hash
+                # 时才允许承接；任何脚本、参数、环境或证据根变化都继续
+                # 走原有的 fail-close 漂移错误。
+                frozen_job = _frozen_job_definition(frozen_manifest, job_id)
+                if not _relocated_job_execution_matches(
+                    expected_job,
+                    recorded_execution_sha256,
+                    frozen_job,
+                ):
+                    raise ConfigurationError("先前失败 attempt 的已完成任务定义漂移。")
+                relocated = True
             # 组件身份存在时做精确的 Job 级命中；旧 attempt 只在工具树
             # 完全不变时兼容承接，避免把旧代码产出的结果误当成新代码结果。
             if job_id in affected:
                 continue
             expected_incremental = _job_incremental_metadata(
-                expected_jobs[job_id], identity=identity, tool_identity=current_tool
+                expected_job, identity=identity, tool_identity=current_tool
             )
             recorded_key = item.get("incremental_result_key")
             if recorded_key is None:
                 if not global_tool_unchanged:
                     continue
+            elif relocated:
+                # 路径迁移会改变 execution_sha256，因而也会改变历史 input
+                # 与 result key。先用历史执行摘要和当前工具身份校验旧结果，
+                # 通过后再在新 attempt 中重绑当前摘要。
+                if not _historical_result_metadata_matches(
+                    item,
+                    expected_job,
+                    identity,
+                    frozen_tool if isinstance(frozen_tool, Mapping) else None,
+                    str(recorded_execution_sha256),
+                    current_tool=current_tool,
+                ):
+                    continue
             elif recorded_key != expected_incremental["result_key"]:
                 continue
-            completed.append(item)
+            reused_item = (
+                _rebase_reused_result(
+                    item,
+                    expected_job,
+                    identity=identity,
+                    tool_identity=current_tool,
+                )
+                if relocated
+                else dict(item)
+            )
+            completed.append(reused_item)
         if len({item["id"] for item in completed}) != len(completed):
             raise ConfigurationError("先前失败 attempt 含重复任务收据。")
         # 承接上一轮已完成的任务，只重跑失败项。这不是无条件复用：调用方必须在本轮
