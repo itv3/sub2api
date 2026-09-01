@@ -27,6 +27,8 @@ RECEIPT_SCHEMA = "codex-upgrade-job-rehearsal-receipt/v1"
 EXECUTION_CONTRACT_SCHEMA = "codex-upgrade-job-rehearsal-contract/v2"
 PRODUCER_SCHEMA = "codex-upgrade-job-rehearsal-producer/v1"
 PRODUCER_VERSION = "1"
+INCREMENTAL_NOOP_SCHEMA = "codex-upgrade-incremental-noop/v1"
+INCREMENTAL_NOOP_STATUS = "incremental-noop"
 EXPECTED_ARCHITECTURE = "linux/arm64"
 MAX_JSON_BYTES = 16 * 1024 * 1024
 ZSTD_FRAME = bytes.fromhex("28b52ffd045829000068656c6c6fa36d9f88")
@@ -38,6 +40,18 @@ CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
+
+# CLI 与 Formal 编排器使用同一组默认上限；演练是正式抓包前的离线门禁，
+# 也必须有明确的单调墙钟边界，不能靠每个 docker 命令的固定 timeout 叠加。
+DEFAULT_ATTEMPT_WALL_SECONDS = 90 * 60
+MAX_ATTEMPT_WALL_SECONDS = 6 * 60 * 60
+DEFAULT_HEARTBEAT_SECONDS = 30
+MAX_HEARTBEAT_SECONDS = 5 * 60
+
+# 完整演练包含大量 docker／脚本语法探针；所有层级都从这里读取同一条
+# deadline，避免固定 timeout 的命令串联后突破 attempt 预算。
+_ACTIVE_DEADLINE: incremental_recovery.WallClockDeadline | None = None
+_ACTIVE_HEARTBEAT: Any | None = None
 
 # 这些字段会改变 Job 的真实启动环境，preflight 与 Formal 必须逐项一致。
 EXECUTION_CONFIGURATION_FIELDS = (
@@ -337,15 +351,35 @@ def _write_once(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
-def _run(argv: list[str], label: str, timeout: int = 60) -> bytes:
+def _run(
+    argv: list[str],
+    label: str,
+    timeout: int = 60,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> bytes:
+    active_deadline = deadline if deadline is not None else _ACTIVE_DEADLINE
+    active_heartbeat = heartbeat if heartbeat is not None else _ACTIVE_HEARTBEAT
     try:
-        completed = subprocess.run(
-            argv,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-        )
+        if active_deadline is not None:
+            completed = incremental_recovery.run_bounded_subprocess(
+                argv,
+                timeout=timeout,
+                deadline=active_deadline,
+                operation=label,
+                check=False,
+                capture_output=True,
+                heartbeat=active_heartbeat,
+            )
+        else:
+            completed = subprocess.run(
+                argv,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
     except (OSError, subprocess.SubprocessError) as error:
         raise JobRehearsalReceiptError(f"{label}执行失败：{error}") from error
     if completed.returncode != 0:
@@ -1412,6 +1446,10 @@ def _load_previous_rehearsal(
     receipt, receipt_raw = _load_json(receipt_path, "前序 Job 收据")
     if receipt.get("schema_version") != RECEIPT_SCHEMA:
         raise JobRehearsalReceiptError("前序 Job 收据版本不受支持")
+    if receipt.get("status") == INCREMENTAL_NOOP_STATUS:
+        raise JobRehearsalReceiptError(
+            "incremental-noop 不是新的通过事实；前序输入必须直接引用原有 passed 收据"
+        )
     facts_reference = receipt.get("facts")
     if not isinstance(facts_reference, dict):
         raise JobRehearsalReceiptError("前序 Job 收据缺少 facts 引用")
@@ -1424,6 +1462,12 @@ def _load_previous_rehearsal(
         raise JobRehearsalReceiptError("前序 Job facts 摘要漂移")
     if facts.get("schema_version") != FACTS_SCHEMA:
         raise JobRehearsalReceiptError("前序 Job facts 版本不受支持")
+    if facts.get("status") == INCREMENTAL_NOOP_STATUS or facts.get(
+        "incremental_noop"
+    ) is not None:
+        raise JobRehearsalReceiptError(
+            "incremental-noop 不能作为前序演练；请使用其 source_receipt 指向的原有 passed 收据"
+        )
     if not isinstance(facts.get("jobs"), list) or not isinstance(
         facts.get("execution_contract"), dict
     ):
@@ -1601,13 +1645,102 @@ def _select_rehearsal_plan(
     }
 
 
-def collect_facts(
+def _build_incremental_noop_facts(
+    *,
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    component_summary: Mapping[str, Any],
+    previous_facts: Mapping[str, Any],
+    previous_source: Mapping[str, Any],
+    previous_receipt_root: Path,
+) -> dict[str, Any]:
+    """构造不触碰运行时探针的增量空操作事实。
+
+    ``incremental-noop`` 只表示本轮没有需要执行的 Job。它不复制或重新声明
+    宿主、容器、二进制、bubblewrap、zstd 等运行事实，也不生成新的通过结论；
+    后续 Formal 必须继续绑定 ``source_receipt`` 指向的原有通过收据。
+    """
+
+    planned = sorted(str(item) for item in contract.get("job_ids", []))
+    execute = sorted(str(item) for item in plan.get("execute_job_ids", []))
+    reused = sorted(str(item) for item in plan.get("reused_job_ids", []))
+    failed = sorted(str(item) for item in plan.get("failed_job_ids", []))
+    changed = sorted(str(item) for item in plan.get("changed_components", []))
+    if execute or failed or reused != planned:
+        raise JobRehearsalReceiptError(
+            "只有完整复用且执行集合为空时才能生成 incremental-noop"
+        )
+    if not isinstance(previous_source, Mapping):
+        raise JobRehearsalReceiptError("incremental-noop 缺少原有通过收据绑定")
+    source_binding = dict(previous_source)
+    source_root = previous_receipt_root.resolve(strict=True)
+    source_summary = previous_facts.get("summary")
+    if not isinstance(source_summary, Mapping):
+        raise JobRehearsalReceiptError("原有通过收据缺少 Job 汇总")
+    source_job_set_sha256 = source_summary.get("job_set_sha256")
+    if not SHA256_RE.fullmatch(str(source_job_set_sha256 or "")):
+        raise JobRehearsalReceiptError("原有通过收据的 Job 集摘要非法")
+    source_job_count = source_summary.get("job_count")
+    if (
+        not isinstance(source_job_count, int)
+        or isinstance(source_job_count, bool)
+        or source_job_count != len(planned)
+    ):
+        raise JobRehearsalReceiptError("原有通过收据的 Job 数量与当前合同不一致")
+    incremental_plan = {
+        **dict(plan),
+        "affected_job_ids": [],
+        "previous_receipt": source_binding,
+    }
+    noop = {
+        "schema_version": INCREMENTAL_NOOP_SCHEMA,
+        "new_pass_fact": False,
+        "planned_job_ids": planned,
+        "execute_job_ids": [],
+        "reused_job_ids": reused,
+        "affected_job_ids": [],
+        "failed_job_ids": [],
+        "changed_components": changed,
+        "plan_sha256": str(plan.get("plan_sha256", "")),
+        "source_receipt": source_binding,
+        "source_root": str(source_root),
+        "source_status": "passed",
+        "source_job_count": source_job_count,
+        "source_job_set_sha256": str(source_job_set_sha256),
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+        "recorded_at_utc": _utc_now(),
+    }
+    return {
+        "schema_version": FACTS_SCHEMA,
+        "status": INCREMENTAL_NOOP_STATUS,
+        "observed_at_utc": _utc_now(),
+        "preflight_campaign": {
+            "path": str(campaign_dir),
+            "campaign_id": manifest["campaign_id"],
+            "manifest_sha256": _sha256_file(campaign_dir / "campaign.json"),
+            "campaign_mode": "preflight_only",
+        },
+        "execution_contract": dict(contract),
+        "execution_contract_sha256": execution_contract_sha256(dict(contract)),
+        "incremental_plan": incremental_plan,
+        "tool_components": dict(component_summary),
+        "incremental_noop": noop,
+        "collector": _producer(),
+    }
+
+
+def _collect_facts(
     campaign_dir: Path,
     *,
     previous_receipt: Path | None = None,
     previous_receipt_root: Path | None = None,
     rerun_failed: bool = False,
     checkpoint_root: Path | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
     """展开 preflight Job，并按前序收据只执行失败／受影响项。
 
@@ -1617,6 +1750,9 @@ def collect_facts(
     """
 
     from tools.official_client_capture import codex_upgrade
+
+    if deadline is not None:
+        deadline.check("job-rehearsal:start")
 
     if rerun_failed and previous_receipt is None:
         raise JobRehearsalReceiptError(
@@ -1675,29 +1811,16 @@ def collect_facts(
     ]
     if sorted(job.job_id for job in jobs) != contract["job_ids"]:
         raise JobRehearsalReceiptError("展开 Job 集与目标模板不一致")
-    capture_root = Path(str(configuration["capture_root"]))
+    # 计划阶段只读取 manifest、场景、Job 合同和当前受管工具树。任何可能触碰
+    # Docker、官方二进制、执行副本、环境或运行容器的探针都必须放在空集判断之后。
     managed_root = Path(codex_upgrade.__file__).resolve().parent
-    execution_root = capture_root / "tools" / "official_client_capture"
-    codex_upgrade._verify_execution_tree(capture_root)
     managed_tree = _tool_tree_summary(managed_root)
-    execution_tree = _tool_tree_summary(execution_root)
-    container_tree = _container_tool_tree(
-        str(configuration["capture_container"]), str(execution_root)
-    )
-    if not (
-        managed_tree["entries"]
-        == execution_tree["entries"]
-        == container_tree["entries"]
-        and managed_tree["files_sha256"] == contract["tool_files_sha256"]
-    ):
-        raise JobRehearsalReceiptError("受管、执行和 capture-cli 工具树不一致")
-    binary_verification = codex_upgrade._verify_official_binaries(manifest)
-    # 工具树三份副本已经逐字比对；组件摘要只由当前受管树生成，不能从前序
-    # 收据复制，避免把旧工具身份误当成当前身份。
+    # 工具树摘要只由当前受管树生成，不能从前序收据复制，避免把旧工具身份误当成当前身份。
     component_summary = _component_summary(managed_tree)
     previous_facts: dict[str, Any] | None = None
     previous_source: dict[str, Any] | None = None
     previous_global_tool_sha256: str | None = None
+    source_root: Path | None = None
     if previous_receipt is not None:
         source_root = previous_receipt_root or campaign_dir
         if previous_receipt.is_absolute():
@@ -1726,6 +1849,48 @@ def collect_facts(
         component_summary,
         previous_facts,
         previous_global_tool_sha256=previous_global_tool_sha256,
+    )
+    if not plan["execute_job_ids"]:
+        # 失败项为空时必须在所有昂贵探针之前结束。此处不创建 checkpoint，
+        # 不校验执行树，不启动 Docker／容器／bubblewrap／zstd，也不发送请求。
+        if (
+            previous_facts is None
+            or previous_source is None
+            or source_root is None
+        ):
+            raise JobRehearsalReceiptError(
+                "空执行计划缺少可引用的原有通过收据"
+            )
+        return _build_incremental_noop_facts(
+            campaign_dir=campaign_dir,
+            manifest=manifest,
+            contract=contract,
+            plan=plan,
+            component_summary=component_summary,
+            previous_facts=previous_facts,
+            previous_source=previous_source,
+            previous_receipt_root=source_root,
+        )
+
+    # 从这里开始确实存在需要探针的 Job，才允许校验实际执行树、容器和二进制。
+    capture_root = Path(str(configuration["capture_root"]))
+    execution_root = capture_root / "tools" / "official_client_capture"
+    codex_upgrade._verify_execution_tree(capture_root)
+    execution_tree = _tool_tree_summary(execution_root)
+    container_tree = _container_tool_tree(
+        str(configuration["capture_container"]), str(execution_root)
+    )
+    if not (
+        managed_tree["entries"]
+        == execution_tree["entries"]
+        == container_tree["entries"]
+        and managed_tree["files_sha256"] == contract["tool_files_sha256"]
+    ):
+        raise JobRehearsalReceiptError("受管、执行和 capture-cli 工具树不一致")
+    binary_verification = codex_upgrade._verify_official_binaries(
+        manifest,
+        deadline=deadline,
+        heartbeat=heartbeat,
     )
     checkpoint_context = (
         _checkpoint_context(
@@ -1776,6 +1941,10 @@ def collect_facts(
     source_binding = previous_source
     job_results: list[dict[str, Any]] = []
     for job in sorted(jobs, key=lambda item: (item.phase, item.job_id)):
+        if deadline is not None:
+            deadline.check(f"job-rehearsal:{job.job_id}:start")
+        if heartbeat is not None:
+            heartbeat(f"job-rehearsal:{job.job_id}:start")
         job_id = str(job.job_id)
         started = time.monotonic()
         checkpoint_entry = checkpoint_results.get(job_id)
@@ -1838,6 +2007,10 @@ def collect_facts(
                     duration_seconds=time.monotonic() - started,
                 )
         job_results.append(result)
+        if deadline is not None:
+            deadline.check(f"job-rehearsal:{job.job_id}:complete")
+        if heartbeat is not None:
+            heartbeat(f"job-rehearsal:{job.job_id}:complete")
         if checkpoint is not None and not reused_from_checkpoint:
             records = checkpoint.records()
             previous_digest = (
@@ -1962,7 +2135,41 @@ def collect_facts(
         }
     facts["runtime_identity_sha256"] = _runtime_identity(facts)
     validate_facts(facts)
+    if deadline is not None:
+        deadline.check("job-rehearsal:complete")
     return facts
+
+
+def collect_facts(
+    campaign_dir: Path,
+    *,
+    previous_receipt: Path | None = None,
+    previous_receipt_root: Path | None = None,
+    rerun_failed: bool = False,
+    checkpoint_root: Path | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> dict[str, Any]:
+    """运行完整 Job 演练，并把所有内部探针绑定到同一条 deadline。"""
+
+    global _ACTIVE_DEADLINE, _ACTIVE_HEARTBEAT
+    previous_deadline = _ACTIVE_DEADLINE
+    previous_heartbeat = _ACTIVE_HEARTBEAT
+    _ACTIVE_DEADLINE = deadline
+    _ACTIVE_HEARTBEAT = heartbeat
+    try:
+        return _collect_facts(
+            campaign_dir,
+            previous_receipt=previous_receipt,
+            previous_receipt_root=previous_receipt_root,
+            rerun_failed=rerun_failed,
+            checkpoint_root=checkpoint_root,
+            deadline=deadline,
+            heartbeat=heartbeat,
+        )
+    finally:
+        _ACTIVE_DEADLINE = previous_deadline
+        _ACTIVE_HEARTBEAT = previous_heartbeat
 
 
 def _validate_tree(value: Any, label: str) -> dict[str, Any]:
@@ -2119,12 +2326,181 @@ def _validate_incremental_plan(
     return dict(value)
 
 
+def _validate_incremental_noop_facts(
+    facts: Mapping[str, Any],
+    *,
+    allow_collector_drift: bool = False,
+) -> dict[str, Any]:
+    """校验不产生新通过事实的增量空操作。
+
+    no-op 不携带运行时探针、容器身份或 Job 结果正文；这些事实只能从
+    ``source_receipt`` 指向的原有 passed 收据读取。将 no-op 单独校验，避免
+    把“没有需要执行”误判成一轮新的完整 ARM64 演练。
+    """
+
+    required = {
+        "schema_version",
+        "status",
+        "observed_at_utc",
+        "preflight_campaign",
+        "execution_contract",
+        "execution_contract_sha256",
+        "incremental_plan",
+        "tool_components",
+        "incremental_noop",
+        "collector",
+    }
+    if not isinstance(facts, Mapping) or set(facts) != required:
+        raise JobRehearsalReceiptError("incremental-noop facts字段不闭合")
+    if (
+        facts.get("schema_version") != FACTS_SCHEMA
+        or facts.get("status") != INCREMENTAL_NOOP_STATUS
+    ):
+        raise JobRehearsalReceiptError("incremental-noop facts身份非法")
+    _rfc3339(facts.get("observed_at_utc"), "incremental-noop.observed_at_utc")
+    campaign = _expect(
+        facts.get("preflight_campaign"),
+        {"path", "campaign_id", "manifest_sha256", "campaign_mode"},
+        "incremental-noop.preflight_campaign",
+    )
+    if (
+        not isinstance(campaign.get("path"), str)
+        or not campaign["path"].startswith("/")
+        or campaign.get("campaign_mode") != "preflight_only"
+        or not SAFE_ID_RE.fullmatch(str(campaign.get("campaign_id", "")))
+        or not SHA256_RE.fullmatch(str(campaign.get("manifest_sha256", "")))
+    ):
+        raise JobRehearsalReceiptError("incremental-noop Campaign 绑定非法")
+    contract = validate_execution_contract(
+        dict(facts.get("execution_contract") or {})
+    )
+    contract_sha = execution_contract_sha256(contract)
+    if facts.get("execution_contract_sha256") != contract_sha:
+        raise JobRehearsalReceiptError("incremental-noop execution contract 摘要漂移")
+    job_ids = set(str(item) for item in contract["job_ids"])
+    plan = _validate_incremental_plan(
+        facts.get("incremental_plan"),
+        job_ids,
+        label="incremental-noop.incremental_plan",
+    )
+    if (
+        plan.get("contract_sha256") != contract_sha
+        or plan.get("execute_job_ids") != []
+        or plan.get("failed_job_ids") != []
+        or plan.get("affected_job_ids") != []
+        or plan.get("reused_job_ids") != sorted(job_ids)
+    ):
+        raise JobRehearsalReceiptError("incremental-noop 计划不是完整复用空集")
+    _validate_component_summary(
+        facts.get("tool_components"), "incremental-noop.tool_components"
+    )
+    noop = _expect(
+        facts.get("incremental_noop"),
+        {
+            "schema_version",
+            "new_pass_fact",
+            "planned_job_ids",
+            "execute_job_ids",
+            "reused_job_ids",
+            "affected_job_ids",
+            "failed_job_ids",
+            "changed_components",
+            "plan_sha256",
+            "source_receipt",
+            "source_root",
+            "source_status",
+            "source_job_count",
+            "source_job_set_sha256",
+            "scanned_bytes",
+            "live_request_count",
+            "recorded_at_utc",
+        },
+        "incremental-noop",
+    )
+    planned = noop.get("planned_job_ids")
+    reused = noop.get("reused_job_ids")
+    changed = noop.get("changed_components")
+    if any(
+        not isinstance(value, list)
+        or value != sorted(set(value))
+        or not all(isinstance(item, str) and item for item in value)
+        for value in (planned, reused, changed)
+    ):
+        raise JobRehearsalReceiptError("incremental-noop 列表非法")
+    if (
+        planned != sorted(job_ids)
+        or noop.get("execute_job_ids") != []
+        or noop.get("affected_job_ids") != []
+        or noop.get("failed_job_ids") != []
+        or reused != sorted(job_ids)
+        or noop.get("new_pass_fact") is not False
+        or noop.get("schema_version") != INCREMENTAL_NOOP_SCHEMA
+        or noop.get("plan_sha256") != plan.get("plan_sha256")
+        or noop.get("source_status") != "passed"
+        or noop.get("scanned_bytes") != 0
+        or noop.get("live_request_count") != 0
+        or not isinstance(noop.get("source_root"), str)
+        or not noop["source_root"].startswith("/")
+        or not isinstance(noop.get("source_job_count"), int)
+        or isinstance(noop.get("source_job_count"), bool)
+        or noop.get("source_job_count") != len(job_ids)
+        or not SHA256_RE.fullmatch(str(noop.get("source_job_set_sha256", "")))
+    ):
+        raise JobRehearsalReceiptError("incremental-noop 事实或计数非法")
+    source = noop.get("source_receipt")
+    if (
+        not isinstance(source, Mapping)
+        or set(source) != {"path", "sha256", "bytes"}
+        or not isinstance(source.get("path"), str)
+        or source["path"].startswith("/")
+        or "\\" in source["path"]
+        or str(PurePosixPath(source["path"])) != source["path"]
+        or any(part in {"", ".", ".."} for part in PurePosixPath(source["path"]).parts)
+        or not SHA256_RE.fullmatch(str(source.get("sha256", "")))
+        or not isinstance(source.get("bytes"), int)
+        or isinstance(source.get("bytes"), bool)
+        or source.get("bytes") <= 0
+        or source != plan.get("previous_receipt")
+    ):
+        raise JobRehearsalReceiptError("incremental-noop 原有通过收据绑定非法")
+    _rfc3339(noop.get("recorded_at_utc"), "incremental-noop.recorded_at_utc")
+    collector = _expect(
+        facts.get("collector"),
+        {"schema_version", "tool", "tool_sha256", "version"},
+        "incremental-noop.collector",
+    )
+    if not allow_collector_drift and collector != _producer():
+        raise JobRehearsalReceiptError("incremental-noop 采集器身份漂移")
+    return {
+        "execution_contract_sha256": contract_sha,
+        "runtime_identity_sha256": None,
+        "job_count": len(job_ids),
+        "job_set_sha256": str(noop["source_job_set_sha256"]),
+        "status": INCREMENTAL_NOOP_STATUS,
+        "passed_job_count": 0,
+        "failed_job_ids": [],
+    }
+
+
 def validate_facts(
     facts: dict[str, Any],
     *,
     allow_collector_drift: bool = False,
 ) -> dict[str, Any]:
     """严格校验离线演练事实，并返回收据摘要。"""
+
+    # no-op facts 使用严格的最小字段集；不能落入完整演练校验并被当作新通过事实。
+    if (
+        isinstance(facts, Mapping)
+        and (
+            facts.get("status") == INCREMENTAL_NOOP_STATUS
+            or "incremental_noop" in facts
+        )
+    ):
+        return _validate_incremental_noop_facts(
+            facts,
+            allow_collector_drift=allow_collector_drift,
+        )
 
     required_fact_fields = {
         "schema_version",
@@ -2543,6 +2919,36 @@ def build_receipt(
         allow_collector_drift=allow_collector_drift,
     )
     campaign = facts["preflight_campaign"]
+    if validated["status"] == INCREMENTAL_NOOP_STATUS:
+        # no-op 收据保留当前计划和原有 passed 收据绑定，但明确不能作为
+        # Formal 的完整 Job 演练证明。
+        noop = facts.get("incremental_noop")
+        if not isinstance(noop, Mapping):
+            raise JobRehearsalReceiptError("incremental-noop facts 缺少事实标记")
+        receipt = {
+            "schema_version": RECEIPT_SCHEMA,
+            "status": INCREMENTAL_NOOP_STATUS,
+            "observed_at_utc": facts["observed_at_utc"],
+            "preflight_campaign": campaign,
+            "execution_contract": facts["execution_contract"],
+            "execution_contract_sha256": validated["execution_contract_sha256"],
+            "runtime_identity_sha256": None,
+            "job_count": validated["job_count"],
+            "job_set_sha256": validated["job_set_sha256"],
+            "facts": {
+                "path": facts_relative,
+                "sha256": _sha256_bytes(raw),
+                "bytes": len(raw),
+            },
+            "producer": facts["collector"] if allow_collector_drift else _producer(),
+            "failed_job_ids": [],
+            "executed_job_ids": [],
+            "reused_job_ids": list(noop["reused_job_ids"]),
+            "affected_job_ids": [],
+            "incremental_plan": dict(facts["incremental_plan"]),
+            "incremental_noop": dict(noop),
+        }
+        return receipt
     summary = facts.get("summary", {})
     jobs = facts.get("jobs", [])
     receipt = {
@@ -2585,6 +2991,8 @@ def collect(
     previous_receipt: str | None = None,
     rerun_failed: bool = False,
     checkpoint_relative: str | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
     root = _private_root(root)
     output = _relative(root, output_relative, "facts output")
@@ -2603,9 +3011,54 @@ def collect(
         previous_receipt_root=root,
         rerun_failed=rerun_failed,
         checkpoint_root=checkpoint_root,
+        deadline=deadline,
+        heartbeat=heartbeat,
     )
     _write_once(output, facts)
     return facts
+
+
+def _deadline_from_cli(arguments: argparse.Namespace) -> incremental_recovery.WallClockDeadline:
+    """从 CLI 参数冻结一次完整演练的全阶段 deadline。"""
+
+    budget = (
+        DEFAULT_ATTEMPT_WALL_SECONDS
+        if arguments.max_wall_seconds is None
+        else arguments.max_wall_seconds
+    )
+    heartbeat_seconds = (
+        DEFAULT_HEARTBEAT_SECONDS
+        if arguments.heartbeat_seconds is None
+        else arguments.heartbeat_seconds
+    )
+    if (
+        isinstance(budget, bool)
+        or not isinstance(budget, int)
+        or budget <= 0
+        or budget > MAX_ATTEMPT_WALL_SECONDS
+    ):
+        raise JobRehearsalReceiptError(
+            f"--max-wall-seconds 必须在 1～{MAX_ATTEMPT_WALL_SECONDS} 秒之间"
+        )
+    if (
+        isinstance(heartbeat_seconds, bool)
+        or not isinstance(heartbeat_seconds, int)
+        or heartbeat_seconds <= 0
+        or heartbeat_seconds > MAX_HEARTBEAT_SECONDS
+    ):
+        raise JobRehearsalReceiptError(
+            f"--heartbeat-seconds 必须在 1～{MAX_HEARTBEAT_SECONDS} 秒之间"
+        )
+    try:
+        deadline = incremental_recovery.WallClockDeadline(
+            budget,
+            label="job-rehearsal",
+        )
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise JobRehearsalReceiptError(str(error)) from error
+    deadline.heartbeat_seconds = heartbeat_seconds  # type: ignore[attr-defined]
+    deadline.phase = "job-rehearsal"  # type: ignore[attr-defined]
+    return deadline
 
 
 def finalize(root: Path, facts_relative: str, output_relative: str) -> dict[str, Any]:
@@ -2640,6 +3093,10 @@ def assert_formal_compatible(
 ) -> None:
     """拒绝 Formal 使用不同 Job、工具、容器、二进制或运行镜像。"""
 
+    if receipt.get("status") == INCREMENTAL_NOOP_STATUS:
+        raise JobRehearsalReceiptError(
+            "incremental-noop 不是完整 Job 演练通过事实，Formal 必须绑定原有 passed 收据"
+        )
     validate_execution_contract(dict(expected_contract))
     actual = receipt.get("execution_contract")
     if not isinstance(actual, dict):
@@ -2676,6 +3133,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--checkpoint-root",
         help="checkpoint 目录（相对 evidence-root，默认 checkpoints）",
     )
+    collect_parser.add_argument(
+        "--max-wall-seconds",
+        type=int,
+        default=None,
+        help=(
+            f"一次完整演练的单调墙钟预算（默认 {DEFAULT_ATTEMPT_WALL_SECONDS} 秒，"
+            f"上限 {MAX_ATTEMPT_WALL_SECONDS} 秒）"
+        ),
+    )
+    collect_parser.add_argument(
+        "--heartbeat-seconds",
+        type=int,
+        default=None,
+        help=(
+            f"watchdog heartbeat 间隔（默认 {DEFAULT_HEARTBEAT_SECONDS} 秒，"
+            f"上限 {MAX_HEARTBEAT_SECONDS} 秒）"
+        ),
+    )
     finalize_parser = commands.add_parser("finalize", help="封存完整 Job 演练收据")
     finalize_parser.add_argument("--evidence-root", type=Path, required=True)
     finalize_parser.add_argument("--facts", required=True)
@@ -2691,6 +3166,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         if arguments.command == "collect":
+            deadline = _deadline_from_cli(arguments)
             result = collect(
                 arguments.evidence_root,
                 arguments.output,
@@ -2698,6 +3174,7 @@ def main(argv: list[str] | None = None) -> int:
                 previous_receipt=arguments.previous_receipt,
                 rerun_failed=arguments.rerun_failed,
                 checkpoint_relative=arguments.checkpoint_root,
+                deadline=deadline,
             )
         elif arguments.command == "finalize":
             result = finalize(
@@ -2705,7 +3182,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             result = replay(arguments.evidence_root, arguments.receipt)
-    except (OSError, JobRehearsalReceiptError) as error:
+    except (
+        OSError,
+        JobRehearsalReceiptError,
+        incremental_recovery.IncrementalRecoveryError,
+    ) as error:
         print(f"Codex 完整 Job 离线演练失败：{error}", file=sys.stderr)
         return 1
     print(

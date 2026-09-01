@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools.official_client_capture import codex_upgrade
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt as receipt
@@ -262,6 +263,179 @@ class JobRehearsalReceiptTests(unittest.TestCase):
             ]["const"],
             receipt.EXECUTION_CONTRACT_SCHEMA,
         )
+
+    def test_incremental_noop_skips_runtime_probes_and_is_not_formal_pass(self) -> None:
+        """空执行计划在 Docker／二进制／环境探针前短路。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            source_root = root / "source"
+            source_root.mkdir(mode=0o700)
+            contract = self._contract(source_root)
+            source_receipt = create_job_rehearsal_receipt(
+                source_root,
+                contract=contract,
+                preflight_campaign_id="preflight-0151",
+            )
+            campaign_dir = root / "campaign"
+            campaign_dir.mkdir(mode=0o700)
+            (campaign_dir / "campaign.json").write_text("{}\n", encoding="utf-8")
+            (campaign_dir / "campaign.json").chmod(0o600)
+            scenario_name = "scenarios.json"
+            scenario_source = Path(receipt.__file__).with_name(
+                "codex_upgrade_scenarios_0_151_0.json"
+            )
+            (campaign_dir / scenario_name).write_bytes(
+                scenario_source.read_bytes()
+            )
+            (campaign_dir / scenario_name).chmod(0o600)
+            configuration = dict(contract["configuration"])
+            manifest = {
+                "campaign_id": "preflight-0151",
+                "campaign_mode": "preflight_only",
+                "target_version": "0.151.0",
+                "target_sha256": "1" * 64,
+                "suite": "full",
+                "official_identity": {
+                    "package": {
+                        "asset_sha256": "2" * 64,
+                        "code_mode_host_sha256": "3" * 64,
+                    }
+                },
+                "inputs": {
+                    "target_discovery_scenarios": {"path": scenario_name}
+                },
+                "configuration": configuration,
+                "tool_identity": {
+                    "files_sha256": contract["tool_files_sha256"]
+                },
+            }
+            jobs = [
+                codex_upgrade.Job(
+                    job_id=job_id,
+                    phase=contract["job_phases"][job_id],
+                    suites=("full",),
+                    description=job_id,
+                    steps=(
+                        {
+                            "argv": ["true"],
+                            "environment": {},
+                            "timeout": 1,
+                        },
+                    ),
+                    evidence_roots=(),
+                    covers=(),
+                )
+                for job_id in contract["job_ids"]
+            ]
+            plan_core = {
+                "contract_sha256": receipt.execution_contract_sha256(contract),
+                "execute_job_ids": [],
+                "reused_job_ids": list(contract["job_ids"]),
+                "failed_job_ids": [],
+                "changed_components": [],
+                "reasons": {
+                    job_id: "unchanged_dependency"
+                    for job_id in contract["job_ids"]
+                },
+            }
+            plan = {
+                "schema_version": incremental_recovery.SCHEMA_VERSION,
+                **plan_core,
+                "plan_sha256": incremental_recovery.digest(plan_core),
+            }
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "load_campaign_manifest",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_campaign_jobs",
+                    side_effect=[jobs[:29], jobs[29:]],
+                ),
+                mock.patch.object(
+                    receipt.platform,
+                    "machine",
+                    return_value="aarch64",
+                ),
+                mock.patch.object(
+                    receipt.platform,
+                    "system",
+                    return_value="linux",
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_select_rehearsal_plan",
+                    return_value=plan,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_verify_execution_tree",
+                    side_effect=AssertionError("_verify_execution_tree"),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_verify_official_binaries",
+                    side_effect=AssertionError("_verify_official_binaries"),
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_container_tool_tree",
+                    side_effect=AssertionError("_container_tool_tree"),
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_container_facts",
+                    side_effect=AssertionError("_container_facts"),
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_host_dependencies",
+                    side_effect=AssertionError("_host_dependencies"),
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_container_dependencies",
+                    side_effect=AssertionError("_container_dependencies"),
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_bwrap_probe",
+                    side_effect=AssertionError("_bwrap_probe"),
+                ),
+                mock.patch.object(
+                    receipt,
+                    "_zstd_probe",
+                    side_effect=AssertionError("_zstd_probe"),
+                ),
+            ):
+                facts = receipt.collect_facts(
+                    campaign_dir,
+                    previous_receipt=source_receipt,
+                    previous_receipt_root=source_root,
+                    rerun_failed=True,
+                    checkpoint_root=root / "checkpoints",
+                )
+            self.assertEqual(facts["status"], receipt.INCREMENTAL_NOOP_STATUS)
+            noop = facts["incremental_noop"]
+            self.assertEqual(noop["execute_job_ids"], [])
+            self.assertEqual(noop["reused_job_ids"], contract["job_ids"])
+            self.assertEqual(noop["affected_job_ids"], [])
+            self.assertEqual(noop["scanned_bytes"], 0)
+            self.assertEqual(noop["live_request_count"], 0)
+            self.assertFalse(noop["new_pass_fact"])
+            receipt_path = root / "noop-facts.json"
+            receipt_path.write_bytes(receipt._canonical(facts))
+            receipt_path.chmod(0o600)
+            built = receipt.build_receipt(root, receipt_path.name)
+            self.assertEqual(built["status"], receipt.INCREMENTAL_NOOP_STATUS)
+            with self.assertRaisesRegex(
+                receipt.JobRehearsalReceiptError, "不是完整 Job 演练"
+            ):
+                receipt.assert_formal_compatible(built, contract)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,8 @@
     "status": {
       "enum": [
         "passed",
-        "failed"
+        "failed",
+        "incremental-noop"
       ]
     },
     "observed_at_utc": {
@@ -41,7 +42,14 @@
       "$ref": "#/$defs/sha256"
     },
     "runtime_identity_sha256": {
-      "$ref": "#/$defs/sha256"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "job_count": {
       "type": "integer",
@@ -73,8 +81,47 @@
     },
     "checkpoint": {
       "$ref": "#/$defs/checkpoint"
+    },
+    "incremental_noop": {
+      "$ref": "#/$defs/incrementalNoop"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "incremental-noop"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["incremental_noop"],
+        "properties": {
+          "runtime_identity_sha256": {
+            "type": "null"
+          },
+          "failed_job_ids": {
+            "const": []
+          },
+          "executed_job_ids": {
+            "const": []
+          },
+          "affected_job_ids": {
+            "const": []
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "runtime_identity_sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": {
       "type": "string",
@@ -181,6 +228,88 @@
         },
         "last_sha256": {
           "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "incrementalNoop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "new_pass_fact",
+        "planned_job_ids",
+        "execute_job_ids",
+        "reused_job_ids",
+        "affected_job_ids",
+        "failed_job_ids",
+        "changed_components",
+        "plan_sha256",
+        "source_receipt",
+        "source_root",
+        "source_status",
+        "source_job_count",
+        "source_job_set_sha256",
+        "scanned_bytes",
+        "live_request_count",
+        "recorded_at_utc"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-incremental-noop/v1"
+        },
+        "new_pass_fact": {
+          "const": false
+        },
+        "planned_job_ids": {
+          "$ref": "#/$defs/jobIdArray"
+        },
+        "execute_job_ids": {
+          "const": []
+        },
+        "reused_job_ids": {
+          "$ref": "#/$defs/jobIdArray"
+        },
+        "affected_job_ids": {
+          "const": []
+        },
+        "failed_job_ids": {
+          "const": []
+        },
+        "changed_components": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/componentName"
+          }
+        },
+        "plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_receipt": {
+          "$ref": "#/$defs/binding"
+        },
+        "source_root": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "source_status": {
+          "const": "passed"
+        },
+        "source_job_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_job_set_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "scanned_bytes": {
+          "const": 0
+        },
+        "live_request_count": {
+          "const": 0
+        },
+        "recorded_at_utc": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     },

@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from tools.official_client_capture import incremental_recovery
+
 
 FACTS_SCHEMA = "codex-upgrade-arm64-environment-facts/v1"
 RECEIPT_SCHEMA = "codex-upgrade-arm64-environment-receipt/v1"
@@ -71,6 +73,12 @@ MAX_JSON_BYTES = 4 * 1024 * 1024
 
 class Arm64EnvironmentReceiptError(ValueError):
     """ARM64 硬门禁事实不完整、发生漂移或无法重放。"""
+
+
+# 一个 ARM64 收据包含多个 docker inspect/exec 命令；用作用域确保它们共享
+# attempt 的同一条 deadline，而不是每个命令各自重新获得固定 30 秒。
+_ACTIVE_DEADLINE: incremental_recovery.WallClockDeadline | None = None
+_ACTIVE_HEARTBEAT: Any | None = None
 
 
 def _canonical(value: Any) -> bytes:
@@ -252,15 +260,35 @@ def contract_sha256() -> str:
     )
 
 
-def _run(argv: list[str], label: str, timeout: int = 30) -> bytes:
+def _run(
+    argv: list[str],
+    label: str,
+    timeout: int = 30,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> bytes:
+    active_deadline = deadline if deadline is not None else _ACTIVE_DEADLINE
+    active_heartbeat = heartbeat if heartbeat is not None else _ACTIVE_HEARTBEAT
     try:
-        completed = subprocess.run(
-            argv,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-        )
+        if active_deadline is not None:
+            completed = incremental_recovery.run_bounded_subprocess(
+                argv,
+                timeout=timeout,
+                deadline=active_deadline,
+                operation=label,
+                check=False,
+                capture_output=True,
+                heartbeat=active_heartbeat,
+            )
+        else:
+            completed = subprocess.run(
+                argv,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
     except (OSError, subprocess.SubprocessError) as error:
         raise Arm64EnvironmentReceiptError(f"{label}执行失败") from error
     if completed.returncode != 0:
@@ -386,7 +414,7 @@ def _container_observation(name: str) -> dict[str, Any]:
     }
 
 
-def collect_facts(*, phase: str, subject_id: str) -> dict[str, Any]:
+def _collect_facts(*, phase: str, subject_id: str) -> dict[str, Any]:
     """只读采集宿主、两个容器、固定出口和根文件系统事实。"""
 
     if phase not in PHASES:
@@ -432,6 +460,27 @@ def collect_facts(*, phase: str, subject_id: str) -> dict[str, Any]:
             "version": PRODUCER_VERSION,
         },
     }
+
+
+def collect_facts(
+    *,
+    phase: str,
+    subject_id: str,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> dict[str, Any]:
+    """采集 ARM64 事实，并让全部容器命令共享受管 deadline。"""
+
+    global _ACTIVE_DEADLINE, _ACTIVE_HEARTBEAT
+    previous_deadline = _ACTIVE_DEADLINE
+    previous_heartbeat = _ACTIVE_HEARTBEAT
+    _ACTIVE_DEADLINE = deadline
+    _ACTIVE_HEARTBEAT = heartbeat
+    try:
+        return _collect_facts(phase=phase, subject_id=subject_id)
+    finally:
+        _ACTIVE_DEADLINE = previous_deadline
+        _ACTIVE_HEARTBEAT = previous_heartbeat
 
 
 def _validate_container(value: Any, expected_name: str) -> dict[str, Any]:
@@ -681,10 +730,23 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
     return _build_receipt(root, facts_relative)
 
 
-def collect(root: Path, output_relative: str, *, phase: str, subject_id: str) -> dict[str, Any]:
+def collect(
+    root: Path,
+    output_relative: str,
+    *,
+    phase: str,
+    subject_id: str,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> dict[str, Any]:
     root = _private_root(root)
     output = _relative(root, output_relative, "facts output")
-    facts = collect_facts(phase=phase, subject_id=subject_id)
+    facts = collect_facts(
+        phase=phase,
+        subject_id=subject_id,
+        deadline=deadline,
+        heartbeat=heartbeat,
+    )
     _write_once(output, facts)
     return facts
 

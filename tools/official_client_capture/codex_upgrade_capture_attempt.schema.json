@@ -160,6 +160,12 @@
     },
     "incremental_plan": {
       "$ref": "#/$defs/attemptIncrementalPlan"
+    },
+    "watchdog": {
+      "$ref": "#/$defs/watchdog"
+    },
+    "job_checkpoint": {
+      "$ref": "#/$defs/jobCheckpoint"
     }
   },
   "allOf": [
@@ -388,6 +394,112 @@
         },
         "plan_sha256": {
           "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "watchdog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "budget_seconds",
+        "heartbeat_seconds",
+        "elapsed_seconds",
+        "remaining_seconds",
+        "heartbeat",
+        "timeout_checkpoint",
+        "last_completed_job_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-watchdog-heartbeat/v1"
+        },
+        "budget_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "heartbeat_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "remaining_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "heartbeat": {
+          "$ref": "#/$defs/nullableFileBindingWithBytes"
+        },
+        "timeout_checkpoint": {
+          "$ref": "#/$defs/nullableFileBindingWithBytes"
+        },
+        "last_completed_job_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/safeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "jobCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "record_count",
+        "last_sequence",
+        "last_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-job-checkpoint/v1"
+        },
+        "campaign_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "phase": {
+          "enum": ["official", "candidate"]
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "run_nonce": {
+          "$ref": "#/$defs/sha256"
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_sequence": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

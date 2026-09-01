@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
+import signal
 import stat
+import subprocess
 import tempfile
+import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
@@ -34,6 +38,267 @@ CHECKPOINT_STATUSES = frozenset(
 
 class IncrementalRecoveryError(ValueError):
     """增量计划、依赖图或 checkpoint 不可信。"""
+
+
+class WallClockTimeoutError(IncrementalRecoveryError):
+    """一次受管 attempt 超过显式墙钟预算。"""
+
+    def __init__(
+        self,
+        operation: str,
+        *,
+        elapsed_seconds: float,
+        budget_seconds: float,
+    ) -> None:
+        self.operation = str(operation)
+        self.elapsed_seconds = float(elapsed_seconds)
+        self.budget_seconds = float(budget_seconds)
+        super().__init__(
+            f"墙钟预算已到期：{self.operation} "
+            f"（{self.elapsed_seconds:.3f}s/{self.budget_seconds:.3f}s）"
+        )
+
+
+class WallClockDeadline:
+    """使用单调时钟管理一次 attempt 的全阶段 deadline。
+
+    该对象不依赖墙上时间，也不允许通过重试或子阶段重新计时。调用方必须在
+    每个外部命令、重试退避和大循环边界调用 :meth:`check`；到期统一抛出
+    ``WallClockTimeoutError``，由上层写入停线收据。
+    """
+
+    def __init__(
+        self,
+        budget_seconds: int | float,
+        *,
+        label: str = "attempt",
+        clock: Any = time.monotonic,
+    ) -> None:
+        if isinstance(budget_seconds, bool) or not isinstance(
+            budget_seconds, (int, float)
+        ):
+            raise IncrementalRecoveryError("墙钟预算必须是数字")
+        budget = float(budget_seconds)
+        if not math.isfinite(budget) or budget <= 0:
+            raise IncrementalRecoveryError("墙钟预算必须为正有限数")
+        if not isinstance(label, str) or not label.strip() or len(label) > 128:
+            raise IncrementalRecoveryError("墙钟预算标签非法")
+        if not callable(clock):
+            raise IncrementalRecoveryError("单调时钟必须可调用")
+        self.budget_seconds = budget
+        self.label = label.strip()
+        self._clock = clock
+        self.started_monotonic = float(clock())
+        self.deadline_monotonic = self.started_monotonic + budget
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return max(0.0, float(self._clock()) - self.started_monotonic)
+
+    @property
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.deadline_monotonic - float(self._clock()))
+
+    @property
+    def expired(self) -> bool:
+        return self.remaining_seconds <= 0
+
+    def check(self, operation: str | None = None) -> float:
+        """检查 deadline 并返回剩余秒数；到期立即失败关闭。"""
+
+        remaining = self.remaining_seconds
+        if remaining <= 0:
+            raise WallClockTimeoutError(
+                operation or self.label,
+                elapsed_seconds=self.elapsed_seconds,
+                budget_seconds=self.budget_seconds,
+            )
+        return remaining
+
+    def bounded_timeout(
+        self,
+        requested_seconds: int | float,
+        *,
+        operation: str | None = None,
+        minimum_seconds: float = 0.001,
+    ) -> float:
+        """把单步 timeout 收紧到全局剩余预算内。"""
+
+        if isinstance(requested_seconds, bool) or not isinstance(
+            requested_seconds, (int, float)
+        ):
+            raise IncrementalRecoveryError("单步 timeout 必须是数字")
+        requested = float(requested_seconds)
+        if not math.isfinite(requested) or requested <= 0:
+            raise IncrementalRecoveryError("单步 timeout 必须为正有限数")
+        if isinstance(minimum_seconds, bool) or not isinstance(
+            minimum_seconds, (int, float)
+        ):
+            raise IncrementalRecoveryError("最小 timeout 必须是数字")
+        minimum = max(0.0, float(minimum_seconds))
+        remaining = self.check(operation)
+        # subprocess.wait 接受极小正数；若剩余时间小于 minimum，仍返回剩余值，
+        # 让调用方得到 TimeoutExpired 后执行进程组清理。
+        return min(requested, max(remaining, 1e-9))
+
+    def sleep(self, seconds: int | float, *, operation: str = "retry backoff") -> None:
+        """在全局 deadline 内退避，禁止睡眠越过预算。"""
+
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise IncrementalRecoveryError("退避时长必须是数字")
+        delay = float(seconds)
+        if not math.isfinite(delay) or delay < 0:
+            raise IncrementalRecoveryError("退避时长非法")
+        remaining = self.check(operation)
+        time.sleep(min(delay, remaining))
+        self.check(operation)
+
+
+def terminate_process_group(
+    process: subprocess.Popen[Any],
+    *,
+    deadline: WallClockDeadline | None = None,
+    term_grace_seconds: float = 2.0,
+    kill_grace_seconds: float = 1.0,
+) -> None:
+    """有界地终止一个外部命令及其整个进程组。
+
+    采集命令可能再派生 relay、curl 或容器子进程；只调用
+    ``Popen.terminate`` 会留下孤儿进程，进而继续占用出口和磁盘。这里先发
+    ``SIGTERM``，宽限期后无条件发 ``SIGKILL``。宽限期也受 attempt 剩余
+    deadline 限制，不能因为清理动作把全局墙钟预算拖长。
+    """
+
+    if process.poll() is not None:
+        return
+
+    def remaining_cap(requested: float) -> float:
+        if deadline is None:
+            return max(0.001, requested)
+        return min(max(0.001, requested), max(0.001, deadline.remaining_seconds))
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (AttributeError, OSError, ProcessLookupError):
+        try:
+            process.terminate()
+        except (AttributeError, OSError, ProcessLookupError):
+            pass
+    try:
+        process.wait(timeout=remaining_cap(term_grace_seconds))
+        return
+    except (subprocess.TimeoutExpired, OSError, ProcessLookupError):
+        pass
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (AttributeError, OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except (AttributeError, OSError, ProcessLookupError):
+            pass
+    try:
+        process.wait(timeout=remaining_cap(kill_grace_seconds))
+    except (subprocess.TimeoutExpired, OSError, ProcessLookupError):
+        # 上层会把未回收的状态视为失败；这里不能再次无限等待。
+        pass
+
+
+def run_bounded_subprocess(
+    argv: Iterable[str],
+    *,
+    timeout: int | float,
+    deadline: WallClockDeadline,
+    operation: str,
+    check: bool = False,
+    capture_output: bool = True,
+    text: bool = False,
+    encoding: str | None = None,
+    errors: str | None = None,
+    cwd: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    stdin: Any = subprocess.DEVNULL,
+    heartbeat: Any | None = None,
+) -> subprocess.CompletedProcess[Any]:
+    """在单步 timeout 与 attempt 全局 deadline 的交集内执行命令。
+
+    与 ``subprocess.run(timeout=...)`` 不同，本函数按 heartbeat 间隔切片
+    等待，并在每个切片重新检查单调 deadline；到期会回收整个进程组并抛出
+    :class:`WallClockTimeoutError`，所以同步探针也不能绕过 watchdog。
+    """
+
+    if not isinstance(operation, str) or not operation.strip():
+        raise IncrementalRecoveryError("外部命令操作标签不能为空")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise IncrementalRecoveryError("外部命令 timeout 必须是数字")
+    requested = float(timeout)
+    if not math.isfinite(requested) or requested <= 0:
+        raise IncrementalRecoveryError("外部命令 timeout 必须为正有限数")
+    command = list(argv)
+    if not command or not all(isinstance(item, str) and item for item in command):
+        raise IncrementalRecoveryError("外部命令参数非法")
+    deadline.check(operation)
+    stdout_target: Any = subprocess.PIPE if capture_output else None
+    stderr_target: Any = subprocess.PIPE if capture_output else None
+    process = subprocess.Popen(
+        command,
+        stdin=stdin,
+        stdout=stdout_target,
+        stderr=stderr_target,
+        cwd=cwd,
+        env=dict(env) if env is not None else None,
+        text=text,
+        encoding=encoding,
+        errors=errors,
+        start_new_session=True,
+        shell=False,
+    )
+    started = time.monotonic()
+    step_deadline = started + requested
+    interval = float(getattr(deadline, "heartbeat_seconds", 30.0))
+    if not math.isfinite(interval) or interval <= 0:
+        interval = 30.0
+    while True:
+        try:
+            remaining_global = deadline.check(operation)
+        except WallClockTimeoutError:
+            terminate_process_group(process, deadline=deadline)
+            raise
+        remaining_step = step_deadline - time.monotonic()
+        if remaining_step <= 0:
+            terminate_process_group(process, deadline=deadline)
+            raise subprocess.TimeoutExpired(command, requested)
+        wait_for = min(remaining_global, remaining_step, interval)
+        try:
+            stdout, stderr = process.communicate(timeout=max(0.001, wait_for))
+        except subprocess.TimeoutExpired:
+            if heartbeat is not None:
+                try:
+                    heartbeat(operation)
+                except BaseException:
+                    terminate_process_group(process, deadline=deadline)
+                    raise
+            # 先检查全局预算，再判断是否只是 heartbeat 切片。
+            try:
+                deadline.check(operation)
+            except WallClockTimeoutError:
+                terminate_process_group(process, deadline=deadline)
+                raise
+            if time.monotonic() >= step_deadline:
+                terminate_process_group(process, deadline=deadline)
+                raise subprocess.TimeoutExpired(command, requested)
+            continue
+        # 命令已退出，但收集输出和调度回到 Python 期间仍可能越过 deadline。
+        deadline.check(operation)
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        if check and result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                command,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return result
 
 
 def normalize_root_cause(value: Any) -> str:
@@ -529,6 +794,10 @@ def select_rerun(
         "unknown": unknown,
         "changed_components": sorted(components),
         "high_risk": bool(high_risk),
+        # 这是计划事实，不是新的通过结论。调用方在该值为 True 时必须在
+        # reservation／探针之前写 incremental-noop，并直接结束本次恢复。
+        "no_op": not execute,
+        "no_op_reason": "no_failed_or_affected_items" if not execute else None,
         "reasons": execute_reasons,
         "plan_sha256": digest(
             {
@@ -541,6 +810,8 @@ def select_rerun(
                 "reasons": execute_reasons,
                 "changed_components": sorted(components),
                 "high_risk": bool(high_risk),
+                "no_op": not execute,
+                "no_op_reason": "no_failed_or_affected_items" if not execute else None,
             }
         ),
     }
@@ -553,13 +824,19 @@ class CheckpointStore:
     成功一次，后续状态必须使用新的序号和前序摘要，避免覆盖历史。
     """
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, create: bool = True):
         if not isinstance(root, Path) or not root.is_absolute() or root.is_symlink():
             raise IncrementalRecoveryError("checkpoint 根必须是绝对非符号链接目录")
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if create:
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        elif not root.is_dir():
+            raise IncrementalRecoveryError("checkpoint 根不存在或不是目录")
         if root.is_symlink() or stat.S_IMODE(root.stat().st_mode) != 0o700:
             raise IncrementalRecoveryError("checkpoint 根权限必须为 0700")
-        self.root = root.resolve(strict=True)
+        resolved = root.resolve(strict=True)
+        if resolved.is_symlink() or not resolved.is_dir():
+            raise IncrementalRecoveryError("checkpoint 根不是可信目录")
+        self.root = resolved
 
     def _paths(self) -> list[Path]:
         paths = sorted(self.root.iterdir(), key=lambda path: path.name)

@@ -62,6 +62,41 @@ class TimingLedgerTests(unittest.TestCase):
             self.assertEqual(status["status"], "active")
             self.assertEqual(status["total_deadline_at_utc"], "2026-08-30T06:00:00+00:00")
 
+    def test_producer_path_relocation_does_not_invalidate_historical_ledger(self) -> None:
+        """工作树根变化不应迫使历史收据重新执行。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            plan_path = root / "ledger.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["producer"]["tool"] = (
+                "/srv/retired-codex-worktree/tools/official_client_capture/"
+                "codex_upgrade_timing_ledger.py"
+            )
+            plan["producer"]["tool_sha256"] = ledger._producer()["tool_sha256"]
+            plan_path.write_bytes(ledger._canonical(plan))
+            plan_path.chmod(0o600)
+            status = ledger.inspect_ledger(root, now=self._at(1))
+            self.assertEqual(status["status"], "active")
+
+    def test_relocated_legacy_producer_uses_registered_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "UpgradeTimingLedger"
+            self._create(root)
+            plan_path = root / "ledger.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["producer"]["tool"] = (
+                "/srv/retired-codex-worktree/tools/official_client_capture/"
+                "codex_upgrade_timing_ledger.py"
+            )
+            plan["producer"]["tool_sha256"] = (
+                "828a8ff86a4b021037d7e9068d80b1d422ff22d39fba89cb1c9ac04e451157e0"
+            )
+            plan_path.write_bytes(ledger._canonical(plan))
+            plan_path.chmod(0o600)
+            status = ledger.inspect_ledger(root, now=self._at(1))
+            self.assertEqual(status["status"], "active")
+
     def test_checkpoint_replays_across_registered_producer_successor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "UpgradeTimingLedger"

@@ -386,14 +386,38 @@ candidate 或批准事实。
   仅影响取证路由的开关，并在删除临时目录前把失败原因写入 attempt 日志；不得用反复 live 重试代替诊断。
 - 正式 Campaign 与新预检的规则、场景输入必须来自受管版本化原文件；Campaign 内规范化副本只供该
   Campaign 重放，禁止反向作为新输入。原文件与规范化产物分别登记摘要，混用或摘要漂移立即失败关闭。
-- 控制收据 producer 必须从仓库绝对路径调用，并在执行前确认同一仓库的 `docs/`、Schema 和生成器可读；
-  Job 执行树不是 producer 仓库，禁止从该目录生成控制收据。
+- 控制收据 producer 只能按受管仓库的规范相对坐标调用，并在执行前确认同一仓库的 `docs/`、Schema
+  和生成器可读；收据中的 worktree 绝对根只是当次执行坐标，历史重放不得因 worktree 搬迁失效。
+- Job 执行树不是 producer 仓库，禁止从该目录生成控制收据；producer 迁移时只更新执行坐标和过渡收据，
+  不得改写历史 producer 身份或触发无关 Job 全量重跑。
 - 深度读取前先完成路径、符号链接、权限、属主、磁盘、身份和必需收据等廉价检查；廉价检查失败时
   `scanned_bytes` 必须为 0。新 attempt 由 seal 预览、缺少 manifest 的历史导入边界由一次显式
   `deep-verify` 完成唯一内容扫描并生成逐文件 `EvidenceManifest`；二者不得对同一边界重复扫描。后续
   seal 批准、`status`、compare、accept 和 successor 只验证小型摘要与 stat 边界。
 - `status` 必须是廉价只读操作；完整重哈希只能由显式 `deep-verify` 触发。任何普通状态查询、恢复判断
   或 successor 创建都不得隐式调用 `deep-verify`。
+
+每个受管 attempt 还必须使用同一条单调时钟 watchdog：
+
+- attempt 开始前冻结 `max_wall_seconds` 和心跳间隔；deadline 覆盖预约后的全部探针、Job、清理、恢复
+  与收据写入，任何重试、子阶段或 successor 都不得重置它。每次外部命令的等待上限取
+  `min(step_timeout, deadline.remaining)`，到期先终止整个进程组（`SIGTERM`，宽限期后 `SIGKILL`），
+  再写入不可覆盖的 `timeout` checkpoint 和非零终态。
+- 编排器必须按固定间隔原子更新不含秘密的 heartbeat（阶段、当前操作、已用／剩余墙钟、最后完成项）；
+  每个 Job 完成后立即写 checkpoint。watchdog、checkpoint 或清理自身失败也必须停线，不能静默继续或
+  进入无限重试。
+- 在创建 reservation 之前先计算“前序失败项及其下游闭集 ∪ 工具变化闭集”。若执行集合为空，立即写入
+  `incremental-noop` 收据（`execute=[]`、复用项、`scanned_bytes=0`、`live_request_count=0`）并以成功
+  状态退出；不得创建 reservation、启动容器／探针、读取大证据或发送请求。Job 演练同样短路。
+- 主编排器 no-op 固定写在 `campaign/incremental-noop/{official|candidates/<candidate-id>}/`，不创建
+  `attempts/`；收据必须同时包含 `planned_job_ids`、`execute_job_ids=[]`、`reused_job_ids`、
+  `affected_job_ids=[]`、`failed_job_ids=[]`、`plan_sha256`、逐 Job `source_receipts`、
+  `scanned_bytes=0` 和 `live_request_count=0`，并按
+  `tools/official_client_capture/codex_upgrade_incremental_noop.schema.json` 校验，来源文件仍须在原 Campaign 内。
+- `incremental-noop` 不是新的通过事实，也不改变阶段状态；它只记录本次没有需要执行的项，后续恢复必须
+  继续引用原有通过收据。超时终态也不得被当作 no-op；只能保留 checkpoint 并按停线流程人工恢复。
+- Job 演练 CLI 必须显式支持 `--max-wall-seconds` 与 `--heartbeat-seconds`，默认值和上限与 Formal
+  编排器一致；所有 Docker／宿主探针都必须使用同一条 deadline，不能回退到无界 `subprocess.run`。
 
 预算到期必须保存最后合法身份并输出阶段、根因、墙钟、重试／live 请求计数、资源水位、最后成功收据及
 唯一下一动作。缺少可重放的计时、连续性或资源收据时只能停在首阶段；客户端升级的固定预算见 §5.3.5。
@@ -422,6 +446,7 @@ Job 和门禁必须声明直接依赖，形成有向无环图；下游依赖摘�
 |---|---|
 | 纯文档、与结果无关的评估代码 | 不重跑；仅更新工具审计摘要 |
 | 评估组件或单个 Job 合同 | 只重跑受影响 Job 及其下游门禁；未受影响且已通过的结果直接复用 |
+| watchdog、ARM64 环境探针、计时台账或纯状态编排接线修复 | 归入评估侧；记录组件过渡，不使无关已通过 Job 失效 |
 | 单个门禁实现 | 只重跑该门禁及依赖它的终态收据 |
 | 采集／中继／脱敏、官方协议／认证／Sink、镜像／二进制、ARM64 网络或共享合同 | 使相应 Persona 的 producer→Job→gate 闭集失效；不相关 Persona 和不相交闭集不得重跑 |
 | 官方请求证据本身 | 只读承接；禁止自动重发。缺证据或身份不可信时停线并新建正式取证 Campaign |

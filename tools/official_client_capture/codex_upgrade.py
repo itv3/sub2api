@@ -10,6 +10,7 @@ import glob
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -27,7 +28,7 @@ import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
 from typing import Any, Iterable
 
@@ -257,6 +258,8 @@ NETWORK_PACKAGES = {
 MAX_JSON_BYTES = 128 * 1024 * 1024
 ADMIN_TOKEN_MAX_BYTES = 16 * 1024
 ADMIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
+# 非 attempt 的 Go 生成器也必须有硬上限，避免工具故障把后续阶段永久挂住。
+PROFILE_GENERATOR_TIMEOUT_SECONDS = 5 * 60
 
 
 @dataclass(frozen=True)
@@ -1811,18 +1814,128 @@ def _expand_roots(patterns: Iterable[str]) -> list[Path]:
     return output
 
 
-def _terminate_process(process: subprocess.Popen[Any]) -> None:
+def _terminate_process(
+    process: subprocess.Popen[Any],
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+) -> None:
+    """终止整个进程组，并把清理等待限制在 attempt 剩余预算内。"""
+
     if process.poll() is not None:
         return
+    # 普通调用保留原有 15s/5s 宽限；受管 attempt 则不能让清理越过全局
+    # deadline。SIGKILL 始终发送，即使 SIGTERM 宽限已经耗尽。
+    term_timeout = 15.0
+    kill_timeout = 5.0
+    if deadline is not None:
+        term_timeout = min(term_timeout, max(0.001, deadline.remaining_seconds))
     try:
         os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=15)
+        process.wait(timeout=term_timeout)
+        return
     except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if deadline is not None:
+        kill_timeout = min(kill_timeout, max(0.001, deadline.remaining_seconds))
+    try:
+        process.wait(timeout=kill_timeout)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        # 进程组已经收到 SIGKILL；上层仍会把未回收状态视为停线错误。
+        pass
+
+
+def _wait_process(
+    process: subprocess.Popen[Any],
+    requested_seconds: int | float,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    operation: str = "job step",
+    heartbeat: Any | None = None,
+) -> int:
+    """等待子进程，统一应用单步 timeout 与 attempt 全局 deadline。"""
+
+    if isinstance(requested_seconds, bool) or not isinstance(
+        requested_seconds, (int, float)
+    ):
+        raise ConfigurationError(f"{operation} timeout 非法。")
+    requested = float(requested_seconds)
+    if requested <= 0 or not math.isfinite(requested):
+        raise ConfigurationError(f"{operation} timeout 非法。")
+    if deadline is None:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait(timeout=5)
+            return int(process.wait(timeout=requested))
+        except subprocess.TimeoutExpired:
+            _terminate_process(process)
+            return 124
+
+    started = time.monotonic()
+    step_deadline = started + requested
+    heartbeat_interval = float(
+        getattr(deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS)
+    )
+    while True:
+        try:
+            remaining_global = deadline.check(operation)
+        except incremental_recovery.WallClockTimeoutError:
+            _terminate_process(process, deadline=deadline)
+            raise
+        remaining_step = step_deadline - time.monotonic()
+        if remaining_step <= 0:
+            _terminate_process(process, deadline=deadline)
+            return 124
+        wait_for = min(remaining_global, remaining_step, heartbeat_interval)
+        try:
+            return int(process.wait(timeout=max(0.001, wait_for)))
+        except subprocess.TimeoutExpired:
+            if heartbeat is not None:
+                try:
+                    heartbeat(operation)
+                except BaseException:
+                    # heartbeat 落盘失败也是停线条件；不能让子进程继续占用
+                    # 请求、容器或网络资源。
+                    _terminate_process(process, deadline=deadline)
+                    raise
+            # The timeout may have been the global deadline or just a heartbeat
+            # slice.  Re-check before another wait; global expiry is terminal.
+            if deadline.expired:
+                _terminate_process(process, deadline=deadline)
+                raise incremental_recovery.WallClockTimeoutError(
+                    operation,
+                    elapsed_seconds=deadline.elapsed_seconds,
+                    budget_seconds=deadline.budget_seconds,
+                )
+            if time.monotonic() >= step_deadline:
+                _terminate_process(process, deadline=deadline)
+                return 124
+
+
+def _evidence_root_has_bytes(
+    path: Path,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+    operation: str = "evidence scan",
+) -> bool:
+    """在可中断边界检查证据根是否含非空普通文件。"""
+
+    if deadline is not None:
+        deadline.check(operation)
+    if path.is_file() and not path.is_symlink():
+        return path.stat().st_size > 0
+    if not path.is_dir() or path.is_symlink():
+        return False
+    for child in path.rglob("*"):
+        if deadline is not None:
+            deadline.check(operation)
+        if child.is_file() and not child.is_symlink() and child.stat().st_size > 0:
+            return True
+        if heartbeat is not None:
+            heartbeat(operation)
+    return False
 
 
 @dataclass(frozen=True)
@@ -2074,6 +2187,8 @@ def run_job(
     *,
     identity: Mapping[str, Any] | None = None,
     tool_identity: Mapping[str, Any] | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
     """顺序执行任务步骤，并保留不含命令环境值的日志。
 
@@ -2082,6 +2197,8 @@ def run_job(
     """
 
     started = time.time()
+    if deadline is not None:
+        deadline.check(f"job:{job.job_id}:start")
     incremental = _job_incremental_metadata(
         job,
         identity=identity,
@@ -2089,6 +2206,10 @@ def run_job(
     )
     step_results: list[dict[str, Any]] = []
     for index, step in enumerate(job.steps, 1):
+        if deadline is not None:
+            deadline.check(f"job:{job.job_id}:step-{index}:prepare")
+        if heartbeat is not None:
+            heartbeat(f"job:{job.job_id}:step-{index}:start")
         log_path = log_root / (
             f"{job.job_id}-{index}.log"
             if attempt_index == 1
@@ -2108,13 +2229,16 @@ def run_job(
                 start_new_session=True,
             )
             try:
-                return_code = process.wait(timeout=int(step.get("timeout", 1800)))
+                return_code = _wait_process(
+                    process,
+                    step.get("timeout", 1800),
+                    deadline=deadline,
+                    operation=f"job:{job.job_id}:step-{index}",
+                    heartbeat=heartbeat,
+                )
             except KeyboardInterrupt:
-                _terminate_process(process)
+                _terminate_process(process, deadline=deadline)
                 raise
-            except subprocess.TimeoutExpired:
-                _terminate_process(process)
-                return_code = 124
         step_results.append(
             {
                 "step": index,
@@ -2123,12 +2247,18 @@ def run_job(
                 "log": str(log_path),
             }
         )
+        if heartbeat is not None:
+            heartbeat(f"job:{job.job_id}:step-{index}:complete")
         if return_code != 0:
             break
+    if deadline is not None:
+        deadline.check(f"job:{job.job_id}:evidence-scan")
     roots_by_pattern: dict[str, list[Path]] = {}
     missing_patterns: list[str] = []
     empty_patterns: list[str] = []
     for pattern in job.evidence_roots:
+        if deadline is not None:
+            deadline.check(f"job:{job.job_id}:evidence:{pattern}")
         matches = [Path(value) for value in sorted(glob.glob(pattern))]
         if not matches and Path(pattern).exists():
             matches = [Path(pattern)]
@@ -2138,19 +2268,22 @@ def run_job(
             missing_patterns.append(pattern)
             continue
         if not any(
-            path.is_file()
-            and path.stat().st_size > 0
-            or path.is_dir()
-            and any(
-                child.is_file() and not child.is_symlink() and child.stat().st_size > 0
-                for child in path.rglob("*")
+            _evidence_root_has_bytes(
+                path,
+                deadline=deadline,
+                heartbeat=heartbeat,
+                operation=f"job:{job.job_id}:evidence:{pattern}",
             )
             for path in existing
         ):
             empty_patterns.append(pattern)
+        if heartbeat is not None:
+            heartbeat(f"job:{job.job_id}:evidence:{pattern}:complete")
     existing_roots = [
         root for values in roots_by_pattern.values() for root in values
     ]
+    if deadline is not None:
+        deadline.check(f"job:{job.job_id}:finalize")
     steps_ok = len(step_results) == len(job.steps) and all(
         item["return_code"] == 0 for item in step_results
     )
@@ -2233,6 +2366,552 @@ def run_job(
 # 那两处只作用于候选矩阵，不波及官方链路。
 JOB_RETRY_LIMIT = 2
 JOB_RETRY_DELAY_SECONDS = 30
+DEFAULT_ATTEMPT_WALL_SECONDS = 90 * 60
+MAX_ATTEMPT_WALL_SECONDS = 6 * 60 * 60
+DEFAULT_HEARTBEAT_SECONDS = 30
+MAX_HEARTBEAT_SECONDS = 5 * 60
+WATCHDOG_HEARTBEAT_SCHEMA = "codex-upgrade-watchdog-heartbeat/v1"
+WATCHDOG_CHECKPOINT_SCHEMA = "codex-upgrade-watchdog-checkpoint/v1"
+JOB_CHECKPOINT_SCHEMA = "codex-upgrade-job-checkpoint/v1"
+INCREMENTAL_NOOP_SCHEMA = "codex-upgrade-incremental-noop/v1"
+WATCHDOG_OPERATION_RE = re.compile(r"^[A-Za-z0-9._:/*?+={}\[\](), -]{1,256}$")
+WATCHDOG_SENSITIVE_RE = re.compile(
+    r"(authorization|api[-_]?key|cookie|token|secret|password|credential|bearer)",
+    re.IGNORECASE,
+)
+CAPTURE_SUCCESS_STATUSES = frozenset({"complete", "incremental-noop"})
+
+
+def _normalize_watchdog_operation(value: Any) -> str:
+    """只允许可审计的短操作标签，拒绝秘密、环境值和原始响应。"""
+
+    if not isinstance(value, str):
+        raise ConfigurationError("watchdog operation 必须是字符串。")
+    operation = " ".join(value.strip().split())
+    if (
+        not operation
+        or len(operation) > 256
+        or not WATCHDOG_OPERATION_RE.fullmatch(operation)
+        or WATCHDOG_SENSITIVE_RE.search(operation)
+    ):
+        raise ConfigurationError(
+            "watchdog operation 含非法字符或敏感字段，拒绝写入 heartbeat。"
+        )
+    return operation
+
+
+def _attempt_deadline(
+    arguments: argparse.Namespace,
+    phase: str,
+) -> incremental_recovery.WallClockDeadline:
+    """为一次 official／candidate attempt 建立唯一的全阶段 deadline。"""
+
+    raw_budget = getattr(arguments, "max_wall_seconds", None)
+    budget = DEFAULT_ATTEMPT_WALL_SECONDS if raw_budget is None else raw_budget
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise ConfigurationError("--max-wall-seconds 必须是整数")
+    if budget <= 0 or budget > MAX_ATTEMPT_WALL_SECONDS:
+        raise ConfigurationError(
+            f"--max-wall-seconds 必须在 1～{MAX_ATTEMPT_WALL_SECONDS} 秒之间"
+        )
+    raw_heartbeat = getattr(arguments, "heartbeat_seconds", None)
+    heartbeat = (
+        DEFAULT_HEARTBEAT_SECONDS if raw_heartbeat is None else raw_heartbeat
+    )
+    if isinstance(heartbeat, bool) or not isinstance(heartbeat, int):
+        raise ConfigurationError("--heartbeat-seconds 必须是整数")
+    if heartbeat <= 0 or heartbeat > MAX_HEARTBEAT_SECONDS:
+        raise ConfigurationError(
+            f"--heartbeat-seconds 必须在 1～{MAX_HEARTBEAT_SECONDS} 秒之间"
+        )
+    try:
+        deadline = incremental_recovery.WallClockDeadline(
+            budget,
+            label=f"{phase}-capture-attempt",
+        )
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(str(error)) from error
+    # 这些是编排器元数据，不改变 deadline 的起点；同一对象贯穿预约、探针、
+    # Job、清理和收据写入，重试不得重新创建对象。
+    deadline.heartbeat_seconds = heartbeat  # type: ignore[attr-defined]
+    deadline.phase = phase  # type: ignore[attr-defined]
+    deadline.last_completed_job_id = None  # type: ignore[attr-defined]
+    return deadline
+
+
+def _write_attempt_heartbeat(
+    path: Path,
+    deadline: incremental_recovery.WallClockDeadline,
+    *,
+    operation: str,
+    last_completed_job_id: str | None = None,
+    force: bool = False,
+    allow_expired: bool = False,
+    attempt_root: Path | None = None,
+) -> None:
+    """原子更新不含秘密的 attempt 心跳。
+
+    ``attempt_root`` 在真实编排路径中始终提供。保留可选参数是为了兼容旧的
+    离线单元测试；只要提供该参数，心跳路径就只能是当前 attempt 的固定文件，
+    不能借绑定字段指向别的 attempt 或 Campaign。
+    """
+
+    now = time.monotonic()
+    last = getattr(deadline, "_last_heartbeat_monotonic", None)
+    interval = float(
+        getattr(deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS)
+    )
+    if not force and isinstance(last, (int, float)) and now - last < interval:
+        return
+    if not allow_expired:
+        deadline.check(operation)
+    operation = _normalize_watchdog_operation(operation)
+    if last_completed_job_id is not None and not SAFE_ID_RE.fullmatch(
+        str(last_completed_job_id)
+    ):
+        raise ConfigurationError("watchdog last_completed_job_id 非法。")
+    if attempt_root is not None:
+        attempt_root = attempt_root.resolve(strict=True)
+        if (
+            not attempt_root.is_dir()
+            or path.is_symlink()
+            or path.parent.resolve(strict=False) != attempt_root
+            or path.name != "watchdog-heartbeat.json"
+        ):
+            raise ConfigurationError("watchdog heartbeat 必须位于当前 attempt 根目录。")
+    if last_completed_job_id is not None:
+        deadline.last_completed_job_id = last_completed_job_id  # type: ignore[attr-defined]
+    payload = {
+        "schema_version": WATCHDOG_HEARTBEAT_SCHEMA,
+        "phase": str(getattr(deadline, "phase", "stage")),
+        "operation": str(operation)[:256],
+        "elapsed_seconds": round(deadline.elapsed_seconds, 3),
+        "remaining_seconds": round(deadline.remaining_seconds, 3),
+        "last_completed_job_id": getattr(deadline, "last_completed_job_id", None),
+        "updated_at_utc": _utc_now(),
+    }
+    # secure_write_json 使用临时文件 + replace；心跳允许覆盖，但绝不包含
+    # argv、环境变量、token 或原始响应。
+    secure_write_json(path, payload)
+    deadline._last_heartbeat_monotonic = now  # type: ignore[attr-defined]
+
+
+def _write_timeout_checkpoint(
+    attempt_root: Path,
+    deadline: incremental_recovery.WallClockDeadline,
+    *,
+    operation: str,
+    last_completed_job_id: str | None = None,
+) -> Path:
+    """以不可覆盖方式保存超时终态；写失败由调用方继续停线。"""
+
+    attempt_root = attempt_root.resolve(strict=True)
+    if not attempt_root.is_dir() or attempt_root.is_symlink():
+        raise ConfigurationError("timeout checkpoint 的 attempt 根不可信。")
+    if last_completed_job_id is not None and not SAFE_ID_RE.fullmatch(
+        str(last_completed_job_id)
+    ):
+        raise ConfigurationError("timeout checkpoint 的 Job 身份非法。")
+    operation = _normalize_watchdog_operation(operation)
+
+    checkpoint = {
+        "schema_version": WATCHDOG_CHECKPOINT_SCHEMA,
+        "status": "timeout",
+        "phase": str(getattr(deadline, "phase", "stage")),
+        "operation": str(operation)[:256],
+        "elapsed_seconds": round(deadline.elapsed_seconds, 3),
+        "remaining_seconds": round(deadline.remaining_seconds, 3),
+        "budget_seconds": deadline.budget_seconds,
+        "last_completed_job_id": last_completed_job_id
+        or getattr(deadline, "last_completed_job_id", None),
+        "recorded_at_utc": _utc_now(),
+    }
+    path = attempt_root / "timeout-checkpoint.json"
+    _secure_write_json_once(path, checkpoint)
+    return path
+
+
+def _job_checkpoint_store(attempt_root: Path) -> incremental_recovery.CheckpointStore:
+    """返回 attempt 专属追加式 Job checkpoint 存储器。"""
+
+    attempt_root = attempt_root.resolve(strict=True)
+    if not attempt_root.is_dir() or attempt_root.is_symlink():
+        raise ConfigurationError("Job checkpoint 的 attempt 根不可信。")
+    return incremental_recovery.CheckpointStore(attempt_root / "checkpoints")
+
+
+def _latest_failed_attempt_identity_hint(
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+) -> dict[str, Any] | None:
+    """只读读取最近失败 attempt 的身份，供候选增量计划避免 Docker 探针。"""
+
+    for attempt_root, _ in _ordered_capture_attempts(
+        campaign_dir, phase, candidate_id
+    ):
+        attempt_path = attempt_root / "attempt.json"
+        if not attempt_path.is_file() or attempt_path.is_symlink():
+            continue
+        _, payload = _load_capture_attempt(
+            campaign_dir,
+            phase,
+            candidate_id,
+            attempt_root.name,
+        )
+        if payload.get("status") != "failed":
+            continue
+        identity = payload.get("identity")
+        if isinstance(identity, dict):
+            return dict(identity)
+    return None
+
+
+def _cheap_capture_tool_impact(
+    manifest: Mapping[str, Any],
+    jobs: Iterable[Job],
+    tool_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """只用小型工具组件摘要计算影响闭集，不触发 package／容器／环境探针。"""
+
+    expected = manifest.get("tool_identity")
+    planned = list(jobs)
+    if not isinstance(expected, Mapping):
+        # 旧测试／旧 Campaign 没有组件摘要时不能假定未变化；把所有 Job
+        # 标为受影响，后续正式校验会再给出更具体的 fail-close 原因。
+        return {
+            "kind": "unknown",
+            "changed_components": ["shared"],
+            "changed_paths": {},
+            "affected_job_ids": sorted(job.job_id for job in planned),
+        }
+    try:
+        drift = _tool_component_drift(expected, tool_identity)
+    except (ConfigurationError, incremental_recovery.IncrementalRecoveryError):
+        return {
+            "kind": "unknown",
+            "changed_components": ["shared"],
+            "changed_paths": {},
+            "affected_job_ids": sorted(job.job_id for job in planned),
+        }
+    changed = sorted(str(item) for item in drift.get("changed_components", []))
+    return {
+        "kind": "component_drift" if changed else "unchanged",
+        "changed_components": changed,
+        "changed_paths": drift.get("changed_paths", {}),
+        "affected_job_ids": _affected_job_ids(planned, changed),
+    }
+
+
+def _write_incremental_noop_receipt(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    identity: Mapping[str, Any],
+    planned_job_ids: Iterable[str],
+    reused_results: Iterable[Mapping[str, Any]],
+    changed_components: Iterable[str] = (),
+    affected_job_ids: Iterable[str] = (),
+    tool_identity: Mapping[str, Any] | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+) -> dict[str, Any]:
+    """写入不可覆盖的 incremental-noop 事实；不创建 reservation 或 attempt。"""
+
+    if deadline is not None:
+        deadline.check(f"{phase}:incremental-noop")
+    planned = sorted({str(item) for item in planned_job_ids})
+    reused = sorted(
+        {
+            str(item.get("id"))
+            for item in reused_results
+            if isinstance(item, Mapping) and item.get("id")
+        }
+    )
+    affected = sorted({str(item) for item in affected_job_ids})
+    changed = sorted({str(item) for item in changed_components})
+    if not planned:
+        raise ConfigurationError("incremental-noop 计划 Job 集不能为空。")
+    if affected:
+        raise ConfigurationError("incremental-noop 不得包含受影响 Job。")
+    if reused != planned:
+        raise ConfigurationError(
+            "incremental-noop 必须完整复用计划内所有 Job，不能遗漏结果。"
+        )
+    source_receipts = {
+        str(item["id"]): dict(item["source_receipt"])
+        for item in reused_results
+        if isinstance(item, Mapping)
+        and item.get("id")
+        and isinstance(item.get("source_receipt"), Mapping)
+    }
+    if set(source_receipts) != set(planned):
+        raise ConfigurationError(
+            "incremental-noop 缺少一个或多个原有通过 Job 的来源收据。"
+        )
+    # no-op 是独立的控制事实，不是 attempt；放在专用根下，避免被状态机或
+    # 恢复逻辑误识别为可封存的 live attempt。
+    relative = _capture_attempt_relative(phase, candidate_id)
+    root = ensure_private_directory(
+        campaign_dir / "incremental-noop" / relative, campaign_dir
+    )
+    noop_id = (
+        time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        + f"-{secrets.token_hex(8)}"
+    )
+    plan_core = {
+        "schema_version": incremental_recovery.SCHEMA_VERSION,
+        "planned_job_ids": planned,
+        "changed_components": changed,
+        "affected_job_ids": [],
+        "reused_job_ids": reused,
+        "executed_job_ids": [],
+        "failed_job_ids": [],
+        "pending_job_ids": [],
+    }
+    plan_sha256 = incremental_recovery.digest(plan_core)
+    source_receipts_sha256 = incremental_recovery.digest(source_receipts)
+    payload: dict[str, Any] = {
+        "schema_version": INCREMENTAL_NOOP_SCHEMA,
+        "status": "incremental-noop",
+        "success": True,
+        "new_pass_fact": False,
+        "campaign_id": str(manifest.get("campaign_id", "")),
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "phase": phase,
+        "candidate_id": candidate_id,
+        "noop_id": noop_id,
+        "identity_sha256": _fingerprint(dict(identity)),
+        "tool_component_identity_sha256": (
+            _fingerprint(tool_identity.get("components"))
+            if isinstance(tool_identity, Mapping)
+            else None
+        ),
+        "planned_job_ids": planned,
+        "execute_job_ids": [],
+        "reused_job_ids": reused,
+        "affected_job_ids": affected,
+        "failed_job_ids": [],
+        "changed_components": changed,
+        "plan_sha256": plan_sha256,
+        "incremental_plan": {
+            **plan_core,
+            "plan_sha256": plan_sha256,
+        },
+        "source_receipts": source_receipts,
+        "source_receipts_sha256": source_receipts_sha256,
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+        "recorded_at_utc": _utc_now(),
+        "next_action": "继续引用原有通过收据；无需创建 live attempt。",
+    }
+    payload["noop_sha256"] = _fingerprint(payload)
+    _validate_incremental_noop_receipt(
+        campaign_dir,
+        payload,
+        planned_job_ids=planned,
+    )
+    path = root / f"{noop_id}.json"
+    _secure_write_json_once(path, payload)
+    return {
+        "status": "incremental-noop",
+        "success": True,
+        "incremental_noop": True,
+        "noop_receipt": {
+            "path": str(path),
+            "sha256": file_sha256(path),
+            "bytes": path.stat().st_size,
+        },
+        "execute_job_ids": [],
+        "reused_job_ids": reused,
+        "affected_job_ids": affected,
+        "failed_job_ids": [],
+        "changed_components": changed,
+        "plan_sha256": plan_sha256,
+        "source_receipts": source_receipts,
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+        "next_command": "无需重新抓包；继续使用原有通过收据。",
+    }
+
+
+def _validate_incremental_noop_receipt(
+    campaign_dir: Path,
+    payload: Mapping[str, Any],
+    *,
+    planned_job_ids: Iterable[str] | None = None,
+) -> None:
+    """校验主编排器的 no-op 收据；只做小型 stat，不读取证据正文。"""
+
+    required = {
+        "schema_version",
+        "status",
+        "success",
+        "new_pass_fact",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "phase",
+        "candidate_id",
+        "noop_id",
+        "identity_sha256",
+        "tool_component_identity_sha256",
+        "planned_job_ids",
+        "execute_job_ids",
+        "reused_job_ids",
+        "affected_job_ids",
+        "failed_job_ids",
+        "changed_components",
+        "plan_sha256",
+        "incremental_plan",
+        "source_receipts",
+        "source_receipts_sha256",
+        "scanned_bytes",
+        "live_request_count",
+        "recorded_at_utc",
+        "next_action",
+        "noop_sha256",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != required:
+        raise ConfigurationError("incremental-noop 收据字段不闭合。")
+    if payload.get("schema_version") != INCREMENTAL_NOOP_SCHEMA:
+        raise ConfigurationError("incremental-noop schema_version 不匹配。")
+    if (
+        payload.get("status") != "incremental-noop"
+        or payload.get("success") is not True
+        or payload.get("new_pass_fact") is not False
+        or payload.get("phase") not in {"official", "candidate"}
+        or not SAFE_ID_RE.fullmatch(str(payload.get("campaign_id", "")))
+        or not SAFE_ID_RE.fullmatch(str(payload.get("noop_id", "")))
+        or not SHA256_RE.fullmatch(str(payload.get("campaign_manifest_sha256", "")))
+        or not SHA256_RE.fullmatch(str(payload.get("identity_sha256", "")))
+        or not SHA256_RE.fullmatch(str(payload.get("plan_sha256", "")))
+        or not SHA256_RE.fullmatch(str(payload.get("source_receipts_sha256", "")))
+        or not _is_rfc3339_timestamp(payload.get("recorded_at_utc"))
+        or not isinstance(payload.get("next_action"), str)
+        or not payload.get("next_action")
+    ):
+        raise ConfigurationError("incremental-noop 收据身份非法。")
+    phase = str(payload["phase"])
+    candidate_id = payload.get("candidate_id")
+    if phase == "official":
+        if candidate_id is not None:
+            raise ConfigurationError("official incremental-noop 不得绑定 candidate。")
+    elif not isinstance(candidate_id, str) or not SAFE_ID_RE.fullmatch(candidate_id):
+        raise ConfigurationError("candidate incremental-noop 缺少合法 candidate-id。")
+    expected_planned = (
+        sorted({str(item) for item in planned_job_ids})
+        if planned_job_ids is not None
+        else payload.get("planned_job_ids")
+    )
+    arrays = {
+        name: payload.get(name)
+        for name in (
+            "planned_job_ids",
+            "execute_job_ids",
+            "reused_job_ids",
+            "affected_job_ids",
+            "failed_job_ids",
+            "changed_components",
+        )
+    }
+    for name, value in arrays.items():
+        if (
+            not isinstance(value, list)
+            or value != sorted(set(value))
+            or not all(isinstance(item, str) and item for item in value)
+        ):
+            raise ConfigurationError(f"incremental-noop {name} 列表非法。")
+    if (
+        arrays["planned_job_ids"] != expected_planned
+        or arrays["execute_job_ids"] != []
+        or arrays["affected_job_ids"] != []
+        or arrays["failed_job_ids"] != []
+        or arrays["reused_job_ids"] != arrays["planned_job_ids"]
+        or not arrays["planned_job_ids"]
+        or any(item not in _TOOL_COMPONENT_NAMES for item in arrays["changed_components"])
+    ):
+        raise ConfigurationError("incremental-noop Job 集不闭合。")
+    if payload.get("scanned_bytes") != 0 or payload.get("live_request_count") != 0:
+        raise ConfigurationError("incremental-noop 不得包含扫描或请求。")
+    tool_digest = payload.get("tool_component_identity_sha256")
+    if tool_digest is not None and not SHA256_RE.fullmatch(str(tool_digest)):
+        raise ConfigurationError("incremental-noop 工具组件摘要非法。")
+    source_receipts = payload.get("source_receipts")
+    if not isinstance(source_receipts, Mapping) or set(source_receipts) != set(
+        arrays["planned_job_ids"]
+    ):
+        raise ConfigurationError("incremental-noop 来源收据集合不闭合。")
+    for job_id, binding in source_receipts.items():
+        if not isinstance(job_id, str) or not SAFE_ID_RE.fullmatch(job_id):
+            raise ConfigurationError("incremental-noop 来源 Job 身份非法。")
+        if not isinstance(binding, Mapping) or set(binding) != {
+            "path",
+            "sha256",
+            "bytes",
+        }:
+            raise ConfigurationError("incremental-noop 来源绑定字段不闭合。")
+        raw_path = binding.get("path")
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path
+            or Path(raw_path).is_absolute()
+            or "\\" in raw_path
+            or str(PurePosixPath(raw_path)) != raw_path
+            or any(part in {"", ".", ".."} for part in PurePosixPath(raw_path).parts)
+            or not SHA256_RE.fullmatch(str(binding.get("sha256", "")))
+            or not isinstance(binding.get("bytes"), int)
+            or isinstance(binding.get("bytes"), bool)
+            or binding.get("bytes") <= 0
+        ):
+            raise ConfigurationError("incremental-noop 来源绑定非法。")
+        source_path = _campaign_file(campaign_dir, raw_path)
+        _reject_symlink_components(source_path, campaign_dir, "incremental-noop 来源")
+        if not source_path.is_file() or source_path.is_symlink():
+            raise ConfigurationError("incremental-noop 来源收据不存在或不可信。")
+        if source_path.stat().st_size != binding["bytes"]:
+            raise ConfigurationError("incremental-noop 来源收据大小漂移。")
+    if payload.get("source_receipts_sha256") != incremental_recovery.digest(
+        dict(source_receipts)
+    ):
+        raise ConfigurationError("incremental-noop 来源收据摘要不一致。")
+    plan = payload.get("incremental_plan")
+    if not isinstance(plan, Mapping) or set(plan) != {
+        "schema_version",
+        "planned_job_ids",
+        "changed_components",
+        "affected_job_ids",
+        "reused_job_ids",
+        "executed_job_ids",
+        "failed_job_ids",
+        "pending_job_ids",
+        "plan_sha256",
+    }:
+        raise ConfigurationError("incremental-noop 内嵌计划字段不闭合。")
+    plan_core = dict(plan)
+    nested_digest = plan_core.pop("plan_sha256", None)
+    if (
+        plan.get("schema_version") != incremental_recovery.SCHEMA_VERSION
+        or plan.get("plan_sha256") != payload.get("plan_sha256")
+        or nested_digest != incremental_recovery.digest(plan_core)
+        or dict(plan) != {
+            "schema_version": incremental_recovery.SCHEMA_VERSION,
+            "planned_job_ids": arrays["planned_job_ids"],
+            "changed_components": arrays["changed_components"],
+            "affected_job_ids": [],
+            "reused_job_ids": arrays["reused_job_ids"],
+            "executed_job_ids": [],
+            "failed_job_ids": [],
+            "pending_job_ids": [],
+            "plan_sha256": payload.get("plan_sha256"),
+        }
+    ):
+        raise ConfigurationError("incremental-noop 内嵌计划摘要不一致。")
+    unsigned = dict(payload)
+    unsigned.pop("noop_sha256", None)
+    if payload.get("noop_sha256") != _fingerprint(unsigned):
+        raise ConfigurationError("incremental-noop 收据摘要不一致。")
 
 
 def _archive_failed_job_evidence(result: dict[str, Any], attempt_index: int) -> None:
@@ -2298,16 +2977,24 @@ def _run_job_with_retry(
     *,
     identity: Mapping[str, Any] | None = None,
     tool_identity: Mapping[str, Any] | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
     """在同一 attempt 内对失败任务做有限补跑，返回最后一次的收据。"""
 
     attempt_index = 1
     while True:
-        run_kwargs: dict[str, Any] = {}
+        if deadline is not None:
+            deadline.check(f"job:{job.job_id}:attempt-{attempt_index}")
+        candidate_kwargs: dict[str, Any] = {}
         if identity is not None:
-            run_kwargs["identity"] = identity
+            candidate_kwargs["identity"] = identity
         if tool_identity is not None:
-            run_kwargs["tool_identity"] = tool_identity
+            candidate_kwargs["tool_identity"] = tool_identity
+        if deadline is not None:
+            candidate_kwargs["deadline"] = deadline
+        if heartbeat is not None:
+            candidate_kwargs["heartbeat"] = heartbeat
         # 保持第三方／历史测试桩的旧四参数接口可用。真实 ``run_job`` 和
         # 接受 **kwargs 的桩仍会收到组件身份；不通过捕获 TypeError 重试，避免
         # 一个已经发出请求的 Job 被重复启动。
@@ -2321,22 +3008,24 @@ def _run_job_with_retry(
                 parameter.kind == inspect.Parameter.VAR_KEYWORD
                 for parameter in signature.parameters.values()
             )
-            accepts_incremental = accepts_kwargs or {
-                "identity",
-                "tool_identity",
-            }.issubset(signature.parameters)
-        except (TypeError, ValueError):
-            accepts_incremental = True
-        if run_kwargs and not accepts_incremental:
-            result = run_job(job, log_root, attempt_index, scenario_context)
-        else:
-            result = run_job(
-                job,
-                log_root,
-                attempt_index,
-                scenario_context,
-                **run_kwargs,
+            run_kwargs = (
+                dict(candidate_kwargs)
+                if accepts_kwargs
+                else {
+                    name: value
+                    for name, value in candidate_kwargs.items()
+                    if name in signature.parameters
+                }
             )
+        except (TypeError, ValueError):
+            run_kwargs = dict(candidate_kwargs)
+        result = run_job(
+            job,
+            log_root,
+            attempt_index,
+            scenario_context,
+            **run_kwargs,
+        )
         if result.get("status") == "complete":
             return result
         if not job.required or attempt_index > JOB_RETRY_LIMIT:
@@ -2346,7 +3035,13 @@ def _run_job_with_retry(
             return result
         _archive_failed_job_evidence(result, attempt_index)
         attempt_index += 1
-        time.sleep(JOB_RETRY_DELAY_SECONDS)
+        if deadline is not None:
+            deadline.sleep(
+                JOB_RETRY_DELAY_SECONDS,
+                operation=f"job:{job.job_id}:retry-backoff",
+            )
+        else:
+            time.sleep(JOB_RETRY_DELAY_SECONDS)
 
 
 def build_coverage(
@@ -2502,6 +3197,499 @@ def _validate_incremental_job_result(
         raise ConfigurationError(f"{label} 承接来源 attempt 非法。")
 
 
+def _validate_attempt_file_binding(
+    value: Any,
+    *,
+    label: str,
+    allow_null: bool = True,
+) -> PurePosixPath | None:
+    """校验 watchdog／checkpoint 的小型相对文件绑定，不读取大证据。"""
+
+    if value is None and allow_null:
+        return None
+    if not isinstance(value, Mapping) or set(value) != {"path", "sha256", "bytes"}:
+        raise ConfigurationError(f"{label} 文件绑定字段不闭合。")
+    path = value.get("path")
+    parsed = PurePosixPath(path) if isinstance(path, str) else PurePosixPath(".")
+    if (
+        not isinstance(path, str)
+        or not path
+        or Path(path).is_absolute()
+        or "\\" in path
+        or str(parsed) != path
+        or any(part in {"", ".", ".."} for part in parsed.parts)
+        or not SHA256_RE.fullmatch(str(value.get("sha256", "")))
+        or not isinstance(value.get("bytes"), int)
+        or isinstance(value.get("bytes"), bool)
+        or value.get("bytes") <= 0
+    ):
+        raise ConfigurationError(f"{label} 文件绑定非法。")
+    return parsed
+
+
+def _resolve_attempt_binding(
+    campaign_dir: Path,
+    attempt_root: Path,
+    value: Any,
+    *,
+    label: str,
+    expected_name: str,
+    directory: bool = False,
+) -> Path | None:
+    """把 Campaign 相对绑定解析到当前 attempt 的固定子路径。"""
+
+    if directory:
+        raw_path = value.get("path") if isinstance(value, Mapping) else None
+        parsed = _validate_attempt_relative_path(raw_path, label=label)
+    else:
+        parsed = _validate_attempt_file_binding(value, label=label)
+    if parsed is None:
+        return None
+    campaign = campaign_dir.resolve(strict=True)
+    attempt = attempt_root.resolve(strict=True)
+    candidate = campaign.joinpath(*parsed.parts)
+    _reject_symlink_components(candidate, campaign, label)
+    try:
+        if candidate.resolve(strict=False) != (attempt / expected_name).resolve(
+            strict=False
+        ):
+            raise ConfigurationError(
+                f"{label} 必须绑定当前 attempt 的 {expected_name}。"
+            )
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ConfigurationError(f"{label} 越出当前 attempt。") from error
+    if directory:
+        if not candidate.is_dir() or candidate.is_symlink():
+            raise ConfigurationError(f"{label} 目录不存在或不可信。")
+    elif not candidate.is_file() or candidate.is_symlink():
+        raise ConfigurationError(f"{label} 文件不存在或不可信。")
+    return candidate
+
+
+def _validate_attempt_relative_path(value: Any, *, label: str) -> PurePosixPath:
+    """校验只含路径的 attempt 目录绑定。"""
+
+    if not isinstance(value, str) or not value or Path(value).is_absolute() or "\\" in value:
+        raise ConfigurationError(f"{label} 路径非法。")
+    parsed = PurePosixPath(value)
+    if str(parsed) != value or any(part in {"", ".", ".."} for part in parsed.parts):
+        raise ConfigurationError(f"{label} 路径非法。")
+    return parsed
+
+
+def _validate_attempt_watchdog_fields(
+    payload: Mapping[str, Any],
+    planned_job_ids: set[str] | None = None,
+) -> None:
+    """校验 attempt 的 heartbeat、超时 checkpoint 和 Job checkpoint 摘要。"""
+
+    watchdog = payload.get("watchdog")
+    if watchdog is not None:
+        if not isinstance(watchdog, Mapping) or set(watchdog) != {
+            "schema_version",
+            "budget_seconds",
+            "heartbeat_seconds",
+            "elapsed_seconds",
+            "remaining_seconds",
+            "heartbeat",
+            "timeout_checkpoint",
+            "last_completed_job_id",
+        }:
+            raise ConfigurationError("attempt watchdog 字段不闭合。")
+        if (
+            watchdog.get("schema_version") != WATCHDOG_HEARTBEAT_SCHEMA
+            or not isinstance(watchdog.get("budget_seconds"), (int, float))
+            or isinstance(watchdog.get("budget_seconds"), bool)
+            or not math.isfinite(float(watchdog.get("budget_seconds")))
+            or float(watchdog.get("budget_seconds")) <= 0
+            or not isinstance(watchdog.get("heartbeat_seconds"), (int, float))
+            or isinstance(watchdog.get("heartbeat_seconds"), bool)
+            or not math.isfinite(float(watchdog.get("heartbeat_seconds")))
+            or float(watchdog.get("heartbeat_seconds")) <= 0
+            or not isinstance(watchdog.get("elapsed_seconds"), (int, float))
+            or isinstance(watchdog.get("elapsed_seconds"), bool)
+            or not math.isfinite(float(watchdog.get("elapsed_seconds")))
+            or float(watchdog.get("elapsed_seconds")) < 0
+            or not isinstance(watchdog.get("remaining_seconds"), (int, float))
+            or isinstance(watchdog.get("remaining_seconds"), bool)
+            or not math.isfinite(float(watchdog.get("remaining_seconds")))
+            or float(watchdog.get("remaining_seconds")) < 0
+            or float(watchdog.get("remaining_seconds"))
+            > float(watchdog.get("budget_seconds")) + 1
+            or (
+                (
+                    watchdog.get("last_completed_job_id") is not None
+                    and not SAFE_ID_RE.fullmatch(
+                        str(watchdog.get("last_completed_job_id"))
+                    )
+                )
+                or (
+                    planned_job_ids is not None
+                    and watchdog.get("last_completed_job_id") is not None
+                    and str(watchdog.get("last_completed_job_id"))
+                    not in planned_job_ids
+                )
+            )
+        ):
+            raise ConfigurationError("attempt watchdog 数值或身份非法。")
+        _validate_attempt_file_binding(
+            watchdog.get("heartbeat"), label="attempt watchdog heartbeat"
+        )
+        _validate_attempt_file_binding(
+            watchdog.get("timeout_checkpoint"),
+            label="attempt watchdog timeout checkpoint",
+        )
+    checkpoint = payload.get("job_checkpoint")
+    if checkpoint is not None:
+        base_fields = {"path", "record_count", "last_sequence", "last_sha256"}
+        context_fields = {
+            "schema_version",
+            "campaign_id",
+            "phase",
+            "attempt_id",
+            "run_nonce",
+        }
+        actual_fields = set(checkpoint) if isinstance(checkpoint, Mapping) else set()
+        strict_context = watchdog is not None
+        if (
+            (strict_context and actual_fields != base_fields | context_fields)
+            or (not strict_context and actual_fields != base_fields)
+        ):
+            raise ConfigurationError("attempt Job checkpoint 字段不闭合。")
+        if strict_context and actual_fields == base_fields | context_fields:
+            if (
+                checkpoint.get("schema_version") != JOB_CHECKPOINT_SCHEMA
+                or not isinstance(checkpoint.get("campaign_id"), str)
+                or not SAFE_ID_RE.fullmatch(str(checkpoint.get("campaign_id")))
+                or checkpoint.get("phase") not in {"official", "candidate"}
+                or not isinstance(checkpoint.get("attempt_id"), str)
+                or not SAFE_ID_RE.fullmatch(str(checkpoint.get("attempt_id")))
+                or not SHA256_RE.fullmatch(str(checkpoint.get("run_nonce", "")))
+            ):
+                raise ConfigurationError("attempt Job checkpoint 身份非法。")
+        if (
+            not isinstance(checkpoint.get("path"), str)
+            or not checkpoint["path"]
+            or Path(checkpoint["path"]).is_absolute()
+            or "\\" in checkpoint["path"]
+            or str(PurePosixPath(checkpoint["path"])) != checkpoint["path"]
+            or any(
+                part in {"", ".", ".."}
+                for part in PurePosixPath(checkpoint["path"]).parts
+            )
+            or not isinstance(checkpoint.get("record_count"), int)
+            or isinstance(checkpoint.get("record_count"), bool)
+            or checkpoint.get("record_count") < 0
+            or (
+                checkpoint.get("record_count") == 0
+                and (
+                    checkpoint.get("last_sequence") is not None
+                    or checkpoint.get("last_sha256") is not None
+                )
+            )
+            or (
+                checkpoint.get("record_count", 0) > 0
+                and (
+                    not isinstance(checkpoint.get("last_sequence"), int)
+                    or isinstance(checkpoint.get("last_sequence"), bool)
+                    or checkpoint.get("last_sequence") != checkpoint.get("record_count")
+                    or not SHA256_RE.fullmatch(str(checkpoint.get("last_sha256", "")))
+                )
+            )
+        ):
+            raise ConfigurationError("attempt Job checkpoint 摘要或序号非法。")
+
+
+def _validate_attempt_watchdog_bindings(
+    campaign_dir: Path,
+    attempt_root: Path,
+    payload: Mapping[str, Any],
+    planned_job_ids: set[str] | None = None,
+) -> None:
+    """重放 watchdog 的小型文件和 checkpoint 链，拒绝摘要漂移。"""
+
+    watchdog = payload.get("watchdog")
+    if isinstance(watchdog, Mapping):
+        heartbeat_binding = watchdog.get("heartbeat")
+        if heartbeat_binding is None:
+            raise ConfigurationError("当前 attempt 缺少 watchdog heartbeat 绑定。")
+        heartbeat_path = _resolve_attempt_binding(
+            campaign_dir,
+            attempt_root,
+            heartbeat_binding,
+            label="watchdog heartbeat",
+            expected_name="watchdog-heartbeat.json",
+        )
+        assert heartbeat_path is not None
+        _validate_attempt_bound_file(heartbeat_path, heartbeat_binding, "watchdog heartbeat")
+        try:
+            heartbeat_document = _read_json(heartbeat_path, "watchdog heartbeat")
+        except ConfigurationError as error:
+            raise ConfigurationError("watchdog heartbeat 不是可重放 JSON。") from error
+        expected_heartbeat_fields = {
+            "schema_version",
+            "phase",
+            "operation",
+            "elapsed_seconds",
+            "remaining_seconds",
+            "last_completed_job_id",
+            "updated_at_utc",
+        }
+        if set(heartbeat_document) != expected_heartbeat_fields:
+            raise ConfigurationError("watchdog heartbeat 内容不闭合。")
+        if heartbeat_document.get("schema_version") != WATCHDOG_HEARTBEAT_SCHEMA:
+            raise ConfigurationError("watchdog heartbeat schema 不匹配。")
+        if heartbeat_document.get("phase") != payload.get("phase"):
+            raise ConfigurationError("watchdog heartbeat phase 漂移。")
+        _validate_watchdog_document_values(
+            heartbeat_document,
+            label="watchdog heartbeat",
+            planned_job_ids=planned_job_ids,
+            budget=float(watchdog["budget_seconds"]),
+        )
+        if not _is_rfc3339_timestamp(heartbeat_document.get("updated_at_utc")):
+            raise ConfigurationError("watchdog heartbeat 时间非法。")
+        _validate_watchdog_time_window(
+            heartbeat_document["updated_at_utc"], payload, "watchdog heartbeat"
+        )
+        if (
+            heartbeat_document.get("last_completed_job_id")
+            != watchdog.get("last_completed_job_id")
+        ):
+            raise ConfigurationError("watchdog heartbeat 与 attempt 末项身份不一致。")
+
+        timeout_binding = watchdog.get("timeout_checkpoint")
+        if timeout_binding is not None:
+            timeout_path = _resolve_attempt_binding(
+                campaign_dir,
+                attempt_root,
+                timeout_binding,
+                label="watchdog timeout checkpoint",
+                expected_name="timeout-checkpoint.json",
+            )
+            assert timeout_path is not None
+            _validate_attempt_bound_file(
+                timeout_path, timeout_binding, "watchdog timeout checkpoint"
+            )
+            try:
+                timeout_document = _read_json(
+                    timeout_path, "watchdog timeout checkpoint"
+                )
+            except ConfigurationError as error:
+                raise ConfigurationError(
+                    "watchdog timeout checkpoint 不是可重放 JSON。"
+                ) from error
+            expected_timeout_fields = {
+                "schema_version",
+                "status",
+                "phase",
+                "operation",
+                "elapsed_seconds",
+                "remaining_seconds",
+                "budget_seconds",
+                "last_completed_job_id",
+                "recorded_at_utc",
+            }
+            if set(timeout_document) != expected_timeout_fields:
+                raise ConfigurationError("watchdog timeout checkpoint 内容不闭合。")
+            if (
+                timeout_document.get("schema_version") != WATCHDOG_CHECKPOINT_SCHEMA
+                or timeout_document.get("status") != "timeout"
+                or timeout_document.get("phase") != payload.get("phase")
+                or timeout_document.get("budget_seconds")
+                != watchdog.get("budget_seconds")
+                or timeout_document.get("last_completed_job_id")
+                != watchdog.get("last_completed_job_id")
+            ):
+                raise ConfigurationError("watchdog timeout checkpoint 身份非法。")
+            _validate_watchdog_document_values(
+                timeout_document,
+                label="watchdog timeout checkpoint",
+                planned_job_ids=planned_job_ids,
+                budget=float(watchdog["budget_seconds"]),
+            )
+            if not _is_rfc3339_timestamp(timeout_document.get("recorded_at_utc")):
+                raise ConfigurationError("watchdog timeout checkpoint 时间非法。")
+            _validate_watchdog_time_window(
+                timeout_document["recorded_at_utc"],
+                payload,
+                "watchdog timeout checkpoint",
+            )
+        elif float(watchdog.get("remaining_seconds", 0)) <= 0:
+            raise ConfigurationError("超时 attempt 缺少 timeout checkpoint。")
+
+    checkpoint = payload.get("job_checkpoint")
+    if isinstance(watchdog, Mapping) and checkpoint is None:
+        raise ConfigurationError("当前 attempt 缺少 Job checkpoint 绑定。")
+    if isinstance(checkpoint, Mapping):
+        path = _resolve_attempt_binding(
+            campaign_dir,
+            attempt_root,
+            checkpoint,
+            label="Job checkpoint",
+            expected_name="checkpoints",
+            directory=True,
+        )
+        assert path is not None
+        try:
+            store = incremental_recovery.CheckpointStore(path, create=False)
+            records = store.records()
+        except incremental_recovery.IncrementalRecoveryError as error:
+            raise ConfigurationError(f"Job checkpoint 链无法重放：{error}") from error
+        if len(records) != checkpoint.get("record_count"):
+            raise ConfigurationError("Job checkpoint 记录数量漂移。")
+        last = records[-1] if records else None
+        if (
+            checkpoint.get("last_sequence")
+            != (last.get("checkpoint_sequence") if last else None)
+            or checkpoint.get("last_sha256")
+            != (last.get("checkpoint_sha256") if last else None)
+        ):
+            raise ConfigurationError("Job checkpoint 末项摘要漂移。")
+        if isinstance(watchdog, Mapping):
+            if (
+                checkpoint.get("campaign_id") != payload.get("campaign_id")
+                or checkpoint.get("phase") != payload.get("phase")
+                or checkpoint.get("attempt_id") != payload.get("attempt_id")
+                or checkpoint.get("run_nonce") != payload.get("run_nonce")
+            ):
+                raise ConfigurationError("Job checkpoint 汇总身份漂移。")
+        _validate_checkpoint_records(
+            records,
+            payload,
+            planned_job_ids=planned_job_ids,
+            strict_context=isinstance(watchdog, Mapping),
+        )
+
+
+def _validate_attempt_bound_file(
+    path: Path,
+    binding: Mapping[str, Any],
+    label: str,
+) -> None:
+    """校验已解析到当前 attempt 的小文件摘要。"""
+
+    if (
+        path.stat().st_size != binding.get("bytes")
+        or path.stat().st_size > 1024 * 1024
+        or file_sha256(path) != binding.get("sha256")
+    ):
+        raise ConfigurationError(f"{label}摘要漂移。")
+
+
+def _validate_watchdog_document_values(
+    document: Mapping[str, Any],
+    *,
+    label: str,
+    planned_job_ids: set[str] | None,
+    budget: float,
+) -> None:
+    """校验 heartbeat/timeout 中的数值、操作和 Job 身份，不读取原始证据。"""
+
+    for field in ("elapsed_seconds", "remaining_seconds"):
+        value = document.get(field)
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            or float(value) < 0
+            or float(value) > budget + 1
+        ):
+            raise ConfigurationError(f"{label} {field} 非法。")
+    if document.get("remaining_seconds", 0) > 1 and document.get("status") == "timeout":
+        raise ConfigurationError(f"{label} 超时终态仍有过多剩余预算。")
+    try:
+        _normalize_watchdog_operation(document.get("operation"))
+    except ConfigurationError as error:
+        raise ConfigurationError(f"{label} operation 含非法或敏感内容。") from error
+    completed = document.get("last_completed_job_id")
+    if completed is not None and (
+        not isinstance(completed, str)
+        or not SAFE_ID_RE.fullmatch(completed)
+        or (planned_job_ids is not None and completed not in planned_job_ids)
+    ):
+        raise ConfigurationError(f"{label} last_completed_job_id 非法。")
+
+
+def _validate_watchdog_time_window(
+    recorded_at_utc: str,
+    payload: Mapping[str, Any],
+    label: str,
+) -> None:
+    """确保 watchdog 文件属于当前 attempt 的时间窗口。"""
+
+    try:
+        recorded = _rfc3339_datetime(recorded_at_utc, f"{label}.time")
+        started = _rfc3339_datetime(payload.get("started_at_utc"), "attempt.started_at_utc")
+        completed = _rfc3339_datetime(
+            payload.get("completed_at_utc"), "attempt.completed_at_utc"
+        )
+    except ConfigurationError as error:
+        raise ConfigurationError(f"{label} 时间窗口非法。") from error
+    if recorded < started or recorded > completed:
+        raise ConfigurationError(f"{label} 不属于当前 attempt 时间窗口。")
+
+
+def _validate_checkpoint_records(
+    records: list[Mapping[str, Any]],
+    payload: Mapping[str, Any],
+    *,
+    planned_job_ids: set[str] | None,
+    strict_context: bool,
+) -> None:
+    """校验 checkpoint 的记录数量、序号、结果摘要和 attempt 身份。"""
+
+    result_by_id: dict[str, Mapping[str, Any]] = {}
+    for item in payload.get("results", []):
+        if not isinstance(item, Mapping) or not isinstance(item.get("id"), str):
+            raise ConfigurationError("attempt results 身份非法。")
+        item_id = str(item["id"])
+        if item_id in result_by_id:
+            raise ConfigurationError("attempt results 含重复 Job 身份。")
+        result_by_id[item_id] = item
+    if planned_job_ids is not None and not set(result_by_id).issubset(planned_job_ids):
+        raise ConfigurationError("attempt results 含预约外 Job。")
+    seen: set[str] = set()
+    for record in records:
+        item_id = record.get("item_id")
+        if (
+            not isinstance(item_id, str)
+            or not SAFE_ID_RE.fullmatch(item_id)
+            or (planned_job_ids is not None and item_id not in planned_job_ids)
+            or item_id in seen
+        ):
+            raise ConfigurationError("Job checkpoint item 身份或数量非法。")
+        seen.add(item_id)
+        if strict_context:
+            if (
+                record.get("checkpoint_schema_version") != JOB_CHECKPOINT_SCHEMA
+                or record.get("campaign_id") != payload.get("campaign_id")
+                or record.get("phase") != payload.get("phase")
+                or record.get("attempt_id") != payload.get("attempt_id")
+                or record.get("run_nonce") != payload.get("run_nonce")
+            ):
+                raise ConfigurationError("Job checkpoint 记录的 attempt 身份漂移。")
+        result = record.get("result")
+        expected = result_by_id.get(item_id)
+        if not isinstance(result, Mapping) or expected is None:
+            raise ConfigurationError("Job checkpoint 缺少对应结果。")
+        if dict(result) != dict(expected):
+            raise ConfigurationError("Job checkpoint 结果与 attempt 收据不一致。")
+        if record.get("result_sha256") != incremental_recovery.digest(dict(result)):
+            raise ConfigurationError("Job checkpoint 结果摘要漂移。")
+        if record.get("status") not in {"complete", "failed"}:
+            raise ConfigurationError("Job checkpoint 状态非法。")
+        expected_status = "complete" if result.get("status") == "complete" else "failed"
+        if record.get("status") != expected_status:
+            raise ConfigurationError("Job checkpoint 状态与结果不一致。")
+        if record.get("result_key") != result.get("incremental_result_key"):
+            raise ConfigurationError("Job checkpoint 结果键漂移。")
+    if not seen.issubset(set(result_by_id)):
+        raise ConfigurationError("Job checkpoint 含未知结果。")
+    if strict_context and seen != set(result_by_id):
+        raise ConfigurationError("Job checkpoint 未覆盖当前 attempt 的全部结果。")
+
+
 def _render_report(payload: dict[str, Any]) -> str:
     jobs = payload["jobs"]
     coverage = payload["coverage"]
@@ -2638,6 +3826,26 @@ def _build_parser() -> argparse.ArgumentParser:
                 type=Path,
                 help="由运行中 Sub2API 产生的实际画像观测收据。",
             )
+
+    def add_watchdog_options(target: argparse.ArgumentParser) -> None:
+        target.add_argument(
+            "--max-wall-seconds",
+            type=int,
+            default=None,
+            help=(
+                f"一次 capture attempt 的单调墙钟预算（默认 {DEFAULT_ATTEMPT_WALL_SECONDS} 秒，"
+                f"上限 {MAX_ATTEMPT_WALL_SECONDS} 秒）。"
+            ),
+        )
+        target.add_argument(
+            "--heartbeat-seconds",
+            type=int,
+            default=None,
+            help=(
+                f"watchdog heartbeat 间隔（默认 {DEFAULT_HEARTBEAT_SECONDS} 秒，"
+                f"上限 {MAX_HEARTBEAT_SECONDS} 秒）。"
+            ),
+        )
 
     plan = subparsers.add_parser("plan", help="预检并创建不可变 Campaign")
     plan.add_argument(
@@ -2805,6 +4013,7 @@ def _build_parser() -> argparse.ArgumentParser:
     official.add_argument("capture_action", choices=("run", "seal"))
     add_campaign_reference(official)
     add_capture_receipts(official, candidate=False)
+    add_watchdog_options(official)
     official.add_argument("--acknowledge-live-requests", action="store_true")
 
     successor = subparsers.add_parser(
@@ -2941,6 +4150,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     candidate.add_argument("capture_action", choices=("run", "seal"))
     add_candidate_reference(candidate)
+    add_watchdog_options(candidate)
     candidate.add_argument("--runtime-image")
     candidate.add_argument("--candidate-image-id")
     candidate.add_argument("--candidate-source", type=Path)
@@ -2986,6 +4196,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "all", help="兼容入口：对已批准画像只启动一次候选 run"
     )
     add_candidate_reference(all_command)
+    add_watchdog_options(all_command)
     all_command.add_argument("--runtime-image", required=True)
     all_command.add_argument("--candidate-image-id")
     all_command.add_argument("--candidate-source", type=Path)
@@ -3095,6 +4306,7 @@ def _build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--external-gate-root", type=Path)
     resume.add_argument("--external-gate-receipt", type=Path)
     resume.add_argument("--rerun-failed", action="store_true")
+    add_watchdog_options(resume)
     resume.add_argument("--acknowledge-live-requests", action="store_true")
     return parser
 
@@ -3416,7 +4628,11 @@ def _secure_copy_file_once(source: Path, destination: Path) -> dict[str, Any]:
 
 
 @contextmanager
-def _campaign_lock(campaign_dir: Path) -> Iterable[None]:
+def _campaign_lock(
+    campaign_dir: Path,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+) -> Iterable[None]:
     """以 Campaign 级文件锁串行化 attempt 预约与阶段发布。"""
 
     _validate_existing_campaign_path(campaign_dir)
@@ -3439,7 +4655,23 @@ def _campaign_lock(campaign_dir: Path) -> Iterable[None]:
             raise ConfigurationError("Campaign 锁必须是当前用户拥有的 0600 普通文件。")
         if created:
             os.fchmod(descriptor, 0o600)
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        if deadline is None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        else:
+            # 非阻塞轮询让 Campaign 锁等待也受 attempt 全局预算约束；
+            # 不能因另一个进程持锁而无限挂起。
+            while True:
+                deadline.check("campaign-lock")
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    deadline.sleep(
+                        min(0.1, deadline.remaining_seconds),
+                        operation="campaign-lock-wait",
+                    )
+                except InterruptedError:
+                    continue
         yield
     finally:
         try:
@@ -3492,10 +4724,17 @@ def _verify_codex_package(
     expected_package_sha256: str,
     expected_binary_sha256: str,
     expected_code_mode_host_sha256: str,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
     """验证官方 package 内的 CLI 与 Code Mode helper 形成同一身份闭包。"""
 
-    if file_sha256(package) != expected_package_sha256:
+    if _file_sha256_bounded(
+        package,
+        deadline=deadline,
+        heartbeat=heartbeat,
+        operation="official-package:asset-hash",
+    ) != expected_package_sha256:
         raise ConfigurationError("官方 codex-package 压缩包摘要不一致。")
     required_members = {
         "codex-package.json",
@@ -3545,7 +4784,13 @@ def _verify_codex_package(
                     )
                 digest = hashlib.sha256()
                 for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    if deadline is not None:
+                        deadline.check(f"official-package:member-hash:{name}")
                     digest.update(chunk)
+                    if heartbeat is not None:
+                        heartbeat(f"official-package:member-hash:{name}")
+                if deadline is not None:
+                    deadline.check(f"official-package:member-hash:{name}")
                 return digest.hexdigest()
 
             metadata = json.loads(
@@ -3607,6 +4852,13 @@ def _verify_codex_package(
 # 放宽的边界很窄：评估侧文件改动后，已封存证据逐字节不变，只是重新评估一遍即可；
 # 因此承接（resume）成立。产出侧（采集驱动、探针、中继、脱敏、收据生成、环境快照）
 # 任何改动都可能改变证据本身，仍然严格拒绝。
+_WATCHDOG_ONLY_TOOL_FILES = frozenset(
+    {
+        "codex_upgrade_arm64_environment_receipt.py",
+        "codex_upgrade_environment_probe.py",
+        "codex_upgrade_timing_ledger.py",
+    }
+)
 _EVALUATION_SIDE_FILES = frozenset(
     {
         # 从批准断言画像推导验收模型；只读画像与规则，不接触证据字节。
@@ -3621,15 +4873,20 @@ _EVALUATION_SIDE_FILES = frozenset(
         "build_rule_assertion_results.py",
         # 对候选抓包执行逐规则断言；只读抓包。
         "candidate_rule_assertion.py",
-        # ARM64 完整 Job 预检与增量恢复只读取工具树和运行事实，不产生
-        # 官方请求字节；其修复应保持在评估侧。
+        # ARM64 完整 Job 预检、环境快照和增量恢复只读取工具树与运行事实，
+        # 不产生官方请求字节；watchdog 接线修复应保持在评估侧。
+        "codex_upgrade_arm64_environment_receipt.py",
+        "codex_upgrade_environment_probe.py",
         "codex_upgrade_job_rehearsal_receipt.py",
         "incremental_recovery.py",
+        # 计时台账只记录阶段事实，不改变请求或证据字节。
+        "codex_upgrade_timing_ledger.py",
         # 采集后校验中继样本完整性；只读样本。
         "check_sample_integrity.py",
         # 增量计划、attempt 和 Campaign 的 Schema 只收紧事实校验。
         "codex_upgrade_campaign.schema.json",
         "codex_upgrade_capture_attempt.schema.json",
+        "codex_upgrade_incremental_noop.schema.json",
         "codex_upgrade_job_rehearsal_receipt.schema.json",
         # capture manifest 的校验 schema；只约束校验严格度，不产生内容。
         "candidate_capture_manifest.schema.json",
@@ -3649,14 +4906,48 @@ def _tool_identity_sides(entries: list[dict[str, Any]]) -> dict[str, Any]:
     其余（含任何新增文件）全部计入产出侧。
     """
 
-    production = [e for e in entries if e["path"] not in _EVALUATION_SIDE_FILES]
-    evaluation = [e for e in entries if e["path"] in _EVALUATION_SIDE_FILES]
+    production = [
+        e
+        for e in entries
+        if e["path"] not in _EVALUATION_SIDE_FILES
+        and e["path"] not in _WATCHDOG_ONLY_TOOL_FILES
+    ]
+    evaluation = [
+        e
+        for e in entries
+        if e["path"] in _EVALUATION_SIDE_FILES
+        or e["path"] in _WATCHDOG_ONLY_TOOL_FILES
+    ]
     return {
         "production_count": len(production),
         "production_sha256": _fingerprint({"entries": production}),
         "evaluation_count": len(evaluation),
         "evaluation_sha256": _fingerprint({"entries": evaluation}),
     }
+
+
+def _tool_identity_side_digest(identity: Mapping[str, Any], side: str) -> str:
+    """按当前边界重算产出／评估侧摘要，兼容旧 Campaign 的误分类。"""
+
+    if side not in {"production", "evaluation"}:
+        raise ConfigurationError("工具影响面必须是 production 或 evaluation。")
+    entries = identity.get("entries")
+    if not isinstance(entries, list):
+        # 组件化身份本身没有平铺清单时，从各组件重新展开；这样旧身份和新身份
+        # 都能在同一 canonical 视图下比较。
+        components = identity.get("components")
+        if not isinstance(components, Mapping):
+            raise ConfigurationError("工具身份缺少文件清单。")
+        entries = [
+            entry
+            for value in components.values()
+            if isinstance(value, Mapping)
+            for entry in value.get("entries", [])
+            if isinstance(entry, Mapping)
+        ]
+    normalized = [dict(entry) for entry in entries if isinstance(entry, Mapping)]
+    sides = _tool_identity_sides(normalized)
+    return str(sides[f"{side}_sha256"])
 
 
 # 组件边界是恢复选择的唯一输入。路径没有登记到更细的组件时落到 shared，
@@ -3882,8 +5173,17 @@ def _tool_identity_drift(
         if now.get(path) != before.get(path)
     )
     return {
-        "production": [p for p in changed if p not in _EVALUATION_SIDE_FILES],
-        "evaluation": [p for p in changed if p in _EVALUATION_SIDE_FILES],
+        "production": [
+            p
+            for p in changed
+            if p not in _EVALUATION_SIDE_FILES
+            and p not in _WATCHDOG_ONLY_TOOL_FILES
+        ],
+        "evaluation": [
+            p
+            for p in changed
+            if p in _EVALUATION_SIDE_FILES or p in _WATCHDOG_ONLY_TOOL_FILES
+        ],
     }
 
 
@@ -3938,14 +5238,81 @@ def _tool_component_bundle(identity: Mapping[str, Any]) -> dict[str, Any]:
     return _tool_component_identities([dict(item) for item in entries])
 
 
+def _canonicalize_watchdog_component_bundle(
+    bundle: Mapping[str, Any],
+) -> dict[str, Any]:
+    """把历史上误归入 shared 的 watchdog 文件迁移到 evaluator 再比较。
+
+    0.149.1 及更早 Campaign 没有这个边界，直接比较原始组件摘要会把“组件
+    归类修正”误判成 shared 产出侧变化，进而使全部 Job 失效。这里仅规范化
+    比较视图，保留原始身份和漂移台账，不静默吞掉 watchdog 文件的真实改动。
+    """
+
+    components = bundle.get("components")
+    if not isinstance(components, Mapping):
+        raise ConfigurationError("工具组件身份缺少 components。")
+    entries: list[dict[str, Any]] = []
+    assignments: dict[str, str] = {}
+    for component, value in components.items():
+        if not isinstance(component, str) or not isinstance(value, Mapping):
+            raise ConfigurationError("工具组件身份结构非法。")
+        raw_entries = value.get("entries")
+        if not isinstance(raw_entries, list):
+            raise ConfigurationError(f"工具组件 {component} 文件清单非法。")
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, Mapping):
+                raise ConfigurationError("工具组件文件条目非法。")
+            entry = {
+                "path": str(raw_entry.get("path", "")),
+                "sha256": str(raw_entry.get("sha256", "")),
+            }
+            path = entry["path"]
+            if path in assignments:
+                raise ConfigurationError(f"工具组件文件重复：{path}")
+            assignments[path] = (
+                "evaluator"
+                if path in _WATCHDOG_ONLY_TOOL_FILES
+                else component
+            )
+            entries.append(entry)
+    try:
+        canonical = incremental_recovery.build_component_identities(
+            entries,
+            assignments,
+            default_component="shared",
+        )
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(f"工具组件身份规范化失败：{error}") from error
+    # 保持旧摘要中存在的空组件，避免“删除最后一个文件”被误报为组件新增；
+    # 当前身份通常已经包含固定组件集合，历史身份则按其原有集合保留。
+    for component in components:
+        canonical.setdefault(
+            "components", {}
+        ).setdefault(
+            component,
+            {
+                "entry_count": 0,
+                "entries": [],
+                "sha256": incremental_recovery.digest({"entries": []}),
+            },
+        )
+    canonical["component_count"] = len(canonical["components"])
+    return canonical
+
+
 def _tool_component_drift(
     expected: Mapping[str, Any], current: Mapping[str, Any]
 ) -> dict[str, Any]:
     """计算组件摘要变化；兼容没有 components 字段的旧 Campaign。"""
-
+    expected_bundle = _canonicalize_watchdog_component_bundle(
+        _tool_component_bundle(expected)
+    )
+    current_bundle = _canonicalize_watchdog_component_bundle(
+        _tool_component_bundle(current)
+    )
     return incremental_recovery.component_drift(
-        _tool_component_bundle(expected),
-        _tool_component_bundle(current),
+        expected_bundle,
+        current_bundle,
     )
 
 
@@ -8320,6 +9687,8 @@ def _campaign_arguments(
         candidate_image_id=candidate_image_id,
         source_tree_sha256=source_tree_sha256,
         candidate_purpose=candidate_purpose,
+        max_wall_seconds=None,
+        heartbeat_seconds=None,
     )
 
 
@@ -8435,6 +9804,8 @@ def _verify_plan_identity(
     operation: str | None = None,
     attempt_root: Path | None = None,
     attempt: Mapping[str, Any] | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, str] | None:
     # 先重放原 Campaign 的冻结控制事实，但暂不要求旧 Ledger 仍 active。
     # 工具缺陷恢复时旧 Ledger 必须已经 stop_the_line，批准后的 transition
@@ -8453,6 +9824,8 @@ def _verify_plan_identity(
     package_identity = expected.get("package")
     if not isinstance(package_identity, dict):
         raise ConfigurationError("官方目标身份缺少 package 闭包。")
+    if deadline is not None:
+        deadline.check("plan-identity:start")
     current_package_identity = _verify_codex_package(
         Path(manifest["configuration"]["target_package"]),
         expected_version=manifest["target_version"],
@@ -8461,13 +9834,19 @@ def _verify_plan_identity(
         expected_code_mode_host_sha256=str(
             package_identity.get("code_mode_host_sha256", "")
         ),
+        deadline=deadline,
+        heartbeat=heartbeat,
     )
     if current_package_identity != package_identity:
         raise ConfigurationError("官方目标 package 身份漂移。")
     current_tool = _tool_identity(include_git=False)
+    if deadline is not None:
+        deadline.check("plan-identity:tool-summary")
     expected_tool = manifest["tool_identity"]
     if current_tool["files_sha256"] == expected_tool["files_sha256"]:
         _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        if deadline is not None:
+            deadline.check("plan-identity:complete")
         return None
     component_drift = _tool_component_drift(expected_tool, current_tool)
     changed_components = set(component_drift.get("changed_components", []))
@@ -8483,6 +9862,8 @@ def _verify_plan_identity(
             current_tool,
         )
         _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        if deadline is not None:
+            deadline.check("plan-identity:complete")
         return transition
     # 编排／评估修复只改变结果判定或任务调度，不改变已经封存的官方字节。
     # 这类变化不再把整个 Campaign 拦在全局 files_sha256 门禁上；调用方会
@@ -8506,6 +9887,8 @@ def _verify_plan_identity(
                 )
             },
         )
+        if deadline is not None:
+            deadline.check("plan-identity:complete")
         return {
             "kind": "component_drift",
             "changed_components": sorted(changed_components),
@@ -8528,9 +9911,47 @@ def _verify_plan_identity(
             "无法分级判定，只能整轮重建）。"
         )
     drift = _tool_identity_drift(current_tool, expected_tool)
-    if drift["production"] or (
-        current_tool["production_sha256"] != expected_tool["production_sha256"]
+    # status、plan 后的廉价阶段校验也必须能观察纯编排器／评估器漂移；
+    # 这里不要求旧 Ledger 继续 active，也不触碰证据正文。带 attempt 的
+    # seal／deep-verify 仍走上面的 transition 分支，保留阶段边界。
+    if (
+        operation is None
+        and changed_components
+        and changed_components.issubset({"orchestrator", "evaluator"})
     ):
+        low_risk_paths = sorted(
+            path
+            for paths in component_drift.get("changed_paths", {}).values()
+            for path in paths
+        )
+        _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        _record_evaluation_side_drift(
+            campaign_dir,
+            current_tool,
+            expected_tool,
+            {"evaluation": low_risk_paths},
+        )
+        if deadline is not None:
+            deadline.check("plan-identity:complete")
+        return {
+            "kind": "component_drift",
+            "changed_components": sorted(changed_components),
+            "changed_paths": component_drift.get("changed_paths", {}),
+            "affected_job_ids": [],
+            "from_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(expected_tool)
+            ),
+            "to_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(current_tool)
+            ),
+        }
+    expected_production_sha256 = _tool_identity_side_digest(
+        expected_tool, "production"
+    )
+    current_production_sha256 = _tool_identity_side_digest(
+        current_tool, "production"
+    )
+    if drift["production"] or current_production_sha256 != expected_production_sha256:
         if operation is None or attempt_root is None or attempt is None:
             raise ConfigurationError(
                 "升级工具的产出侧在 plan 后发生变化，证据字节前提已不成立："
@@ -8553,10 +9974,14 @@ def _verify_plan_identity(
             expected_tool,
             drift,
         )
+        if deadline is not None:
+            deadline.check("plan-identity:complete")
         return transition
     # 只有评估侧变化：放行，但把变化清单落进台账供审计，避免静默放行。
     _verify_control_receipts(campaign_dir, manifest, require_active=True)
     _record_evaluation_side_drift(campaign_dir, current_tool, expected_tool, drift)
+    if deadline is not None:
+        deadline.check("plan-identity:complete")
     return None
 
 
@@ -8595,9 +10020,15 @@ def _record_evaluation_side_drift(
         records = []
     record = {
         "changed_files": list(drift["evaluation"]),
-        "plan_evaluation_sha256": str(expected_tool.get("evaluation_sha256", "")),
-        "current_evaluation_sha256": current_tool["evaluation_sha256"],
-        "production_sha256": current_tool["production_sha256"],
+        "plan_evaluation_sha256": _tool_identity_side_digest(
+            expected_tool, "evaluation"
+        ),
+        "current_evaluation_sha256": _tool_identity_side_digest(
+            current_tool, "evaluation"
+        ),
+        "production_sha256": _tool_identity_side_digest(
+            current_tool, "production"
+        ),
         "files_sha256": current_tool["files_sha256"],
     }
     # 同一份评估侧状态重复进入不再追加，台账按「不同的评估侧版本」计数。
@@ -8608,7 +10039,9 @@ def _record_evaluation_side_drift(
     records.append(record)
     payload = {
         "schema_version": TOOL_EVALUATION_DRIFT_SCHEMA,
-        "plan_production_sha256": str(expected_tool.get("production_sha256", "")),
+        "plan_production_sha256": _tool_identity_side_digest(
+            expected_tool, "production"
+        ),
         "records": records,
     }
     ensure_private_directory(path.parent)
@@ -9384,42 +10817,109 @@ def _directory_tree_digest(root: Path) -> str:
     return _fingerprint({"entries": entries})
 
 
-def _container_image_id(container: str) -> str | None:
+def _file_sha256_bounded(
+    path: Path,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+    operation: str = "file-hash",
+) -> str:
+    """分块计算大文件摘要，并在每个块边界检查 attempt deadline。"""
+
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError(f"摘要文件不存在或不可信：{path}")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            if deadline is not None:
+                deadline.check(operation)
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            if heartbeat is not None:
+                heartbeat(operation)
+    if deadline is not None:
+        deadline.check(operation)
+    return digest.hexdigest()
+
+
+def _container_image_id(
+    container: str,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> str | None:
     try:
-        result = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Image}}", container],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=30,
-        )
+        command = ["docker", "inspect", "--format", "{{.Image}}", container]
+        if deadline is not None:
+            result = incremental_recovery.run_bounded_subprocess(
+                command,
+                timeout=30,
+                deadline=deadline,
+                operation=f"docker:inspect:{container}",
+                check=True,
+                capture_output=True,
+                text=True,
+                heartbeat=heartbeat,
+            )
+        else:
+            result = subprocess.run(
+                command,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=30,
+            )
+    except incremental_recovery.WallClockTimeoutError:
+        raise
     except (OSError, subprocess.SubprocessError):
         return None
     value = result.stdout.strip()
     return value if value.startswith("sha256:") else None
 
 
-def _image_repo_digests(image_id: str) -> set[str]:
+def _image_repo_digests(
+    image_id: str,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> set[str]:
     """读取 Docker config image ID 对应的 OCI 仓库摘要集合。"""
 
     try:
-        result = subprocess.run(
-            [
-                "docker",
-                "image",
-                "inspect",
-                "--format",
-                "{{json .RepoDigests}}",
-                image_id,
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=30,
-        )
+        command = [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{json .RepoDigests}}",
+            image_id,
+        ]
+        if deadline is not None:
+            result = incremental_recovery.run_bounded_subprocess(
+                command,
+                timeout=30,
+                deadline=deadline,
+                operation=f"docker:image-inspect:{image_id}",
+                check=True,
+                capture_output=True,
+                text=True,
+                heartbeat=heartbeat,
+            )
+        else:
+            result = subprocess.run(
+                command,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=30,
+            )
         payload = json.loads(result.stdout)
+    except incremental_recovery.WallClockTimeoutError:
+        raise
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         raise ConfigurationError("无法读取候选镜像 RepoDigests。") from error
     if (
@@ -9439,15 +10939,26 @@ def _verify_container_image_reference(
     container: str,
     image_reference: str,
     expected_image_id: str | None = None,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> str:
     """分别验证运行容器 config image ID 与其 OCI 仓库摘要。"""
 
-    actual_image_id = _container_image_id(container)
+    actual_image_id = _container_image_id(
+        container,
+        deadline=deadline,
+        heartbeat=heartbeat,
+    )
     if not actual_image_id or not IMAGE_ID_RE.fullmatch(actual_image_id):
         raise ConfigurationError("无法读取运行容器的实际 image ID。")
     if expected_image_id is not None and actual_image_id != expected_image_id:
         raise ConfigurationError("运行容器实际 image ID 与冻结身份不一致。")
-    if image_reference not in _image_repo_digests(actual_image_id):
+    if image_reference not in _image_repo_digests(
+        actual_image_id,
+        deadline=deadline,
+        heartbeat=heartbeat,
+    ):
         raise ConfigurationError(
             "--runtime-image 不是运行镜像实际 RepoDigests 中的不可变引用。"
         )
@@ -9491,7 +11002,12 @@ def _is_world_traversable_executable(path: Path) -> bool:
     )
 
 
-def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
+def _verify_official_binaries(
+    manifest: dict[str, Any],
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> dict[str, Any]:
     """在任何真实官方请求前验证所有可能执行的 Codex 二进制。"""
 
     configuration = manifest["configuration"]
@@ -9502,6 +11018,8 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
     runtime_image_id = _verify_container_image_reference(
         container,
         runtime_image_reference,
+        deadline=deadline,
+        heartbeat=heartbeat,
     )
     container_probe = (
         "import hashlib,json,pathlib,stat,subprocess,sys;"
@@ -9520,15 +11038,38 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
     for name in ("capture_codex_bin", "relay_codex_bin"):
         binary = str(configuration[name])
         try:
-            result = subprocess.run(
-                ["docker", "exec", container, "python3", "-c", container_probe, binary],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=60,
-            )
+            command = [
+                "docker",
+                "exec",
+                container,
+                "python3",
+                "-c",
+                container_probe,
+                binary,
+            ]
+            if deadline is not None:
+                result = incremental_recovery.run_bounded_subprocess(
+                    command,
+                    timeout=60,
+                    deadline=deadline,
+                    operation=f"official-binary:{name}",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    heartbeat=heartbeat,
+                )
+            else:
+                result = subprocess.run(
+                    command,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=60,
+                )
             payload = json.loads(result.stdout)
+        except incremental_recovery.WallClockTimeoutError:
+            raise
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
             raise ConfigurationError(f"无法验证容器内 {name}：{error}") from error
         if (
@@ -9560,14 +11101,29 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
             "宿主机 relay_codex_bin 不存在、不可信，或无法由无特权 bubblewrap 子进程执行。"
         )
     try:
-        host_version = subprocess.run(
-            [str(host_relay), "--version"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-        )
+        command = [str(host_relay), "--version"]
+        if deadline is not None:
+            host_version = incremental_recovery.run_bounded_subprocess(
+                command,
+                timeout=30,
+                deadline=deadline,
+                operation="official-binary:host-relay",
+                check=True,
+                capture_output=True,
+                text=True,
+                heartbeat=heartbeat,
+            )
+        else:
+            host_version = subprocess.run(
+                command,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+            )
+    except incremental_recovery.WallClockTimeoutError:
+        raise
     except (OSError, subprocess.SubprocessError) as error:
         raise ConfigurationError(f"无法验证宿主机 relay_codex_bin：{error}") from error
     identities.append(
@@ -9603,23 +11159,38 @@ def _verify_official_binaries(manifest: dict[str, Any]) -> dict[str, Any]:
     for name in ("capture_code_mode_host_bin", "relay_code_mode_host_bin"):
         helper = str(configuration[name])
         try:
-            result = subprocess.run(
-                [
-                    "docker",
-                    "exec",
-                    container,
-                    "python3",
-                    "-c",
-                    helper_probe,
-                    helper,
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=60,
-            )
+            command = [
+                "docker",
+                "exec",
+                container,
+                "python3",
+                "-c",
+                helper_probe,
+                helper,
+            ]
+            if deadline is not None:
+                result = incremental_recovery.run_bounded_subprocess(
+                    command,
+                    timeout=60,
+                    deadline=deadline,
+                    operation=f"official-helper:{name}",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    heartbeat=heartbeat,
+                )
+            else:
+                result = subprocess.run(
+                    command,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=60,
+                )
             payload = json.loads(result.stdout)
+        except incremental_recovery.WallClockTimeoutError:
+            raise
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
             raise ConfigurationError(f"无法验证容器内 {name}：{error}") from error
         if (
@@ -10207,11 +11778,14 @@ def _reserve_capture_attempt(
     identity: dict[str, Any],
     jobs: list[Job],
     allow_failed_rerun: bool = False,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """在跨进程锁内原子发布预约，关闭 check-then-create 与空目录窗口。"""
 
     relative = _capture_attempt_relative(phase, candidate_id)
-    with _campaign_lock(campaign_dir):
+    if deadline is not None:
+        deadline.check("attempt:reserve:start")
+    with _campaign_lock(campaign_dir, deadline=deadline):
         _reject_contaminated_campaign(campaign_dir)
         canonical = "capture-official" if phase == "official" else "capture-candidate"
         _, result_path = _stage_path(campaign_dir, canonical, candidate_id)
@@ -10311,6 +11885,8 @@ def _reserve_capture_attempt(
                 except OSError:
                     pass
             raise
+        if deadline is not None:
+            deadline.check("attempt:reserve:complete")
         return final_root, reservation
 
 
@@ -10599,6 +12175,7 @@ def _validate_attempt_incremental_fields(
         if not isinstance(result, Mapping):
             raise ConfigurationError("attempt Job 结果必须是对象。")
         _validate_incremental_job_result(result, label=f"attempt:{result.get('id', '')}")
+    _validate_attempt_watchdog_fields(payload, planned_job_ids)
 
 
 def _write_capture_attempt(
@@ -10728,6 +12305,12 @@ def _load_capture_attempt(
         payload,
         {str(item["id"]) for item in reservation["planned_jobs"]},
     )
+    _validate_attempt_watchdog_bindings(
+        campaign_dir,
+        attempt_root,
+        payload,
+        planned_job_ids={str(item["id"]) for item in reservation["planned_jobs"]},
+    )
     return attempt_root, payload
 
 
@@ -10836,9 +12419,21 @@ def _candidate_identity_for_run(
     arguments: argparse.Namespace,
     manifest: dict[str, Any],
     classification: dict[str, Any],
+    *,
+    verify_image: bool = True,
+    image_id_override: str | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
-    """在任何候选请求发出前冻结实际候选身份。"""
+    """在任何候选请求发出前冻结实际候选身份。
 
+    ``verify_image=False`` 只用于增量计划阶段：它不触碰 Docker，只使用调用方
+    提供的 image ID（或前序失败 attempt 的只读身份提示）生成计划坐标。只要计划
+    确定仍有任务需要执行，调用方必须随后以 ``verify_image=True`` 重验运行容器。
+    """
+
+    if deadline is not None:
+        deadline.check("candidate-identity:start")
     required = {
         "runtime_image": getattr(arguments, "runtime_image", None),
         "build_id": getattr(arguments, "build_id", None),
@@ -10876,19 +12471,29 @@ def _candidate_identity_for_run(
         or arguments.profile_digest != approved_profile_digest
     ):
         raise ConfigurationError("候选运行画像 ID／digest 与批准画像不一致。")
-    if arguments.candidate_image_id and not IMAGE_ID_RE.fullmatch(
-        arguments.candidate_image_id
+    supplied_image_id = getattr(arguments, "candidate_image_id", None)
+    if supplied_image_id and not IMAGE_ID_RE.fullmatch(
+        str(supplied_image_id)
     ):
         raise ConfigurationError("--candidate-image-id 格式非法。")
     source_root = arguments.candidate_source or Path(__file__).resolve().parents[2]
     if not source_root.is_dir() or source_root.is_symlink():
         raise ConfigurationError("--candidate-source 不存在或不是可信目录。")
-    image_id = _verify_container_image_reference(
-        manifest["configuration"]["service_container"],
-        str(arguments.runtime_image),
-        arguments.candidate_image_id,
-    )
-    return {
+    image_id = image_id_override or supplied_image_id
+    if verify_image:
+        image_id = _verify_container_image_reference(
+            manifest["configuration"]["service_container"],
+            str(arguments.runtime_image),
+            supplied_image_id,
+            deadline=deadline,
+            heartbeat=heartbeat,
+        )
+    elif not image_id or not IMAGE_ID_RE.fullmatch(str(image_id)):
+        raise ConfigurationError(
+            "增量计划阶段缺少候选 image ID；请提供 --candidate-image-id，"
+            "或绑定可读取的前序失败 attempt。"
+        )
+    result = {
         "git_commit": _git_commit(source_root),
         "source_root": str(source_root.resolve(strict=True)),
         "source_tree_sha256": _directory_tree_digest(source_root),
@@ -10902,6 +12507,9 @@ def _candidate_identity_for_run(
         "profile_digest": arguments.profile_digest,
         "candidate_purpose": arguments.candidate_purpose,
     }
+    if deadline is not None:
+        deadline.check("candidate-identity:complete")
+    return result
 
 
 def _verify_candidate_attempt_identity(
@@ -10970,16 +12578,66 @@ def _environment_probe_arguments(
     )
 
 
+def _invoke_with_optional_deadline(
+    target: Any,
+    *args: Any,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+    **kwargs: Any,
+) -> Any:
+    """调用可选 deadline 接口，并兼容旧的离线适配器签名。
+
+    只在真正调用前检查签名；绝不通过捕获调用后的 ``TypeError`` 重试，避免
+    一个已经触碰外部环境的操作被重复执行。
+    """
+
+    if deadline is not None or heartbeat is not None:
+        callable_target = getattr(target, "side_effect", None)
+        if not callable(callable_target):
+            callable_target = target
+        try:
+            signature = inspect.signature(callable_target)
+            accepts_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            )
+            if deadline is not None and (
+                accepts_kwargs or "deadline" in signature.parameters
+            ):
+                kwargs["deadline"] = deadline
+            if heartbeat is not None and (
+                accepts_kwargs or "heartbeat" in signature.parameters
+            ):
+                kwargs["heartbeat"] = heartbeat
+        except (TypeError, ValueError):
+            # 无法反射的真实 callable 仍按新接口传递；调用失败应直接停线。
+            if deadline is not None:
+                kwargs["deadline"] = deadline
+            if heartbeat is not None:
+                kwargs["heartbeat"] = heartbeat
+    return target(*args, **kwargs)
+
+
 def _probe_capture_environment(
     manifest: dict[str, Any],
     output_dir: Path,
     phase: str,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> dict[str, Any]:
     """执行独立只读探针；单独包装便于离线测试替换执行边界。"""
 
-    return run_environment_probe(
-        _environment_probe_arguments(manifest, output_dir, phase)
+    if deadline is not None:
+        deadline.check(f"environment-probe:{phase}:start")
+    result = run_environment_probe(
+        _environment_probe_arguments(manifest, output_dir, phase),
+        deadline=deadline,
+        heartbeat=heartbeat,
     )
+    if deadline is not None:
+        deadline.check(f"environment-probe:{phase}:complete")
+    return result
 
 
 def _capture_arm64_environment_receipt(
@@ -10987,15 +12645,21 @@ def _capture_arm64_environment_receipt(
     *,
     phase: str,
     subject_id: str,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """只读采集并立即重放一次 ARM64 固定网络与磁盘收据。"""
 
+    if deadline is not None:
+        deadline.check(f"arm64-receipt:{phase}:start")
     ensure_private_directory(output_root)
     codex_upgrade_arm64_environment_receipt.collect(
         output_root,
         "facts.json",
         phase=phase,
         subject_id=subject_id,
+        deadline=deadline,
+        heartbeat=heartbeat,
     )
     receipt = codex_upgrade_arm64_environment_receipt.finalize(
         output_root,
@@ -11005,6 +12669,8 @@ def _capture_arm64_environment_receipt(
     replayed = codex_upgrade_arm64_environment_receipt.replay(
         output_root, "receipt.json"
     )
+    if deadline is not None:
+        deadline.check(f"arm64-receipt:{phase}:complete")
     if replayed != receipt:
         raise ConfigurationError("ARM64 环境收据 finalize／replay 结果不一致。")
     return output_root / "receipt.json", receipt
@@ -11797,9 +13463,7 @@ def _run_capture_attempt(
 
     manifest = _require_formal_campaign(arguments.campaign_dir)
     _reject_contaminated_campaign(arguments.campaign_dir)
-    # 采集脚本与 relay 从 capture_root 下的副本执行，不是本文件所在的受管树；
-    # 两者漂移会让「工具身份校验通过、跑的却是旧代码」，见 _verify_execution_tree。
-    _verify_execution_tree(getattr(arguments, "capture_root", None))
+    deadline = _attempt_deadline(arguments, phase)
     seal_only = {
         "attempt_id": getattr(arguments, "attempt_id", None),
         "capture_manifest": getattr(arguments, "capture_manifest", None),
@@ -11822,10 +13486,6 @@ def _run_capture_attempt(
             f"run 不读取 seal 收据参数，请在 seal 阶段提供：{unexpected}"
         )
     campaign_dir = arguments.campaign_dir
-    if not arguments.acknowledge_live_requests:
-        raise ConfigurationError(
-            "抓包会产生真实请求，必须同时确认 --acknowledge-live-requests。"
-        )
     candidate_id: str | None = None
     identity: dict[str, Any]
     classification: dict[str, Any] | None = None
@@ -11844,7 +13504,8 @@ def _run_capture_attempt(
             )
         jobs = _campaign_jobs(campaign_dir, manifest, "official")
         attempt_relative = _capture_attempt_relative("official", None)
-        binary_verification = _verify_official_binaries(manifest)
+        # 官方二进制验证属于真实执行前提；增量计划为空时不能触发该探针。
+        binary_verification = None
         identity = dict(manifest["official_identity"])
     else:
         classification = _load_stage_result(campaign_dir, "classify")
@@ -11864,7 +13525,47 @@ def _run_capture_attempt(
                 "Campaign 存在待封存候选 attempt，必须先完成其 Kilo 后恢复与 seal："
                 f"{active_attempts}"
             )
-        identity = _candidate_identity_for_run(arguments, manifest, classification)
+        # 失败重跑先尝试从前序 attempt 读取候选身份。这样只为判断增量执行集合，
+        # 不会调用 Docker；真正仍有 Job 要执行时才重验运行容器。
+        identity_hint = None
+        if getattr(arguments, "rerun_failed", False) and not getattr(
+            arguments, "candidate_image_id", None
+        ):
+            identity_hint = _latest_failed_attempt_identity_hint(
+                campaign_dir,
+                phase="candidate",
+                candidate_id=candidate_id,
+            )
+        identity = _candidate_identity_for_run(
+            arguments,
+            manifest,
+            classification,
+            verify_image=not bool(getattr(arguments, "rerun_failed", False)),
+            image_id_override=(
+                identity_hint.get("image_id")
+                if isinstance(identity_hint, Mapping)
+                else None
+            ),
+            deadline=deadline,
+            heartbeat=None,
+        )
+        if identity_hint is not None:
+            # 用户显式传入的坐标必须与前序失败 attempt 完全一致；否则不能把
+            # 新候选身份伪装成同一轮的恢复。
+            for key in (
+                "image_reference",
+                "image_id",
+                "source_tree_sha256",
+                "build_id",
+                "deployed_version",
+                "profile_id",
+                "profile_digest",
+                "candidate_purpose",
+            ):
+                if key in identity_hint and identity.get(key) != identity_hint.get(key):
+                    raise ConfigurationError(
+                        f"候选失败重跑身份与前序 attempt 不一致：{key}"
+                    )
         jobs = _campaign_jobs(
             campaign_dir,
             manifest,
@@ -11883,42 +13584,18 @@ def _run_capture_attempt(
         binary_verification = None
 
     planned_jobs = list(jobs)
-    # 组件身份在 Job 展开后再校验，这样恢复计划可以按依赖闭集缩小执行集合。
+    # 这里只读取受管工具树并计算组件摘要。所有可能触碰 Docker、官方二进制、
+    # bubblewrap、环境探针或 live 请求的操作都必须晚于增量空集判断。
     tool_identity = _tool_identity(include_git=False)
-    tool_impact = _verify_plan_identity(
-        campaign_dir,
-        manifest,
-        operation="capture-run",
+    cheap_impact = _cheap_capture_tool_impact(
+        manifest, planned_jobs, tool_identity
     )
-    incremental_transition: dict[str, Any] | None = None
     affected_job_ids = set(
-        str(item)
-        for item in (
-            tool_impact.get("affected_job_ids", [])
-            if isinstance(tool_impact, Mapping)
-            else []
-        )
+        str(item) for item in cheap_impact.get("affected_job_ids", [])
     )
-    if isinstance(tool_impact, Mapping) and tool_impact.get("kind") == "component_drift":
-        affected_job_ids.update(
-            _affected_job_ids(
-                planned_jobs,
-                tool_impact.get("changed_components", []),
-            )
-        )
-        tool_impact = dict(tool_impact)
-        tool_impact["affected_job_ids"] = sorted(affected_job_ids)
-        incremental_transition = _build_incremental_tool_transition(
-            manifest.get("tool_identity", {}),
-            tool_identity,
-            tool_impact,
-            phase=phase,
-            planned_job_ids=[job.job_id for job in planned_jobs],
-        )
-    if phase == "candidate":
-        # 辅助场景排在多个耗时 Job 之后；凭据缺失或即将过期必须在 reservation
-        # 和首个真实请求之前失败，不能等十几分钟后才发现。
-        _validate_candidate_admin_credential(planned_jobs)
+    changed_components = set(
+        str(item) for item in cheap_impact.get("changed_components", [])
+    )
     prior_results: list[dict[str, Any]] = []
     if getattr(arguments, "rerun_failed", False):
         prior_results = _prior_complete_results(
@@ -11933,6 +13610,93 @@ def _run_capture_attempt(
         )
         completed_ids = {item["id"] for item in prior_results}
         jobs = [job for job in jobs if job.job_id not in completed_ids]
+        if not jobs:
+            # 失败项为空时必须在 reservation 前结束；这条路径不要求 live
+            # acknowledgement，也不创建 attempt／容器探针／环境快照。
+            return _write_incremental_noop_receipt(
+                campaign_dir,
+                manifest,
+                phase=phase,
+                candidate_id=candidate_id,
+                identity=identity,
+                planned_job_ids=[job.job_id for job in planned_jobs],
+                reused_results=prior_results,
+                changed_components=changed_components,
+                affected_job_ids=(),
+                tool_identity=tool_identity,
+                deadline=deadline,
+            )
+
+    # 从这里开始确实存在需要执行的 Job，才允许进入昂贵前置检查。
+    if not getattr(arguments, "acknowledge_live_requests", False):
+        raise ConfigurationError(
+            "抓包会产生真实请求，必须同时确认 --acknowledge-live-requests。"
+        )
+    if phase == "candidate" and getattr(arguments, "rerun_failed", False):
+        # 计划阶段故意不触碰 Docker；现在确认仍有任务需要执行，再冻结并重验
+        # 当前运行容器身份。任何漂移都停线，不得把新身份混入旧 attempt。
+        verified_identity = _candidate_identity_for_run(
+            arguments,
+            manifest,
+            classification or {},
+            verify_image=True,
+            deadline=deadline,
+        )
+        if verified_identity != identity:
+            raise ConfigurationError("候选运行身份在增量计划与执行前校验之间发生漂移。")
+    # 采集脚本与 relay 从 capture_root 下的副本执行，不是本文件所在的受管树；
+    # 该校验同样不能在 no-op 路径触发。
+    _verify_execution_tree(getattr(arguments, "capture_root", None))
+    if phase == "official":
+        binary_verification = _verify_official_binaries(
+            manifest,
+            deadline=deadline,
+        )
+
+    # 完整计划身份校验放在 no-op 之后。它会验证 package、控制收据和工具过渡，
+    # 但不会再影响已经确定的空执行集合。
+    tool_impact = _verify_plan_identity(
+        campaign_dir,
+        manifest,
+        operation="capture-run",
+        deadline=deadline,
+    )
+    if isinstance(tool_impact, Mapping):
+        changed_components.update(
+            str(item) for item in tool_impact.get("changed_components", [])
+        )
+        affected_job_ids.update(
+            str(item) for item in tool_impact.get("affected_job_ids", [])
+        )
+        if tool_impact.get("kind") == "component_drift":
+            affected_job_ids.update(
+                _affected_job_ids(
+                    planned_jobs,
+                    tool_impact.get("changed_components", []),
+                )
+            )
+    else:
+        tool_impact = cheap_impact
+    incremental_transition: dict[str, Any] | None = None
+    if (
+        isinstance(tool_impact, Mapping)
+        and tool_impact.get("kind") == "component_drift"
+        and set(str(item) for item in tool_impact.get("changed_components", []))
+        .issubset({"orchestrator", "evaluator"})
+    ):
+        impact_for_transition = dict(tool_impact)
+        impact_for_transition["affected_job_ids"] = sorted(affected_job_ids)
+        incremental_transition = _build_incremental_tool_transition(
+            manifest.get("tool_identity", {}),
+            tool_identity,
+            impact_for_transition,
+            phase=phase,
+            planned_job_ids=[job.job_id for job in planned_jobs],
+        )
+    if phase == "candidate":
+        # 辅助场景排在多个耗时 Job 之后；凭据缺失或即将过期必须在 reservation
+        # 和首个真实请求之前失败，不能等十几分钟后才发现。
+        _validate_candidate_admin_credential(planned_jobs)
 
     attempt_root, reservation = _reserve_capture_attempt(
         campaign_dir,
@@ -11941,6 +13705,7 @@ def _run_capture_attempt(
         identity=identity,
         jobs=planned_jobs,
         allow_failed_rerun=bool(getattr(arguments, "rerun_failed", False)),
+        deadline=deadline,
     )
     log_root = ensure_private_directory(attempt_root / "logs", campaign_dir)
     evidence_root = ensure_private_directory(
@@ -11949,13 +13714,56 @@ def _run_capture_attempt(
     environment_root = ensure_private_directory(
         evidence_root / "environment", evidence_root
     )
-    if binary_verification is not None:
-        _secure_write_json_once(
-            attempt_root / "official-binary-verification.json",
-            binary_verification,
+    heartbeat_path = attempt_root / "watchdog-heartbeat.json"
+    checkpoint_store: incremental_recovery.CheckpointStore | None = None
+    setup_error: BaseException | None = None
+    try:
+        checkpoint_store = _job_checkpoint_store(attempt_root)
+        _write_attempt_heartbeat(
+            heartbeat_path,
+            deadline,
+            operation="attempt:reserved",
+            force=True,
+            attempt_root=attempt_root,
         )
+        # 复用项也必须写入本 attempt 的 checkpoint，明确记录本轮没有重新
+        # 发起请求；这样中断恢复只读取当前上下文链，不会把旧 attempt 的
+        # 结果直接拼接成“本轮完成”。
+        for reused_result in prior_results:
+            if checkpoint_store is None:
+                raise ConfigurationError("Job checkpoint 存储未初始化。")
+            records = checkpoint_store.records()
+            previous_checkpoint_sha256 = (
+                records[-1].get("checkpoint_sha256") if records else None
+            )
+            checkpoint_store.append(
+                {
+                    "checkpoint_schema_version": JOB_CHECKPOINT_SCHEMA,
+                    "campaign_id": manifest["campaign_id"],
+                    "phase": phase,
+                    "attempt_id": attempt_root.name,
+                    "run_nonce": reservation["run_nonce"],
+                    "item_id": reused_result.get("id"),
+                    "status": "complete",
+                    "disposition": "reused",
+                    "result_sha256": incremental_recovery.digest(reused_result),
+                    "result_key": reused_result.get("incremental_result_key"),
+                    "result": reused_result,
+                    "source_receipt": reused_result.get("source_receipt"),
+                    "previous_checkpoint_sha256": previous_checkpoint_sha256,
+                }
+            )
+        if binary_verification is not None:
+            _secure_write_json_once(
+                attempt_root / "official-binary-verification.json",
+                binary_verification,
+            )
+    except BaseException as error:
+        # watchdog／checkpoint 初始化失败不能留下一个看似可继续的 attempt；
+        # 仍进入统一 after 清理，最终以 failed 停线。
+        setup_error = error
     results: list[dict[str, Any]] = list(prior_results)
-    execution_error: BaseException | None = None
+    execution_error: BaseException | None = setup_error
     restoration_error: BaseException | None = None
     before_manifest: dict[str, Any] | None = None
     after_manifest: dict[str, Any] | None = None
@@ -11966,58 +13774,139 @@ def _run_capture_attempt(
     arm64_after_path: Path | None = None
     arm64_after_receipt: dict[str, Any] | None = None
     continuity: dict[str, Any] | None = None
+    timeout_checkpoint_path: Path | None = None
+    timeout_checkpoint_error: BaseException | None = None
     try:
-        arm64_before_path, arm64_before_receipt = (
-            _capture_arm64_environment_receipt(
+        if setup_error is None:
+            deadline.check("attempt:before")
+            arm64_before_path, arm64_before_receipt = _invoke_with_optional_deadline(
+                _capture_arm64_environment_receipt,
                 environment_root / "arm64-before",
                 phase="attempt_before",
                 subject_id=attempt_root.name,
+                deadline=deadline,
+                heartbeat=lambda operation: _write_attempt_heartbeat(
+                    heartbeat_path,
+                    deadline,
+                    operation=operation,
+                    attempt_root=attempt_root,
+                ),
             )
-        )
-        before_manifest = _probe_capture_environment(
-            manifest, environment_root / "before", "before"
-        )
-        continuity = _verify_environment_continuity(
-            campaign_dir,
-            attempt_relative,
-            {
-                str(item.get("carried_from_attempt"))
-                for item in prior_results
-                if item.get("carried_from_attempt")
-            },
-            before_manifest,
-        )
-    except BaseException as error:
-        execution_error = error
-    else:
-        scenario_context = ScenarioReceiptContext(
-            campaign_id=str(manifest["campaign_id"]),
-            attempt_id=attempt_root.name,
-            run_nonce=str(reservation["run_nonce"]),
-            evidence_root=evidence_root,
-            campaign_dir=campaign_dir,
-        )
-        try:
+            deadline.check("attempt:before-probe")
+            before_manifest = _invoke_with_optional_deadline(
+                _probe_capture_environment,
+                manifest,
+                environment_root / "before",
+                "before",
+                deadline=deadline,
+                heartbeat=lambda operation: _write_attempt_heartbeat(
+                    heartbeat_path,
+                    deadline,
+                    operation=operation,
+                    attempt_root=attempt_root,
+                ),
+            )
+            deadline.check("attempt:continuity")
+            continuity = _verify_environment_continuity(
+                campaign_dir,
+                attempt_relative,
+                {
+                    str(item.get("carried_from_attempt"))
+                    for item in prior_results
+                    if item.get("carried_from_attempt")
+                },
+                before_manifest,
+            )
+            scenario_context = ScenarioReceiptContext(
+                campaign_id=str(manifest["campaign_id"]),
+                attempt_id=attempt_root.name,
+                run_nonce=str(reservation["run_nonce"]),
+                evidence_root=evidence_root,
+                campaign_dir=campaign_dir,
+            )
             for job in jobs:
+                _write_attempt_heartbeat(
+                    heartbeat_path,
+                    deadline,
+                    operation=f"job:{job.job_id}:start",
+                    attempt_root=attempt_root,
+                )
                 result = _run_job_with_retry(
                     job,
                     log_root,
                     scenario_context,
                     identity=identity,
                     tool_identity=tool_identity,
+                    deadline=deadline,
+                    heartbeat=lambda operation: _write_attempt_heartbeat(
+                        heartbeat_path,
+                        deadline,
+                        operation=operation,
+                        attempt_root=attempt_root,
+                    ),
                 )
                 results.append(result)
+                if checkpoint_store is None:
+                    raise ConfigurationError("Job checkpoint 存储未初始化。")
+                records = checkpoint_store.records()
+                previous_checkpoint_sha256 = (
+                    records[-1].get("checkpoint_sha256") if records else None
+                )
+                checkpoint_store.append(
+                    {
+                        "checkpoint_schema_version": JOB_CHECKPOINT_SCHEMA,
+                        "campaign_id": manifest["campaign_id"],
+                        "phase": phase,
+                        "attempt_id": attempt_root.name,
+                        "run_nonce": reservation["run_nonce"],
+                        "item_id": job.job_id,
+                        "status": (
+                            "complete"
+                            if result.get("status") == "complete"
+                            else "failed"
+                        ),
+                        "disposition": result.get("disposition", "executed"),
+                        "result_sha256": incremental_recovery.digest(result),
+                        "result_key": result.get("incremental_result_key"),
+                        "result": result,
+                        "previous_checkpoint_sha256": previous_checkpoint_sha256,
+                    }
+                )
                 _secure_write_json_once(
                     attempt_root / f"job-{job.job_id}.json", result
                 )
-        except BaseException as error:
-            # KeyboardInterrupt 与进程创建失败也必须先完成 after 探针。
-            execution_error = error
-        finally:
-            try:
-                after_manifest = _probe_capture_environment(
-                    manifest, environment_root / "after", "after"
+                _write_attempt_heartbeat(
+                    heartbeat_path,
+                    deadline,
+                    operation=f"job:{job.job_id}:complete",
+                    last_completed_job_id=job.job_id,
+                    force=True,
+                    attempt_root=attempt_root,
                 )
+    except BaseException as error:
+        # KeyboardInterrupt、超时和进程创建失败都必须先完成 after 探针。
+        if execution_error is None:
+            execution_error = error
+    finally:
+        try:
+            # 到期时不再启动新的外部操作，但仍尝试一次受控 after／恢复；失败
+            # 会与 timeout 一起写入 attempt，绝不吞掉清理错误。
+            if not deadline.expired:
+                deadline.check("attempt:after-probe")
+                after_manifest = _invoke_with_optional_deadline(
+                    _probe_capture_environment,
+                    manifest,
+                    environment_root / "after",
+                    "after",
+                    deadline=deadline,
+                    heartbeat=lambda operation: _write_attempt_heartbeat(
+                        heartbeat_path,
+                        deadline,
+                        operation=operation,
+                        attempt_root=attempt_root,
+                    ),
+                )
+                deadline.check("attempt:restoration")
                 restoration_path, restoration_receipt = (
                     _finalize_attempt_restoration(
                         evidence_root,
@@ -12025,15 +13914,23 @@ def _run_capture_attempt(
                         candidate_id=candidate_id,
                     )
                 )
-            except BaseException as error:
-                restoration_error = error
-            try:
-                arm64_after_path, arm64_after_receipt = (
-                    _capture_arm64_environment_receipt(
-                        environment_root / "arm64-after",
-                        phase="attempt_after",
-                        subject_id=attempt_root.name,
-                    )
+        except BaseException as error:
+            restoration_error = error
+        try:
+            if not deadline.expired:
+                deadline.check("attempt:arm64-after")
+                arm64_after_path, arm64_after_receipt = _invoke_with_optional_deadline(
+                    _capture_arm64_environment_receipt,
+                    environment_root / "arm64-after",
+                    phase="attempt_after",
+                    subject_id=attempt_root.name,
+                    deadline=deadline,
+                    heartbeat=lambda operation: _write_attempt_heartbeat(
+                        heartbeat_path,
+                        deadline,
+                        operation=operation,
+                        attempt_root=attempt_root,
+                    ),
                 )
                 if (
                     arm64_before_receipt is None
@@ -12041,9 +13938,44 @@ def _run_capture_attempt(
                     != arm64_after_receipt.get("continuity_identity_sha256")
                 ):
                     raise ConfigurationError("attempt 前后 ARM64 网络或运行身份漂移。")
-            except BaseException as error:
-                if restoration_error is None:
-                    restoration_error = error
+        except BaseException as error:
+            if restoration_error is None:
+                restoration_error = error
+
+    if isinstance(execution_error, incremental_recovery.WallClockTimeoutError) or deadline.expired:
+        # 超时是不可恢复的 attempt 终态：即使剩余清理预算为零，也必须尽力写入
+        # 一次不可覆盖 checkpoint；写 checkpoint 失败会升级为停线错误。
+        try:
+            _write_attempt_heartbeat(
+                heartbeat_path,
+                deadline,
+                operation="attempt:timeout",
+                force=True,
+                allow_expired=True,
+                attempt_root=attempt_root,
+            )
+        except BaseException as error:
+            timeout_checkpoint_error = error
+        try:
+            timeout_checkpoint_path = _write_timeout_checkpoint(
+                attempt_root,
+                deadline,
+                operation=(
+                    execution_error.operation
+                    if isinstance(
+                        execution_error,
+                        incremental_recovery.WallClockTimeoutError,
+                    )
+                    else "attempt:deadline"
+                ),
+                last_completed_job_id=getattr(
+                    deadline, "last_completed_job_id", None
+                ),
+            )
+        except BaseException as error:
+            timeout_checkpoint_error = timeout_checkpoint_error or error
+        if timeout_checkpoint_error is not None and execution_error is None:
+            execution_error = timeout_checkpoint_error
 
     result_by_id = {
         result.get("id"): result
@@ -12123,6 +14055,79 @@ def _run_capture_attempt(
                 f"{type(restoration_error).__name__}"
             ),
         }
+    # 形成 attempt 收据前固定 watchdog／checkpoint 绑定。这里仅读取小型摘要，
+    # 不扫描 Job 证据内容；任何绑定读取失败都按停线处理。
+    watchdog_heartbeat: dict[str, Any] | None = None
+    if heartbeat_path.is_file() and not heartbeat_path.is_symlink():
+        watchdog_heartbeat = {
+            "path": str(heartbeat_path.relative_to(campaign_dir)),
+            "sha256": file_sha256(heartbeat_path),
+            "bytes": heartbeat_path.stat().st_size,
+        }
+    elif setup_error is None:
+        execution_error = execution_error or ConfigurationError(
+            "attempt 缺少 watchdog heartbeat 收据。"
+        )
+    job_checkpoint: dict[str, Any] | None = None
+    if checkpoint_store is not None:
+        try:
+            checkpoint_records = checkpoint_store.records()
+            job_checkpoint = {
+                "schema_version": JOB_CHECKPOINT_SCHEMA,
+                "campaign_id": manifest["campaign_id"],
+                "phase": phase,
+                "attempt_id": attempt_root.name,
+                "run_nonce": reservation["run_nonce"],
+                "path": str(
+                    checkpoint_store.root.resolve(strict=True).relative_to(
+                        campaign_dir.resolve(strict=True)
+                    )
+                ),
+                "record_count": len(checkpoint_records),
+                "last_sequence": (
+                    checkpoint_records[-1].get("checkpoint_sequence")
+                    if checkpoint_records
+                    else None
+                ),
+                "last_sha256": (
+                    checkpoint_records[-1].get("checkpoint_sha256")
+                    if checkpoint_records
+                    else None
+                ),
+            }
+        except BaseException as error:
+            # checkpoint 自身损坏或读取失败必须停线，但不能让最终 attempt
+            # 收据因为异常逃逸而永远缺失；把错误保留在 attempt 主事实中。
+            if execution_error is None:
+                execution_error = error
+            job_checkpoint = None
+    elif setup_error is None:
+        execution_error = execution_error or ConfigurationError(
+            "attempt 缺少 Job checkpoint 存储。"
+        )
+    watchdog = {
+        "schema_version": WATCHDOG_HEARTBEAT_SCHEMA,
+        "budget_seconds": deadline.budget_seconds,
+        "heartbeat_seconds": getattr(
+            deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS
+        ),
+        "elapsed_seconds": round(deadline.elapsed_seconds, 3),
+        "remaining_seconds": round(deadline.remaining_seconds, 3),
+        "heartbeat": watchdog_heartbeat,
+        "timeout_checkpoint": (
+            {
+                "path": str(timeout_checkpoint_path.relative_to(campaign_dir)),
+                "sha256": file_sha256(timeout_checkpoint_path),
+                "bytes": timeout_checkpoint_path.stat().st_size,
+            }
+            if timeout_checkpoint_path is not None
+            and timeout_checkpoint_path.is_file()
+            else None
+        ),
+        "last_completed_job_id": getattr(
+            deadline, "last_completed_job_id", None
+        ),
+    }
     status = (
         "environment_contaminated"
         if contamination is not None
@@ -12226,6 +14231,8 @@ def _run_capture_attempt(
             "evidence_roots": [str(root) for root in evidence_roots],
             "environment": environment,
             "binary_verification": binary_verification,
+            "watchdog": watchdog,
+            "job_checkpoint": job_checkpoint,
             "execution_error": (
                 {
                     "type": type(execution_error).__name__,
@@ -13907,6 +15914,7 @@ def prepare_profile_manifest(
         check=False,
         capture_output=True,
         text=True,
+        timeout=PROFILE_GENERATOR_TIMEOUT_SECONDS,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
@@ -14029,6 +16037,7 @@ def stage_profile_catalog(campaign_dir: Path, output: Path) -> dict[str, Any]:
         check=False,
         capture_output=True,
         text=True,
+        timeout=PROFILE_GENERATOR_TIMEOUT_SECONDS,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
@@ -15653,10 +17662,10 @@ def _resume_campaign(arguments: argparse.Namespace) -> tuple[dict[str, Any], int
             if missing:
                 raise ConfigurationError(f"候选失败重跑缺少身份参数：{missing}")
         result = _run_capture_attempt(arguments, phase)
-        return result, 0 if result.get("status") == "complete" else 2
+        return result, 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
     if current == "planned":
         result = _run_capture_attempt(arguments, "official")
-        return result, 0 if result.get("status") == "complete" else 2
+        return result, 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
     if current in {"official_awaiting_receipts", "official_awaiting_seal_approval"}:
         raise ConfigurationError(
             "官方 attempt 正等待机器收据或 seal 摘要批准；resume 不会代替人工审核。"
@@ -15679,7 +17688,7 @@ def _resume_campaign(arguments: argparse.Namespace) -> tuple[dict[str, Any], int
         if missing:
             raise ConfigurationError(f"resume 候选抓包缺少参数：{missing}")
         result = _run_capture_attempt(arguments, "candidate")
-        return result, 0 if result.get("status") == "complete" else 2
+        return result, 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
     if current in {
         "candidate_awaiting_client_checkpoint",
         "candidate_client_checkpoint_created",
@@ -15752,7 +17761,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = _run_capture_attempt(arguments, "official")
             else:
                 result = _seal_capture_attempt(arguments, "official")
-            return_code = 0 if result.get("status") == "complete" else 2
+            return_code = 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
         elif command == "classify":
             manifest = load_campaign_manifest(arguments.campaign_dir)
             _resolve_classification_inputs(arguments, manifest)
@@ -15765,7 +17774,7 @@ def main(argv: list[str] | None = None) -> int:
                 assertion_profile_manifest=arguments.assertion_profile_manifest,
                 approve_manifest_sha256=arguments.approve_manifest_sha256,
             )
-            return_code = 0 if result.get("status") == "complete" else 2
+            return_code = 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
         elif command == "prepare-profile":
             result = prepare_profile_manifest(
                 arguments.campaign_dir,
@@ -15782,7 +17791,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = _run_capture_attempt(arguments, "candidate")
             else:
                 result = _seal_capture_attempt(arguments, "candidate")
-            return_code = 0 if result.get("status") == "complete" else 2
+            return_code = 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
         elif command == "compare":
             result = compare_campaign(arguments.campaign_dir, arguments.candidate_id)
             return_code = 0 if result["equal"] else 2

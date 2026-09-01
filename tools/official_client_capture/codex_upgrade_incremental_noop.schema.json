@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-incremental-noop-v1.json",
+  "title": "Codex 升级增量空操作收据",
+  "description": "不创建 live attempt、不发送请求时记录的控制事实；不是新的通过事实。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "success",
+    "new_pass_fact",
+    "campaign_id",
+    "campaign_manifest_sha256",
+    "phase",
+    "candidate_id",
+    "noop_id",
+    "identity_sha256",
+    "tool_component_identity_sha256",
+    "planned_job_ids",
+    "execute_job_ids",
+    "reused_job_ids",
+    "affected_job_ids",
+    "failed_job_ids",
+    "changed_components",
+    "plan_sha256",
+    "incremental_plan",
+    "source_receipts",
+    "source_receipts_sha256",
+    "scanned_bytes",
+    "live_request_count",
+    "recorded_at_utc",
+    "next_action",
+    "noop_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-incremental-noop/v1"},
+    "status": {"const": "incremental-noop"},
+    "success": {"const": true},
+    "new_pass_fact": {"const": false},
+    "campaign_id": {"$ref": "#/$defs/safeId"},
+    "campaign_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "phase": {"enum": ["official", "candidate"]},
+    "candidate_id": {
+      "oneOf": [{"$ref": "#/$defs/safeId"}, {"type": "null"}]
+    },
+    "noop_id": {"$ref": "#/$defs/safeId"},
+    "identity_sha256": {"$ref": "#/$defs/sha256"},
+    "tool_component_identity_sha256": {
+      "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+    },
+    "planned_job_ids": {"$ref": "#/$defs/jobIdArray"},
+    "execute_job_ids": {"const": []},
+    "reused_job_ids": {"$ref": "#/$defs/jobIdArray"},
+    "affected_job_ids": {"const": []},
+    "failed_job_ids": {"const": []},
+    "changed_components": {"$ref": "#/$defs/componentArray"},
+    "plan_sha256": {"$ref": "#/$defs/sha256"},
+    "incremental_plan": {"$ref": "#/$defs/incrementalPlan"},
+    "source_receipts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/fileBinding"}
+    },
+    "source_receipts_sha256": {"$ref": "#/$defs/sha256"},
+    "scanned_bytes": {"const": 0},
+    "live_request_count": {"const": 0},
+    "recorded_at_utc": {"type": "string", "format": "date-time"},
+    "next_action": {"type": "string", "minLength": 1},
+    "noop_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"phase": {"const": "official"}}},
+      "then": {"properties": {"candidate_id": {"const": null}}}
+    },
+    {
+      "if": {"properties": {"phase": {"const": "candidate"}}},
+      "then": {"required": ["candidate_id"]}
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "jobIdArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/safeId"}
+    },
+    "componentArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "producer",
+          "relay",
+          "evaluator",
+          "scenario",
+          "runtime",
+          "orchestrator",
+          "shared"
+        ]
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+        },
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "incrementalPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "planned_job_ids",
+        "changed_components",
+        "affected_job_ids",
+        "reused_job_ids",
+        "executed_job_ids",
+        "failed_job_ids",
+        "pending_job_ids",
+        "plan_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": "codex-upgrade-incremental/v1"},
+        "planned_job_ids": {"$ref": "#/$defs/jobIdArray"},
+        "changed_components": {"$ref": "#/$defs/componentArray"},
+        "affected_job_ids": {"const": []},
+        "reused_job_ids": {"$ref": "#/$defs/jobIdArray"},
+        "executed_job_ids": {"const": []},
+        "failed_job_ids": {"const": []},
+        "pending_job_ids": {"const": []},
+        "plan_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

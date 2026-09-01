@@ -1,0 +1,33 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-producer-coordinate-decoupling-source-transition/v1",
+  "issued_at_utc": "2026-09-01T13:20:00Z",
+  "base_commit": "b4c3b58ea13a3aa85ed22e68586cfe368b0c9d88",
+  "scope": "codex-cli-0.151-producer-coordinate-decoupling",
+  "predecessor": {
+    "kind": "codex_cli_0151_timing_producer_replay_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-timing-producer-replay-tool-successor-source-transition.json",
+    "sha256": "0897f6b11e02a86f072852b199cd0c8ed050233d322f116591cc6ee2d530567e"
+  },
+  "transitions": [
+    {
+      "path": "tools/official_client_capture/codex_upgrade_timing_ledger.py",
+      "from_sha256": "828a8ff86a4b021037d7e9068d80b1d422ff22d39fba89cb1c9ac04e451157e0",
+      "to_sha256": "33965cf60a809cfd9fea59e86ba6597daa5e133fd8b30e91d300512c02d591e5",
+      "reason": "解除历史 UpgradeTimingLedger 与工作树绝对根的耦合，按规范相对坐标和精确摘要承接。"
+    }
+  ],
+  "additions": [],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade_timing_ledger",
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade",
+    "make check-egress-bootstrap-replay"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_producer_coordinate_decoupling",
+  "identity_sha256": "8e60b2e1886f1165df220b31d12cf0b9ebee4e33864642f7e544f7ae8768c040"
+}

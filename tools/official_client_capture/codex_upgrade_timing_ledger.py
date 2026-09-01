@@ -73,6 +73,13 @@ PRODUCER_SUCCESSOR_TRANSITIONS = (
         "scope": "codex-cli-0.151-timing-producer-replay-tool-successor",
         "result": "passed_codex_cli_0151_timing_producer_replay_tool_successor",
     },
+    {
+        "path": "docs/egress/maintenance/codex-cli-0151-producer-coordinate-decoupling-source-transition.json",
+        "schema_version": "sub2apiplus-codex-cli-0151-producer-coordinate-decoupling-source-transition/v1",
+        "base_commit": "b4c3b58ea13a3aa85ed22e68586cfe368b0c9d88",
+        "scope": "codex-cli-0.151-producer-coordinate-decoupling",
+        "result": "passed_codex_cli_0151_producer_coordinate_decoupling",
+    },
 )
 
 
@@ -358,32 +365,73 @@ def _load_producer_successor_edge(
     return before, after
 
 
+def _producer_tool_coordinate(value: Any) -> tuple[str, ...] | None:
+    """提取 producer 的规范相对坐标，忽略工作树根目录。"""
+
+    if not isinstance(value, str) or not value or not value.startswith("/"):
+        return None
+    try:
+        parsed = PurePosixPath(value)
+        parts = parsed.parts
+    except (TypeError, ValueError):
+        return None
+    relative = tuple(PurePosixPath(PRODUCER_TOOL_RELATIVE).parts)
+    if (
+        str(parsed) != value
+        or any(part in {"", ".", ".."} for part in parts)
+        or len(parts) < len(relative)
+        or parts[-len(relative) :] != relative
+    ):
+        return None
+    return relative
+
+
 def _producer_identity_matches(frozen: Any, current: dict[str, str]) -> bool:
-    """只允许路径不变且由已登记来源 transition 连续承接的工具升级。"""
+    """按规范坐标和内容摘要承接历史 producer，不绑定工作树绝对根。"""
 
     if frozen == current:
         return True
     if not isinstance(frozen, dict) or set(frozen) != set(current):
         return False
-    for field in ("schema_version", "tool", "version"):
+    for field in ("schema_version", "version"):
         if frozen.get(field) != current[field]:
             return False
+    # 旧台账可能来自已删除的 worktree；绝对根是运行坐标，不是 producer
+    # 身份。仍要求两端都落在同一个受管相对路径，避免任意文件被冒充。
+    if _producer_tool_coordinate(frozen.get("tool")) is None or _producer_tool_coordinate(
+        current.get("tool")
+    ) is None:
+        return False
     frozen_sha256 = frozen.get("tool_sha256")
     if not isinstance(frozen_sha256, str) or not SHA256_RE.fullmatch(frozen_sha256):
         return False
-    tool = Path(current["tool"])
+    if frozen_sha256 == current["tool_sha256"]:
+        # 内容相同即可证明同一 producer；工作树根目录仍只按下面的
+        # 规范相对坐标校验，不把路径变化误判成工具漂移。
+        return True
+    tool = Path(current["tool"]).resolve()
     repository_root = tool.parents[2]
     if tool != repository_root / PRODUCER_TOOL_RELATIVE:
         return False
-    cursor = frozen_sha256
-    for descriptor in PRODUCER_SUCCESSOR_TRANSITIONS:
-        before, after = _load_producer_successor_edge(repository_root, descriptor)
-        if cursor == after:
-            continue
-        if cursor != before:
+    edges = [
+        _load_producer_successor_edge(repository_root, descriptor)
+        for descriptor in PRODUCER_SUCCESSOR_TRANSITIONS
+    ]
+    if not edges:
+        return False
+    # 先验证登记的 transition 本身是一条连续、无分叉的摘要链；然后
+    # 允许历史台账从链上的任意节点开始承接到当前节点。
+    nodes = [edges[0][0]]
+    for before, after in edges:
+        if before != nodes[-1] or after == before or after in nodes:
             return False
-        cursor = after
-    return cursor == current["tool_sha256"]
+        nodes.append(after)
+    try:
+        frozen_index = nodes.index(frozen_sha256)
+        current_index = nodes.index(current["tool_sha256"])
+    except ValueError:
+        return False
+    return frozen_index < current_index
 
 
 def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:

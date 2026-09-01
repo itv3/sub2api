@@ -21,6 +21,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.official_client_capture.candidate_evidence_guard import normalize_state
+from tools.official_client_capture import incremental_recovery
 
 
 PROBE_MANIFEST_SCHEMA = "codex-upgrade-environment-probe/v1"
@@ -84,6 +85,12 @@ class EnvironmentProbeError(RuntimeError):
     """环境探针无法生成可信、无秘密的规范化状态。"""
 
 
+# run_probe 内部有多层状态／数据库探针。用进程内作用域传递同一个 deadline，
+# 避免某一层忘记转发参数而退回固定 30 秒 subprocess timeout。
+_ACTIVE_DEADLINE: incremental_recovery.WallClockDeadline | None = None
+_ACTIVE_HEARTBEAT: Any | None = None
+
+
 @dataclass(frozen=True)
 class TableSpec:
     """允许读取的持久表及其稳定主键。"""
@@ -129,21 +136,39 @@ def _run_command(
     *,
     description: str,
     allow_failure: bool = False,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """使用参数数组执行命令；错误消息绝不回显命令输出。"""
 
+    active_deadline = deadline if deadline is not None else _ACTIVE_DEADLINE
+    active_heartbeat = heartbeat if heartbeat is not None else _ACTIVE_HEARTBEAT
     try:
-        completed = subprocess.run(
-            list(arguments),
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
-            stdin=subprocess.DEVNULL,
-            timeout=COMMAND_TIMEOUT_SECONDS,
-            shell=False,
-        )
+        if active_deadline is not None:
+            completed = incremental_recovery.run_bounded_subprocess(
+                arguments,
+                timeout=COMMAND_TIMEOUT_SECONDS,
+                deadline=active_deadline,
+                operation=description,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="strict",
+                heartbeat=active_heartbeat,
+            )
+        else:
+            completed = subprocess.run(
+                list(arguments),
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="strict",
+                stdin=subprocess.DEVNULL,
+                timeout=COMMAND_TIMEOUT_SECONDS,
+                shell=False,
+            )
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
         raise EnvironmentProbeError(f"{description}执行失败") from error
     if completed.returncode != 0 and not allow_failure:
@@ -917,7 +942,7 @@ def _snapshot_binding(path: Path, payload: bytes, kind: str) -> dict[str, Any]:
     }
 
 
-def run_probe(arguments: ProbeArguments) -> dict[str, Any]:
+def _run_probe(arguments: ProbeArguments) -> dict[str, Any]:
     """完成全量只读采集，并在全部命令成功后独占写入五份快照。"""
 
     if arguments.account_id <= 0 or arguments.api_key_id <= 0:
@@ -1000,6 +1025,26 @@ def run_probe(arguments: ProbeArguments) -> dict[str, Any]:
     ).encode("utf-8")
     _exclusive_write(arguments.output_dir / "probe-manifest.json", manifest_payload)
     return manifest
+
+
+def run_probe(
+    arguments: ProbeArguments,
+    *,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> dict[str, Any]:
+    """运行环境探针，并让所有内部命令共享同一条 attempt deadline。"""
+
+    global _ACTIVE_DEADLINE, _ACTIVE_HEARTBEAT
+    previous_deadline = _ACTIVE_DEADLINE
+    previous_heartbeat = _ACTIVE_HEARTBEAT
+    _ACTIVE_DEADLINE = deadline
+    _ACTIVE_HEARTBEAT = heartbeat
+    try:
+        return _run_probe(arguments)
+    finally:
+        _ACTIVE_DEADLINE = previous_deadline
+        _ACTIVE_HEARTBEAT = previous_heartbeat
 
 
 def _build_parser() -> argparse.ArgumentParser:
