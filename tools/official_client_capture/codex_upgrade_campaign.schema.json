@@ -565,6 +565,40 @@
         },
         "evaluation_sha256": {
           "$ref": "#/$defs/sha256"
+        },
+        "components": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/componentIdentity"
+          }
+        },
+        "component_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "componentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_count",
+        "entries",
+        "sha256"
+      ],
+      "properties": {
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/toolFile"
+          }
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     },

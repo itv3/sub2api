@@ -22,7 +22,10 @@
       "const": "codex-upgrade-job-rehearsal-receipt/v1"
     },
     "status": {
-      "const": "passed"
+      "enum": [
+        "passed",
+        "failed"
+      ]
     },
     "observed_at_utc": {
       "type": "string",
@@ -52,6 +55,24 @@
     },
     "producer": {
       "$ref": "#/$defs/producer"
+    },
+    "failed_job_ids": {
+      "$ref": "#/$defs/jobIdArray"
+    },
+    "executed_job_ids": {
+      "$ref": "#/$defs/jobIdArray"
+    },
+    "reused_job_ids": {
+      "$ref": "#/$defs/jobIdArray"
+    },
+    "affected_job_ids": {
+      "$ref": "#/$defs/jobIdArray"
+    },
+    "incremental_plan": {
+      "$ref": "#/$defs/incrementalPlan"
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/checkpoint"
     }
   },
   "$defs": {
@@ -62,6 +83,106 @@
     "safeId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "jobIdArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safeId"
+      }
+    },
+    "componentName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+    },
+    "incrementalPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "contract_sha256",
+        "execute_job_ids",
+        "reused_job_ids",
+        "failed_job_ids",
+        "changed_components",
+        "reasons",
+        "plan_sha256",
+        "affected_job_ids",
+        "previous_receipt"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-incremental/v1"
+        },
+        "contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "execute_job_ids": {
+          "$ref": "#/$defs/jobIdArray"
+        },
+        "reused_job_ids": {
+          "$ref": "#/$defs/jobIdArray"
+        },
+        "failed_job_ids": {
+          "$ref": "#/$defs/jobIdArray"
+        },
+        "affected_job_ids": {
+          "$ref": "#/$defs/jobIdArray"
+        },
+        "changed_components": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/componentName"
+          }
+        },
+        "reasons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "previous_receipt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/binding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "record_count",
+        "last_sequence",
+        "last_sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
     },
     "absolutePath": {
       "type": "string",

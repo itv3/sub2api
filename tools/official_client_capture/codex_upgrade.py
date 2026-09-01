@@ -8,6 +8,7 @@ import base64
 import fcntl
 import glob
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -83,6 +84,7 @@ from tools.official_client_capture import codex_upgrade_evidence_manifest
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
 from tools.official_client_capture import codex_upgrade_timing_ledger
 from tools.official_client_capture import codex_upgrade_gate_receipt as external_gate_receipt
+from tools.official_client_capture import incremental_recovery
 from tools.official_client_capture.codex_upgrade_receipt_finalizer import (
     CLIENT_BINDING_SCHEMA as FINALIZED_CLIENT_BINDING_SCHEMA,
     OBSERVED_PROFILE_SCHEMA as FINALIZED_OBSERVED_PROFILE_SCHEMA,
@@ -278,6 +280,93 @@ class Job:
     model_id: str = ""
     expected_use_responses_lite: bool = False
     required_model_receipt: bool = False
+
+
+def _job_tool_components(job: Job) -> tuple[str, ...]:
+    """从 Job 的实际启动命令推导最小 producer 依赖。
+
+    编排器和评估器不会作为抓包字节的依赖；因此修复它们时，已经通过的
+    Job 可以继续复用。无法识别的启动器按 shared 处理，保持失败关闭。
+    """
+
+    components: set[str] = set()
+    for step in job.steps:
+        argv = step.get("argv", []) if isinstance(step, Mapping) else []
+        for raw in argv if isinstance(argv, list) else []:
+            if not isinstance(raw, str):
+                continue
+            normalized = raw.replace("\\", "/")
+            if "tools/official_client_capture/" in normalized:
+                relative = normalized.split("tools/official_client_capture/", 1)[1]
+                components.add(_tool_component_for_path(relative))
+            elif normalized.endswith(".sh") or normalized.endswith(".py"):
+                components.add(_tool_component_for_path(normalized.rsplit("/", 1)[-1]))
+        # 直接 docker exec 的官方任务依赖 capture 侧 producer，但不依赖
+        # 版本编排器本身。
+        if argv and isinstance(argv[0], str) and argv[0] == "docker":
+            components.add("producer")
+    if not components:
+        components.add("shared")
+    return tuple(sorted(components))
+
+
+def _job_incremental_metadata(
+    job: Job,
+    identity: Mapping[str, Any] | None = None,
+    tool_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """生成 Job 可独立比较的组件依赖和缓存键。"""
+
+    current_tool = tool_identity or _tool_identity(include_git=False)
+    components = current_tool.get("components")
+    if not isinstance(components, Mapping):
+        entries = current_tool.get("entries")
+        if not isinstance(entries, list):
+            raise ConfigurationError("工具身份缺少组件或文件清单。")
+        components = _tool_component_identities(entries)["components"]
+    names = _job_tool_components(job)
+    dependency_rows = []
+    for name in names:
+        item = components.get(name)
+        if not isinstance(item, Mapping) or not SHA256_RE.fullmatch(
+            str(item.get("sha256", ""))
+        ):
+            raise ConfigurationError(f"Job {job.job_id} 的工具组件摘要缺失：{name}")
+        dependency_rows.append(
+            {
+                "id": f"tool:{name}",
+                "status": "passed",
+                "result_sha256": str(item["sha256"]),
+            }
+        )
+    # identity 只绑定稳定的官方／候选运行坐标；run_nonce 和证据路径不进入键。
+    identity_sha = _fingerprint(dict(identity)) if identity is not None else "0" * 64
+    dependency_sha = incremental_recovery.dependency_digest(dependency_rows)
+    input_sha = _job_execution_sha256(job)
+    environment_sha = _fingerprint(
+        {
+            "phase": job.phase,
+            "track": getattr(job, "track", "main"),
+            "model_id": getattr(job, "model_id", ""),
+            "identity_sha256": identity_sha,
+        }
+    )
+    return {
+        "components": list(names),
+        "component_digests": {
+            name: str(components[name]["sha256"]) for name in names
+        },
+        "dependency_sha256": dependency_sha,
+        "input_sha256": input_sha,
+        "environment_sha256": environment_sha,
+        "result_key": incremental_recovery.result_key(
+            component="job",
+            item_id=job.job_id,
+            input_sha256=input_sha,
+            environment_sha256=environment_sha,
+            dependency_sha256=dependency_sha,
+        ),
+    }
 
 
 def _validate_candidate_admin_credential(jobs: Iterable[Job]) -> None:
@@ -1982,6 +2071,9 @@ def run_job(
     log_root: Path,
     attempt_index: int = 1,
     scenario_context: ScenarioReceiptContext | None = None,
+    *,
+    identity: Mapping[str, Any] | None = None,
+    tool_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """顺序执行任务步骤，并保留不含命令环境值的日志。
 
@@ -1990,6 +2082,11 @@ def run_job(
     """
 
     started = time.time()
+    incremental = _job_incremental_metadata(
+        job,
+        identity=identity,
+        tool_identity=tool_identity,
+    )
     step_results: list[dict[str, Any]] = []
     for index, step in enumerate(job.steps, 1):
         log_path = log_root / (
@@ -2106,6 +2203,15 @@ def run_job(
         "required_model_receipt": getattr(job, "required_model_receipt", False),
         "model_condition_receipt": model_receipt,
         "model_condition_receipt_failure": model_receipt_failure,
+        "disposition": "executed",
+        # 组件级身份用于跨 attempt 定向恢复；旧收据缺少这些字段时仍按
+        # 原 execution_sha256 规则读取，不会把历史证据改写成新格式。
+        "tool_components": incremental["components"],
+        "tool_component_digests": incremental["component_digests"],
+        "input_sha256": incremental["input_sha256"],
+        "environment_sha256": incremental["environment_sha256"],
+        "dependency_sha256": incremental["dependency_sha256"],
+        "incremental_result_key": incremental["result_key"],
     }
 
 
@@ -2189,12 +2295,48 @@ def _run_job_with_retry(
     job: Job,
     log_root: Path,
     scenario_context: ScenarioReceiptContext | None = None,
+    *,
+    identity: Mapping[str, Any] | None = None,
+    tool_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """在同一 attempt 内对失败任务做有限补跑，返回最后一次的收据。"""
 
     attempt_index = 1
     while True:
-        result = run_job(job, log_root, attempt_index, scenario_context)
+        run_kwargs: dict[str, Any] = {}
+        if identity is not None:
+            run_kwargs["identity"] = identity
+        if tool_identity is not None:
+            run_kwargs["tool_identity"] = tool_identity
+        # 保持第三方／历史测试桩的旧四参数接口可用。真实 ``run_job`` 和
+        # 接受 **kwargs 的桩仍会收到组件身份；不通过捕获 TypeError 重试，避免
+        # 一个已经发出请求的 Job 被重复启动。
+        callable_target: Any = run_job
+        side_effect = getattr(run_job, "side_effect", None)
+        if callable(side_effect):
+            callable_target = side_effect
+        try:
+            signature = inspect.signature(callable_target)
+            accepts_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            )
+            accepts_incremental = accepts_kwargs or {
+                "identity",
+                "tool_identity",
+            }.issubset(signature.parameters)
+        except (TypeError, ValueError):
+            accepts_incremental = True
+        if run_kwargs and not accepts_incremental:
+            result = run_job(job, log_root, attempt_index, scenario_context)
+        else:
+            result = run_job(
+                job,
+                log_root,
+                attempt_index,
+                scenario_context,
+                **run_kwargs,
+            )
         if result.get("status") == "complete":
             return result
         if not job.required or attempt_index > JOB_RETRY_LIMIT:
@@ -2263,6 +2405,7 @@ def _validate_capture_job_results(
         if not isinstance(job_id, str) or job_id in seen:
             raise ConfigurationError(f"{phase} 抓包任务收据身份非法或重复。")
         seen.add(job_id)
+        _validate_incremental_job_result(result, label=f"{phase}:{job_id}")
         if job_id in expected:
             expected_job = expected[job_id]
             if (
@@ -2274,10 +2417,89 @@ def _validate_capture_job_results(
                 raise ConfigurationError(
                     f"{phase} 必需抓包任务 {job_id} 未完成或执行定义漂移。"
                 )
+            incremental_key = result.get("incremental_result_key")
+            if incremental_key is not None and not SHA256_RE.fullmatch(
+                str(incremental_key)
+            ):
+                raise ConfigurationError(
+                    f"{phase} 抓包任务 {job_id} 的增量结果键非法。"
+                )
+            component_names = result.get("tool_components")
+            if component_names is not None and (
+                not isinstance(component_names, list)
+                or not all(isinstance(item, str) and item for item in component_names)
+                or component_names != sorted(set(component_names))
+            ):
+                raise ConfigurationError(
+                    f"{phase} 抓包任务 {job_id} 的组件依赖非法。"
+                )
             _revalidate_model_condition_result(expected_job, result)
     missing = set(expected) - seen
     if missing:
         raise ConfigurationError(f"{phase} 缺少必需抓包任务收据：{sorted(missing)}")
+
+
+def _validate_incremental_job_result(
+    result: Mapping[str, Any],
+    *,
+    label: str,
+) -> None:
+    """校验 Job 级增量字段；旧 attempt 缺字段时保持只读兼容。"""
+
+    components = result.get("tool_components")
+    metadata_fields = {
+        "tool_components",
+        "tool_component_digests",
+        "input_sha256",
+        "environment_sha256",
+        "dependency_sha256",
+        "incremental_result_key",
+    }
+    present = {field for field in metadata_fields if field in result}
+    if present and present != metadata_fields:
+        raise ConfigurationError(f"{label} 增量字段不完整。")
+    if present:
+        if (
+            not isinstance(components, list)
+            or not all(isinstance(item, str) and item for item in components)
+            or components != sorted(set(components))
+            or not isinstance(result.get("tool_component_digests"), Mapping)
+            or set(result["tool_component_digests"]) != set(components)
+            or any(
+                not isinstance(name, str)
+                or not SHA256_RE.fullmatch(str(value))
+                for name, value in result["tool_component_digests"].items()
+            )
+            or any(
+                not SHA256_RE.fullmatch(str(result.get(field, "")))
+                for field in (
+                    "input_sha256",
+                    "environment_sha256",
+                    "dependency_sha256",
+                    "incremental_result_key",
+                )
+            )
+        ):
+            raise ConfigurationError(f"{label} 增量身份非法。")
+    disposition = result.get("disposition")
+    if disposition is not None and disposition not in {"executed", "reused"}:
+        raise ConfigurationError(f"{label} disposition 非法。")
+    if disposition == "reused":
+        source = result.get("source_receipt")
+        if (
+            not isinstance(source, Mapping)
+            or set(source) != {"path", "sha256", "bytes"}
+            or not isinstance(source.get("path"), str)
+            or not SHA256_RE.fullmatch(str(source.get("sha256", "")))
+            or not isinstance(source.get("bytes"), int)
+            or isinstance(source.get("bytes"), bool)
+            or source.get("bytes") <= 0
+        ):
+            raise ConfigurationError(f"{label} 复用来源收据非法。")
+    if "carried_from_attempt" in result and not SAFE_ID_RE.fullmatch(
+        str(result.get("carried_from_attempt", ""))
+    ):
+        raise ConfigurationError(f"{label} 承接来源 attempt 非法。")
 
 
 def _render_report(payload: dict[str, Any]) -> str:
@@ -3399,8 +3621,16 @@ _EVALUATION_SIDE_FILES = frozenset(
         "build_rule_assertion_results.py",
         # 对候选抓包执行逐规则断言；只读抓包。
         "candidate_rule_assertion.py",
+        # ARM64 完整 Job 预检与增量恢复只读取工具树和运行事实，不产生
+        # 官方请求字节；其修复应保持在评估侧。
+        "codex_upgrade_job_rehearsal_receipt.py",
+        "incremental_recovery.py",
         # 采集后校验中继样本完整性；只读样本。
         "check_sample_integrity.py",
+        # 增量计划、attempt 和 Campaign 的 Schema 只收紧事实校验。
+        "codex_upgrade_campaign.schema.json",
+        "codex_upgrade_capture_attempt.schema.json",
+        "codex_upgrade_job_rehearsal_receipt.schema.json",
         # capture manifest 的校验 schema；只约束校验严格度，不产生内容。
         "candidate_capture_manifest.schema.json",
         # 对已完成 attempt 做单次 hash／secret scan，并生成只读 manifest；不发送请求。
@@ -3426,6 +3656,109 @@ def _tool_identity_sides(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "production_sha256": _fingerprint({"entries": production}),
         "evaluation_count": len(evaluation),
         "evaluation_sha256": _fingerprint({"entries": evaluation}),
+    }
+
+
+# 组件边界是恢复选择的唯一输入。路径没有登记到更细的组件时落到 shared，
+# 这样新增工具不会因为遗漏登记而被静默复用。这里不把 codex_upgrade.py
+# 计入抓包 Job 的 producer 依赖：它负责编排和验收，修复编排缺陷时可以只
+# 重跑失败 Job；真正改变字节的脚本、relay 和脱敏器仍会使对应 Job 失效。
+_TOOL_COMPONENT_NAMES = frozenset(
+    {
+        "producer",
+        "relay",
+        "evaluator",
+        "scenario",
+        "runtime",
+        "orchestrator",
+        "shared",
+    }
+)
+_PRODUCER_TOOL_FILES = frozenset(
+    {
+        "capture.py",
+        "pcap_clienthello.py",
+        "scrub_raw_bytes.py",
+        "extract_capture_records.py",
+        "h1_wire_probe.py",
+        "relay_extract.py",
+        "upstream_byte_relay.py",
+    }
+)
+_RELAY_TOOL_FILES = frozenset(
+    {
+        "run_official_relay_scenario.sh",
+        "run_candidate_core_capture.sh",
+        "run_candidate_aux_capture.sh",
+        "run_sub2api_direct_matrix.sh",
+        "run_sub2api_openai_mitm_matrix.sh",
+        "run_h1_wire_probe.sh",
+        "run_images_wire_probe.sh",
+        "run_official_codex_compact_capture.sh",
+        "run_official_http_fallback_baseline.sh",
+        "run_claude_relay_scenario.sh",
+    }
+)
+_RUNTIME_TOOL_PREFIXES = ("runtime_", "runtime_scripts/")
+_SCENARIO_TOOL_FILES = frozenset(
+    {
+        "codex_upgrade_scenarios_0_145_0.json",
+        "codex_upgrade_scenarios_0_147_0.json",
+        "codex_upgrade_scenarios_0_149_1.json",
+        "codex_upgrade_scenarios_0_151_0.json",
+    }
+)
+
+
+def _tool_component_for_path(path: str) -> str:
+    """返回工具路径的最小影响组件。"""
+
+    if (
+        path in _EVALUATION_SIDE_FILES
+        or path.endswith(".schema.json")
+        or path in {"incremental_recovery.py", "codex_upgrade_gate_receipt.py"}
+    ):
+        return "evaluator"
+    basename = path.rsplit("/", 1)[-1]
+    if path in _SCENARIO_TOOL_FILES or path.startswith("versions/"):
+        return "scenario"
+    if basename in _RELAY_TOOL_FILES:
+        return "relay"
+    if basename in _PRODUCER_TOOL_FILES or basename.startswith("drive_"):
+        return "producer"
+    if path.startswith(_RUNTIME_TOOL_PREFIXES):
+        return "runtime"
+    if basename == "codex_upgrade.py":
+        return "orchestrator"
+    return "shared"
+
+
+def _tool_component_identities(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """按文件路径生成组件级身份；旧 Campaign 可由 entries 现场补算。"""
+
+    assignments = {
+        str(entry["path"]): _tool_component_for_path(str(entry["path"]))
+        for entry in entries
+    }
+    identities = incremental_recovery.build_component_identities(
+        entries, assignments, default_component="shared"
+    )
+    # 组件名固定，空组件也写入摘要，避免删除最后一个文件时无法观察漂移。
+    components = dict(identities["components"])
+    for name in sorted(_TOOL_COMPONENT_NAMES):
+        components.setdefault(
+            name,
+            {
+                "entry_count": 0,
+                "entries": [],
+                "sha256": incremental_recovery.digest({"entries": []}),
+            },
+        )
+    return {
+        "schema_version": identities["schema_version"],
+        "component_count": len(components),
+        "components": components,
+        "all_sha256": identities["all_sha256"],
     }
 
 
@@ -3510,6 +3843,7 @@ def _verify_execution_tree(capture_root: Path | None) -> None:
 def _tool_identity(*, include_git: bool = True) -> dict[str, Any]:
     tool_root = Path(__file__).resolve().parent
     entries = _tool_tree_entries(tool_root)
+    components = _tool_component_identities(entries)
     return {
         "git_commit": (
             _git_commit(Path(__file__).resolve().parents[2])
@@ -3519,6 +3853,8 @@ def _tool_identity(*, include_git: bool = True) -> dict[str, Any]:
         "entry_count": len(entries),
         "files_sha256": _fingerprint({"entries": entries}),
         "entries": entries,
+        "components": components["components"],
+        "component_identity_sha256": _fingerprint(components),
         **_tool_identity_sides(entries),
     }
 
@@ -3549,6 +3885,165 @@ def _tool_identity_drift(
         "production": [p for p in changed if p not in _EVALUATION_SIDE_FILES],
         "evaluation": [p for p in changed if p in _EVALUATION_SIDE_FILES],
     }
+
+
+def _tool_component_bundle(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """把新旧工具身份都规范化为组件包。"""
+
+    if not isinstance(identity, Mapping):
+        raise ConfigurationError("工具身份必须是对象。")
+    components = identity.get("components")
+    if isinstance(components, Mapping):
+        normalized: dict[str, Any] = {}
+        for name, value in components.items():
+            if not isinstance(name, str) or not isinstance(value, Mapping):
+                raise ConfigurationError("工具组件身份字段非法。")
+            entries = value.get("entries")
+            if not isinstance(entries, list):
+                raise ConfigurationError(f"工具组件 {name} 缺少文件清单。")
+            entry_count = value.get("entry_count")
+            if (
+                not isinstance(entry_count, int)
+                or isinstance(entry_count, bool)
+                or entry_count != len(entries)
+            ):
+                raise ConfigurationError(f"工具组件 {name} 条目数量非法。")
+            if any(not isinstance(item, Mapping) for item in entries):
+                raise ConfigurationError(f"工具组件 {name} 文件条目非法。")
+            normalized[name] = {
+                "entry_count": entry_count,
+                "entries": [dict(item) for item in entries],
+                "sha256": str(value.get("sha256", "")),
+            }
+        if normalized:
+            bundle = {
+                "schema_version": incremental_recovery.SCHEMA_VERSION,
+                "component_count": len(normalized),
+                "components": normalized,
+                "all_sha256": identity.get("files_sha256"),
+            }
+            try:
+                incremental_recovery.component_drift(bundle, bundle)
+            except incremental_recovery.IncrementalRecoveryError as error:
+                raise ConfigurationError(f"工具组件身份非法：{error}") from error
+            recorded_identity = identity.get("component_identity_sha256")
+            if recorded_identity is not None and recorded_identity != _fingerprint(bundle):
+                raise ConfigurationError("工具组件总摘要不一致。")
+            return bundle
+    entries = identity.get("entries")
+    if not isinstance(entries, list):
+        raise ConfigurationError("工具身份缺少组件和文件清单。")
+    if any(not isinstance(item, Mapping) for item in entries):
+        raise ConfigurationError("工具身份文件条目非法。")
+    return _tool_component_identities([dict(item) for item in entries])
+
+
+def _tool_component_drift(
+    expected: Mapping[str, Any], current: Mapping[str, Any]
+) -> dict[str, Any]:
+    """计算组件摘要变化；兼容没有 components 字段的旧 Campaign。"""
+
+    return incremental_recovery.component_drift(
+        _tool_component_bundle(expected),
+        _tool_component_bundle(current),
+    )
+
+
+def _affected_job_ids(
+    jobs: Iterable[Job],
+    changed_components: Iterable[str],
+) -> list[str]:
+    """按 Job 直接依赖选择最小失效闭集。
+
+    编排器和纯评估器只影响失败项的判定，不会改变已经生成的抓包字节；
+    其余高风险组件会使声明依赖该组件的 Job 失效。
+    """
+
+    changed = set(changed_components)
+    high_risk = changed.intersection({"producer", "relay", "runtime", "shared", "scenario"})
+    affected: list[str] = []
+    for job in jobs:
+        dependencies = set(_job_tool_components(job))
+        if high_risk.intersection(dependencies):
+            affected.append(job.job_id)
+    return sorted(affected)
+
+
+def _build_incremental_tool_transition(
+    expected_tool: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    impact: Mapping[str, Any],
+    *,
+    phase: str,
+    planned_job_ids: Iterable[str],
+) -> dict[str, Any]:
+    """为低风险工具修复生成 attempt 绑定的组件过渡事实。"""
+
+    changed = sorted(str(item) for item in impact.get("changed_components", []))
+    if not changed or not set(changed).issubset({"orchestrator", "evaluator"}):
+        raise ConfigurationError("只有编排／评估组件可以原地建立增量过渡。")
+    core = {
+        "schema_version": INCREMENTAL_TOOL_TRANSITION_SCHEMA,
+        "phase": phase,
+        "from_component_identity_sha256": _fingerprint(
+            _tool_component_bundle(expected_tool)
+        ),
+        "to_component_identity_sha256": _fingerprint(
+            _tool_component_bundle(current_tool)
+        ),
+        "changed_components": changed,
+        "changed_paths": impact.get("changed_paths", {}),
+        "planned_job_ids": sorted(str(item) for item in planned_job_ids),
+        "affected_job_ids": sorted(
+            str(item) for item in impact.get("affected_job_ids", [])
+        ),
+        "raw_evidence_scanned_bytes": 0,
+    }
+    return {**core, "transition_sha256": _fingerprint(core)}
+
+
+def _validate_incremental_tool_transition(
+    transition: Mapping[str, Any],
+    expected_tool: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> dict[str, Any]:
+    """校验 attempt 中的低风险组件过渡，避免工具漂移被静默放行。"""
+
+    if not isinstance(transition, Mapping):
+        raise ConfigurationError("增量工具过渡结构非法。")
+    required = {
+        "schema_version",
+        "phase",
+        "from_component_identity_sha256",
+        "to_component_identity_sha256",
+        "changed_components",
+        "changed_paths",
+        "planned_job_ids",
+        "affected_job_ids",
+        "raw_evidence_scanned_bytes",
+        "transition_sha256",
+    }
+    if set(transition) != required:
+        raise ConfigurationError("增量工具过渡字段不闭合。")
+    unsigned = dict(transition)
+    recorded = unsigned.pop("transition_sha256")
+    if recorded != _fingerprint(unsigned):
+        raise ConfigurationError("增量工具过渡自摘要不一致。")
+    changed = transition.get("changed_components")
+    if (
+        transition.get("schema_version") != INCREMENTAL_TOOL_TRANSITION_SCHEMA
+        or not isinstance(changed, list)
+        or not all(isinstance(item, str) and item for item in changed)
+        or changed != sorted(set(changed))
+        or not set(changed).issubset({"orchestrator", "evaluator"})
+        or transition.get("raw_evidence_scanned_bytes") != 0
+        or transition.get("from_component_identity_sha256")
+        != _fingerprint(_tool_component_bundle(expected_tool))
+        or transition.get("to_component_identity_sha256")
+        != _fingerprint(_tool_component_bundle(current_tool))
+    ):
+        raise ConfigurationError("增量工具过渡身份或风险范围非法。")
+    return dict(transition)
 
 
 def _job_context(arguments: argparse.Namespace) -> dict[str, str]:
@@ -7974,6 +8469,55 @@ def _verify_plan_identity(
     if current_tool["files_sha256"] == expected_tool["files_sha256"]:
         _verify_control_receipts(campaign_dir, manifest, require_active=True)
         return None
+    component_drift = _tool_component_drift(expected_tool, current_tool)
+    changed_components = set(component_drift.get("changed_components", []))
+    if (
+        changed_components
+        and changed_components.issubset({"orchestrator", "evaluator"})
+        and isinstance(attempt, Mapping)
+        and attempt.get("incremental_tool_transition") is not None
+    ):
+        transition = _validate_incremental_tool_transition(
+            attempt["incremental_tool_transition"],
+            expected_tool,
+            current_tool,
+        )
+        _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        return transition
+    # 编排／评估修复只改变结果判定或任务调度，不改变已经封存的官方字节。
+    # 这类变化不再把整个 Campaign 拦在全局 files_sha256 门禁上；调用方会
+    # 根据 Job／门禁依赖闭集决定需要补跑的项目。旧 Campaign 没有组件包时，
+    # _tool_component_bundle 会从历史 entries 现场推导，仍保持 fail-close。
+    if (
+        operation == "capture-run"
+        and changed_components
+        and changed_components.issubset({"orchestrator", "evaluator"})
+    ):
+        _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        _record_evaluation_side_drift(
+            campaign_dir,
+            current_tool,
+            expected_tool,
+            {
+                "evaluation": sorted(
+                    path
+                    for paths in component_drift.get("changed_paths", {}).values()
+                    for path in paths
+                )
+            },
+        )
+        return {
+            "kind": "component_drift",
+            "changed_components": sorted(changed_components),
+            "changed_paths": component_drift.get("changed_paths", {}),
+            "affected_job_ids": [],
+            "from_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(expected_tool)
+            ),
+            "to_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(current_tool)
+            ),
+        }
     # 工具确实变了。按证据影响面分级判定，而不是一律拒绝：产出侧改动会改变证据字节，
     # 必须整轮重来；评估侧改动只改变「怎么判断」，已封存证据逐字节不变，重新评估即可。
     #
@@ -8017,6 +8561,7 @@ def _verify_plan_identity(
 
 
 TOOL_EVALUATION_DRIFT_SCHEMA = "codex-upgrade-tool-evaluation-drift/v1"
+INCREMENTAL_TOOL_TRANSITION_SCHEMA = "codex-upgrade-incremental-tool-transition/v1"
 
 
 def _record_evaluation_side_drift(
@@ -9777,8 +10322,15 @@ def _prior_complete_results(
     phase: str,
     candidate_id: str | None,
     identity: dict[str, Any],
+    tool_identity: Mapping[str, Any] | None = None,
+    affected_job_ids: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
-    """验证最近失败 attempt 身份；新 attempt 为防漂移始终重跑全部任务。"""
+    """承接可复用结果，只返回未受影响且已经通过的 Job。
+
+    旧收据没有组件键时仅在全局工具摘要完全相同的情况下承接；新收据按
+    每个 Job 的组件依赖键判断。这样工具修复只会让失败项或真正受影响的
+    Job 进入下一轮，已经通过且依赖未变的结果保持只读复用。
+    """
 
     attempts_root = campaign_dir / relative / "attempts"
     if not attempts_root.is_dir() or attempts_root.is_symlink():
@@ -9809,6 +10361,18 @@ def _prior_complete_results(
         if not isinstance(results, list):
             continue
         completed = []
+        current_tool = tool_identity or _tool_identity(include_git=False)
+        frozen_manifest = load_campaign_manifest(campaign_dir)
+        frozen_tool = frozen_manifest.get("tool_identity")
+        frozen_tool_files_sha256 = (
+            frozen_tool.get("files_sha256")
+            if isinstance(frozen_tool, Mapping)
+            else None
+        )
+        affected = set(str(item) for item in affected_job_ids)
+        global_tool_unchanged = (
+            current_tool.get("files_sha256") == frozen_tool_files_sha256
+        )
         for item in results:
             if not isinstance(item, dict) or item.get("status") != "complete":
                 continue
@@ -9820,6 +10384,19 @@ def _prior_complete_results(
                 != _job_execution_sha256(expected_jobs[job_id])
             ):
                 raise ConfigurationError("先前失败 attempt 的已完成任务定义漂移。")
+            # 组件身份存在时做精确的 Job 级命中；旧 attempt 只在工具树
+            # 完全不变时兼容承接，避免把旧代码产出的结果误当成新代码结果。
+            if job_id in affected:
+                continue
+            expected_incremental = _job_incremental_metadata(
+                expected_jobs[job_id], identity=identity, tool_identity=current_tool
+            )
+            recorded_key = item.get("incremental_result_key")
+            if recorded_key is None:
+                if not global_tool_unchanged:
+                    continue
+            elif recorded_key != expected_incremental["result_key"]:
+                continue
             completed.append(item)
         if len({item["id"] for item in completed}) != len(completed):
             raise ConfigurationError("先前失败 attempt 含重复任务收据。")
@@ -9829,6 +10406,12 @@ def _prior_complete_results(
         # 证明范围内；一旦环境变了，旧证据的前提就不成立，必须整轮重采。
         for item in completed:
             item["carried_from_attempt"] = attempt.name
+            item["disposition"] = "reused"
+            item["source_receipt"] = {
+                "path": receipt.relative_to(campaign_dir).as_posix(),
+                "sha256": file_sha256(receipt),
+                "bytes": receipt.stat().st_size,
+            }
         return completed
     raise ConfigurationError("--rerun-failed 找不到同身份失败 attempt。")
 
@@ -9930,6 +10513,94 @@ def _capture_attempt_path(
     return path
 
 
+def _validate_attempt_incremental_fields(
+    payload: Mapping[str, Any],
+    planned_job_ids: set[str],
+) -> None:
+    """校验 attempt 的增量计划和 Job 结果元数据。"""
+
+    components = payload.get("tool_components")
+    if components is not None:
+        if not isinstance(components, Mapping):
+            raise ConfigurationError("attempt 工具组件摘要必须是对象。")
+        for name, value in components.items():
+            if (
+                not isinstance(name, str)
+                or not isinstance(value, Mapping)
+                or not isinstance(value.get("entries"), list)
+                or not isinstance(value.get("entry_count"), int)
+                or value.get("entry_count") != len(value["entries"])
+                or not SHA256_RE.fullmatch(str(value.get("sha256", "")))
+            ):
+                raise ConfigurationError("attempt 工具组件摘要非法。")
+    plan = payload.get("incremental_plan")
+    if plan is not None:
+        if not isinstance(plan, Mapping):
+            raise ConfigurationError("attempt 增量计划必须是对象。")
+        required = {
+            "schema_version",
+            "planned_job_ids",
+            "changed_components",
+            "affected_job_ids",
+            "reused_job_ids",
+            "executed_job_ids",
+            "failed_job_ids",
+            "pending_job_ids",
+            "plan_sha256",
+        }
+        if set(plan) != required:
+            raise ConfigurationError("attempt 增量计划字段不闭合。")
+        arrays = [
+            plan.get("changed_components"),
+            plan.get("planned_job_ids"),
+            plan.get("affected_job_ids"),
+            plan.get("reused_job_ids"),
+            plan.get("executed_job_ids"),
+            plan.get("failed_job_ids"),
+            plan.get("pending_job_ids"),
+        ]
+        if any(
+            not isinstance(value, list)
+            or not all(isinstance(item, str) and item for item in value)
+            or value != sorted(set(value))
+            for value in arrays
+        ):
+            raise ConfigurationError("attempt 增量计划列表非法。")
+        if (
+            plan.get("schema_version") != incremental_recovery.SCHEMA_VERSION
+            or set(plan["planned_job_ids"]) != planned_job_ids
+            or not set(plan["affected_job_ids"]).issubset(planned_job_ids)
+            or not set(plan["reused_job_ids"]).issubset(planned_job_ids)
+            or not set(plan["executed_job_ids"]).issubset(planned_job_ids)
+            or set(plan["reused_job_ids"]) & set(plan["executed_job_ids"])
+            or set(plan["failed_job_ids"]) - set(plan["executed_job_ids"])
+            or set(plan["pending_job_ids"]) - planned_job_ids
+            or set(plan["pending_job_ids"])
+            & (set(plan["reused_job_ids"]) | set(plan["executed_job_ids"]))
+            or (
+                set(plan["reused_job_ids"])
+                | set(plan["executed_job_ids"])
+                | set(plan["pending_job_ids"])
+            ) != planned_job_ids
+            or not set(plan["affected_job_ids"]).issubset(
+                set(plan["executed_job_ids"]) | set(plan["pending_job_ids"])
+            )
+            or not SHA256_RE.fullmatch(str(plan.get("plan_sha256", "")))
+        ):
+            raise ConfigurationError("attempt 增量计划身份或集合非法。")
+        unsigned_plan = dict(plan)
+        unsigned_plan.pop("plan_sha256", None)
+        if plan.get("plan_sha256") != incremental_recovery.digest(unsigned_plan):
+            raise ConfigurationError("attempt 增量计划摘要不一致。")
+    results = payload.get("results", [])
+    if not isinstance(results, list):
+        raise ConfigurationError("attempt results 必须是数组。")
+    for result in results:
+        if not isinstance(result, Mapping):
+            raise ConfigurationError("attempt Job 结果必须是对象。")
+        _validate_incremental_job_result(result, label=f"attempt:{result.get('id', '')}")
+
+
 def _write_capture_attempt(
     campaign_dir: Path,
     attempt_root: Path,
@@ -9962,6 +10633,7 @@ def _write_capture_attempt(
             or result.get("execution_sha256") != planned[result["id"]]
         ):
             raise ConfigurationError("抓包 attempt 任务不在原子预约内或执行摘要漂移。")
+    _validate_attempt_incremental_fields(payload, set(planned))
 
     document = dict(payload)
     document["schema_version"] = CAPTURE_ATTEMPT_SCHEMA
@@ -10052,6 +10724,10 @@ def _load_capture_attempt(
         "environment_contaminated",
     }:
         raise ConfigurationError("抓包 attempt 状态非法。")
+    _validate_attempt_incremental_fields(
+        payload,
+        {str(item["id"]) for item in reservation["planned_jobs"]},
+    )
     return attempt_root, payload
 
 
@@ -11146,7 +11822,6 @@ def _run_capture_attempt(
             f"run 不读取 seal 收据参数，请在 seal 阶段提供：{unexpected}"
         )
     campaign_dir = arguments.campaign_dir
-    _verify_plan_identity(campaign_dir, manifest)
     if not arguments.acknowledge_live_requests:
         raise ConfigurationError(
             "抓包会产生真实请求，必须同时确认 --acknowledge-live-requests。"
@@ -11208,6 +11883,38 @@ def _run_capture_attempt(
         binary_verification = None
 
     planned_jobs = list(jobs)
+    # 组件身份在 Job 展开后再校验，这样恢复计划可以按依赖闭集缩小执行集合。
+    tool_identity = _tool_identity(include_git=False)
+    tool_impact = _verify_plan_identity(
+        campaign_dir,
+        manifest,
+        operation="capture-run",
+    )
+    incremental_transition: dict[str, Any] | None = None
+    affected_job_ids = set(
+        str(item)
+        for item in (
+            tool_impact.get("affected_job_ids", [])
+            if isinstance(tool_impact, Mapping)
+            else []
+        )
+    )
+    if isinstance(tool_impact, Mapping) and tool_impact.get("kind") == "component_drift":
+        affected_job_ids.update(
+            _affected_job_ids(
+                planned_jobs,
+                tool_impact.get("changed_components", []),
+            )
+        )
+        tool_impact = dict(tool_impact)
+        tool_impact["affected_job_ids"] = sorted(affected_job_ids)
+        incremental_transition = _build_incremental_tool_transition(
+            manifest.get("tool_identity", {}),
+            tool_identity,
+            tool_impact,
+            phase=phase,
+            planned_job_ids=[job.job_id for job in planned_jobs],
+        )
     if phase == "candidate":
         # 辅助场景排在多个耗时 Job 之后；凭据缺失或即将过期必须在 reservation
         # 和首个真实请求之前失败，不能等十几分钟后才发现。
@@ -11221,6 +11928,8 @@ def _run_capture_attempt(
             phase=phase,
             candidate_id=candidate_id,
             identity=identity,
+            tool_identity=tool_identity,
+            affected_job_ids=affected_job_ids,
         )
         completed_ids = {item["id"] for item in prior_results}
         jobs = [job for job in jobs if job.job_id not in completed_ids]
@@ -11290,7 +11999,13 @@ def _run_capture_attempt(
         )
         try:
             for job in jobs:
-                result = _run_job_with_retry(job, log_root, scenario_context)
+                result = _run_job_with_retry(
+                    job,
+                    log_root,
+                    scenario_context,
+                    identity=identity,
+                    tool_identity=tool_identity,
+                )
                 results.append(result)
                 _secure_write_json_once(
                     attempt_root / f"job-{job.job_id}.json", result
@@ -11424,6 +12139,88 @@ def _run_capture_attempt(
             "candidate_id": candidate_id,
             "status": status,
             "continuity": continuity,
+            "tool_components": (
+                tool_identity.get("components")
+                if isinstance(tool_identity, Mapping)
+                else None
+            ),
+            "incremental_tool_transition": incremental_transition,
+            "incremental_plan": {
+                "schema_version": incremental_recovery.SCHEMA_VERSION,
+                "planned_job_ids": sorted(job.job_id for job in planned_jobs),
+                "changed_components": sorted(
+                    tool_impact.get("changed_components", [])
+                    if isinstance(tool_impact, Mapping)
+                    else []
+                ),
+                "affected_job_ids": sorted(affected_job_ids),
+                "reused_job_ids": sorted(
+                    str(item.get("id"))
+                    for item in prior_results
+                    if item.get("id")
+                ),
+                "executed_job_ids": sorted(
+                    str(item.get("id"))
+                    for item in results
+                    if item.get("id")
+                    and item.get("disposition", "executed") == "executed"
+                ),
+                "failed_job_ids": sorted(
+                    str(item.get("id"))
+                    for item in results
+                    if item.get("id") and item.get("status") == "failed"
+                ),
+                "pending_job_ids": sorted(
+                    {
+                        job.job_id for job in planned_jobs
+                    }
+                    - {
+                        str(item.get("id"))
+                        for item in results
+                        if item.get("id")
+                    }
+                ),
+                "plan_sha256": incremental_recovery.digest(
+                    {
+                        "schema_version": incremental_recovery.SCHEMA_VERSION,
+                        "planned_job_ids": sorted(
+                            job.job_id for job in planned_jobs
+                        ),
+                        "changed_components": sorted(
+                            tool_impact.get("changed_components", [])
+                            if isinstance(tool_impact, Mapping)
+                            else []
+                        ),
+                        "affected_job_ids": sorted(affected_job_ids),
+                        "reused_job_ids": sorted(
+                            str(item.get("id"))
+                            for item in prior_results
+                            if item.get("id")
+                        ),
+                        "executed_job_ids": sorted(
+                            str(item.get("id"))
+                            for item in results
+                            if item.get("id")
+                            and item.get("disposition", "executed") == "executed"
+                        ),
+                        "failed_job_ids": sorted(
+                            str(item.get("id"))
+                            for item in results
+                            if item.get("id") and item.get("status") == "failed"
+                        ),
+                        "pending_job_ids": sorted(
+                            {
+                                job.job_id for job in planned_jobs
+                            }
+                            - {
+                                str(item.get("id"))
+                                for item in results
+                                if item.get("id")
+                            }
+                        ),
+                    }
+                ),
+            },
             "identity": identity,
             "results": results,
             "evidence_roots": [str(root) for root in evidence_roots],
@@ -11474,6 +12271,9 @@ def _run_capture_attempt(
         "started_at_utc": reservation["started_at_utc"],
         "environment": environment,
         "results": results,
+        "incremental_plan": (
+            attempt.get("incremental_plan") if isinstance(attempt, Mapping) else None
+        ),
         "next_command": (
             f"capture-{phase} seal --attempt-id {attempt_root.name}"
             if status == "awaiting_receipts"

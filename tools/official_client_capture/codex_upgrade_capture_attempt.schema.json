@@ -147,6 +147,19 @@
     },
     "attempt_digest": {
       "$ref": "#/$defs/sha256"
+    },
+    "tool_components": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/componentIdentity"
+      }
+    },
+    "incremental_tool_transition": {
+      "$ref": "#/$defs/incrementalToolTransition"
+    },
+    "incremental_plan": {
+      "$ref": "#/$defs/attemptIncrementalPlan"
     }
   },
   "allOf": [
@@ -282,6 +295,153 @@
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "componentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_count",
+        "entries",
+        "sha256"
+      ],
+      "properties": {
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileBinding"
+          }
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "attemptIncrementalPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "planned_job_ids",
+        "changed_components",
+        "affected_job_ids",
+        "reused_job_ids",
+        "executed_job_ids",
+        "failed_job_ids",
+        "pending_job_ids",
+        "plan_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-incremental/v1"
+        },
+        "planned_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/safeId"}
+        },
+        "changed_components": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "affected_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeId"
+          }
+        },
+        "reused_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeId"
+          }
+        },
+        "executed_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeId"
+          }
+        },
+        "failed_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeId"
+          }
+        },
+        "pending_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeId"
+          }
+        },
+        "plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "incrementalToolTransition": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "phase",
+        "from_component_identity_sha256",
+        "to_component_identity_sha256",
+        "changed_components",
+        "changed_paths",
+        "planned_job_ids",
+        "affected_job_ids",
+        "raw_evidence_scanned_bytes",
+        "transition_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-incremental-tool-transition/v1"
+        },
+        "phase": {
+          "enum": ["official", "candidate"]
+        },
+        "from_component_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "to_component_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "changed_components": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "changed_paths": {
+          "type": "object"
+        },
+        "planned_job_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/safeId"}
+        },
+        "affected_job_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/safeId"}
+        },
+        "raw_evidence_scanned_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transition_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
     },
     "imageId": {
       "type": "string",
@@ -764,6 +924,39 @@
             {"type": "null"},
             {"$ref": "#/$defs/nonEmptyText"}
           ]
+        },
+        "disposition": {
+          "enum": ["executed", "reused"]
+        },
+        "source_receipt": {
+          "$ref": "#/$defs/fileBindingWithBytes"
+        },
+        "tool_components": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "tool_component_digests": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/sha256"}
+        },
+        "input_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "environment_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "dependency_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "incremental_result_key": {
+          "$ref": "#/$defs/sha256"
+        },
+        "error": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "carried_from_attempt": {
+          "$ref": "#/$defs/safeId"
         }
       }
     },
