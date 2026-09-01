@@ -1344,10 +1344,30 @@ successor 不得用于超时、扫描过慢、评估侧工具修复或临时失�
 演练，再在 `successor` 命令追加 `--job-rehearsal-root <root> --job-rehearsal-receipt <receipt>`。
 工具会按后继当前执行合同重放收据并替换旧绑定；缺少、部分提供或合同不一致均失败关闭。
 
-旧 Ledger 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger 和 ARM64 收据。若原
-attempt 已完成 live 请求、Kilo 后检查点完整且证据字节未变，受管评估工具 transition 可以在原
-Campaign／attempt 上创建首份 `EvidenceManifest` 并继续 seal；不得重发 91 个请求，也不得新建
-successor。新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`；不得再追加同阶段 `stage_started`。
+旧 Ledger 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger、ARM64 收据和完整
+Job 演练。若原 attempt 已完成 live 请求、Kilo 后检查点完整且证据字节未变，严格按下列顺序原地恢复：
+
+1. `evaluation-transition` 两步批准，绑定旧停线 checkpoint、新 Ledger、ARM64 收据和 Job 演练；
+2. `deep-verify` 只为缺少 manifest 的 imported official／classify 建立 checkpoint；
+3. 返回原 attempt 执行 §4.4.3 的 seal 预览和批准，再继续 compare／accept。
+
+~~~bash
+python3 tools/official_client_capture/codex_upgrade.py evaluation-transition \
+  --campaign-dir "$CAMPAIGN" --phase candidate \
+  --candidate-id "$CANDIDATE" --attempt-id "$ATTEMPT" \
+  --predecessor-stop-ledger-dir "$OLD_LEDGER" --predecessor-stop-receipt "$OLD_STOP" \
+  --recovery-timing-ledger-dir "$NEW_LEDGER" --recovery-timing-receipt "$NEW_TIMING" \
+  --recovery-arm64-environment-root "$ARM64_ROOT" --recovery-arm64-environment-receipt "$ARM64_RECEIPT" \
+  --job-rehearsal-root "$REHEARSAL_ROOT" --job-rehearsal-receipt "$REHEARSAL_RECEIPT"
+# 复核 review_sha256 后，原命令追加 --approve-transition-sha256 <review_sha256>
+python3 tools/official_client_capture/codex_upgrade.py deep-verify \
+  --campaign-dir "$CAMPAIGN" --candidate-id "$CANDIDATE" --attempt-id "$ATTEMPT"
+~~~
+
+transition、imported checkpoint、seal 批准、`status`、compare 和 accept 均不得读取原始证据；candidate
+证据只允许 seal 预览扫描一次。任一步失败即继续停线，不得重发本次 r26 已完成的 91 个请求，也不得
+新建 successor。新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`，不得再追加同阶段
+`stage_started`。
 
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；
@@ -1433,7 +1453,7 @@ candidate 必须由最新有效激活收据、运行容器 digest 和 activation
 | post-promotion gate receipt | 已实现 | 同一工具生成并独立重放 `post_promotion` 收据，绑定 acceptance、promotion、production tree 和目标架构；六项固定门禁均须零失败、零跳过 |
 | production activation receipt | 已实现 | `production_activation_receipt.py` v2 强制消费 promotion、post-promotion gate、acceptance、production tree 和四阶段原始事实，生成不可覆盖收据并独立重放；历史 v1／K80 收据只证明当时事实 |
 | 时间、ARM64 环境与门禁承接 | 条件就绪 | 相关工具可生成并重放收据；只有目标版本全部生成 Job 通过 ARM64 离线演练后，才可视为已实现 |
-| 单次深度验证与廉价状态 | 修复前阻断 | preview 必须生成 `EvidenceManifest` 和冻结 seal 草案；批准、`status`、compare、accept、successor 的原始证据扫描字节必须为 0；另提供显式 `deep-verify` |
+| 单次深度验证与廉价状态 | 实现待验收 | preview 生成 `EvidenceManifest` 和冻结 seal 草案；批准、`status`、compare、accept、successor 的原始证据扫描字节为 0；`deep-verify` 仅补齐缺失的历史导入 manifest／checkpoint；ARM64 P0 未通过前仍阻断 Formal 续作 |
 | 官方 Release 制品取得 | 已实现 | `codex_upgrade_official_asset_receipt.py` 逐个预连接 CDN IPv4，冻结 Release metadata、asset 摘要、证书和唯一精确地址；离线重放通过后才能下载 |
 | 第三方客户端绑定 | 当前固定为 Kilo 双入口 | 工具和 Schema 明确要求 `kilo-compatible`、`kilo-responses`，文档不得单独泛化 |
 
@@ -1800,8 +1820,8 @@ Kilo Responses 的 `@ai-sdk/openai` provider 必须显式设置 `options.websock
    stat 边界，`scanned_bytes=0`；不得重新生成 surface、inventory 或 secret scan。通过后 Campaign
    进入 `candidate_sealed`。
 
-普通 `status`、compare、accept 和 successor 都只重放 manifest／摘要链。只有人工明确要求内容复验时
-才执行 `deep-verify`；该命令重新哈希并与既有 manifest 比较，但不覆盖任何历史文件。
+普通 `status`、compare、accept 和 successor 都只重放 manifest／摘要链。`deep-verify` 只用于缺少
+manifest 的历史导入边界，或人工明确要求的独立审计；不得由恢复判断隐式触发，也不覆盖历史文件。
 
 四路输入的路径和来源固定如下：
 

@@ -385,9 +385,9 @@ candidate 或批准事实。
 - 代理取证须在 P0 验证目标版本的代理路由策略。若目标客户端默认关闭系统代理，采集 Job 必须显式绑定
   仅影响取证路由的开关，并在删除临时目录前把失败原因写入 attempt 日志；不得用反复 live 重试代替诊断。
 - 深度读取前先完成路径、符号链接、权限、属主、磁盘、身份和必需收据等廉价检查；廉价检查失败时
-  `scanned_bytes` 必须为 0。对同一不可变 attempt 只允许一次完整内容扫描，产出逐文件
-  `EvidenceManifest`、根摘要和不可变边界收据；后续 seal 批准、`status`、compare、accept 和 successor
-  只验证上述小型收据，不得再次递归读取原始证据。
+  `scanned_bytes` 必须为 0。新 attempt 由 seal 预览、缺少 manifest 的历史导入边界由一次显式
+  `deep-verify` 完成唯一内容扫描并生成逐文件 `EvidenceManifest`；二者不得对同一边界重复扫描。后续
+  seal 批准、`status`、compare、accept 和 successor 只验证小型摘要与 stat 边界。
 - `status` 必须是廉价只读操作；完整重哈希只能由显式 `deep-verify` 触发。任何普通状态查询、恢复判断
   或 successor 创建都不得隐式调用 `deep-verify`。
 
@@ -635,6 +635,10 @@ ready_for_operator_release
 - `VC-1` 以后发现工具缺陷时先 `stop_the_line`，在独立 `preflight_only` 完成修复、离线回归和实规模
   演练。若原 attempt 已完成 live 请求、检查点完整且证据字节未变，允许用受管评估工具 transition 在
   原 Campaign／attempt 上生成首份 `EvidenceManifest` 并续作；不得重发请求或新建 candidate／Campaign。
+- 上述原地恢复顺序固定为：绑定旧停线 checkpoint、新 active `UpgradeTimingLedger`、新 ARM64 P0 收据
+  和新完整 Job 演练；两步批准 attempt／phase 限定的评估 transition（读取原始证据 0 字节）；仅为缺少
+  manifest 的历史导入阶段执行一次 `deep-verify`；返回原 attempt 完成 seal 预览与零扫描批准。任一步
+  身份、边界、摘要或控制收据不一致即继续停线，不得自动重试、建 successor 或重新发送 live 请求。
 - successor 只绑定直接前序的 checkpoint、`EvidenceManifest` 根摘要和 transition 收据。前序尚无可信
   manifest 时只允许一次显式 `deep-verify` 建立迁移 checkpoint；此后多级历史只验证摘要链，禁止递归
   重扫任一级原始证据。
@@ -667,10 +671,10 @@ ready_for_operator_release
 均可信时只读复用；仅缺少必要事实、官方身份变化或证据语义失真允许重抓，candidate、账号或模型变化
 不构成理由。
 
-P0 必须用目标环境的实际证据规模测量完整扫描吞吐量，并为唯一一次 `deep-verify` 计算最坏耗时；阶段预算
-不得小于该已测上限。若测算后总计会超过 6 小时，P0 直接阻断，先优化工具或拆分显式 manifest 边界，
-不得进入 live 阶段。预算到期只允许停线和原地 checkpoint 恢复，禁止用 successor 重置计时。seal 预览
-可执行该阶段唯一一次完整扫描；批准 seal 的 `scanned_bytes` 必须为 0。
+P0 必须用目标环境的实际证据规模测量一次完整扫描吞吐量，并计算最坏耗时；阶段预算不得小于该已测上限。
+若测算后总计会超过 6 小时，P0 直接阻断，先优化工具或拆分显式 manifest 边界，不得进入 live 阶段。
+预算到期只允许停线和原地 checkpoint 恢复，禁止用 successor 重置计时。新边界由 seal 预览扫描；历史
+导入边界仅在缺少 manifest 时由 `deep-verify` 扫描；批准 seal 的 `scanned_bytes` 必须为 0。
 
 ## 5.4 修改共享合同或共享运行时
 
