@@ -1,0 +1,33 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-arm64-environment-producer-coordinate-decoupling-source-transition/v1",
+  "issued_at_utc": "2026-09-01T18:50:00Z",
+  "base_commit": "77e338de509384af0e4b98ffa578c52dd7a899ed",
+  "scope": "codex-cli-0.151-arm64-environment-producer-coordinate-decoupling",
+  "predecessor": {
+    "kind": "codex_cli_0151_arm64_environment_producer_replay_tool_successor_source_transition",
+    "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition.json",
+    "sha256": "217642ab257708b226e0fd71b4582643694ce834d22e4ffbbc5e0e00f6d13185"
+  },
+  "transitions": [
+    {
+      "path": "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py",
+      "from_sha256": "a62a269e5e4cb0e64aac21e5223ddbde8b884ecbe383b405c560e3c6ebcea527",
+      "to_sha256": "317ea2c842cf32afabc919583b08a5dfd11f6f4aa97103cc0805fa178d3770e4",
+      "reason": "解除 ARM64 收据与旧工作树绝对根的耦合，仅按规范相对坐标和精确摘要承接；新 facts 仍只由当前 producer 生成。"
+    }
+  ],
+  "additions": [],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade_arm64_environment_receipt",
+    "python3 -m unittest discover -s tools/official_client_capture/tests -p 'test_*.py'",
+    "ARM64 只读重放既有 P0 收据并验证固定网络与 DMIT 出口"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false
+  },
+  "result": "passed_codex_cli_0151_arm64_environment_producer_coordinate_decoupling",
+  "identity_sha256": "cdc05441a14e4d988504d8a4d2766030346c08a3e93e3baed43afb7965e2b195"
+}

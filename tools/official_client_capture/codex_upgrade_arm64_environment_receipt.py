@@ -26,9 +26,26 @@ FACTS_SCHEMA = "codex-upgrade-arm64-environment-facts/v1"
 RECEIPT_SCHEMA = "codex-upgrade-arm64-environment-receipt/v1"
 PRODUCER_SCHEMA = "codex-upgrade-arm64-environment-producer/v1"
 PRODUCER_VERSION = "2"
+PRODUCER_TOOL_RELATIVE = (
+    "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py"
+)
 # v1 只用于重放已封存历史收据；新 facts 和新收据仍只能由 v2 生成。
 LEGACY_REPLAY_PRODUCERS = {
     "1": "97b96fcd9e341dc7ecff4c0359b12723dae747ec2f4bc9c0138a5bf8f6769d15",
+}
+# 受管的历史 v2 producer 摘要。绝对根目录只是当次工作树坐标，重放时只
+# 信任规范相对坐标和精确字节摘要；未知摘要仍必须失败关闭。
+REGISTERED_REPLAY_PRODUCER_HASHES = {
+    "1": frozenset({LEGACY_REPLAY_PRODUCERS["1"]}),
+    # 28f15/7633 为已登记的历史后继，a62a 为本次 ARM64 Campaign 使用的
+    # 旧工作树版本；它们都只允许重放，不允许生成新 facts。
+    "2": frozenset(
+        {
+            "28f15f366b9fc1761179256f5cb7d06f7f45e76ddf467383565469d1965a8053",
+            "7633ad1f101a8320126fb6c76417362bf8571faed9f14e5dcf20ec616a593048",
+            "a62a269e5e4cb0e64aac21e5223ddbde8b884ecbe383b405c560e3c6ebcea527",
+        }
+    ),
 }
 PUBLIC_EGRESS_URL = "https://api.ipify.org"
 EXPECTED_PUBLIC_EGRESS = "179.255.100.158"
@@ -127,6 +144,27 @@ def _current_producer() -> dict[str, str]:
     }
 
 
+def _producer_tool_coordinate(value: Any) -> tuple[str, ...] | None:
+    """提取 producer 的规范相对坐标，忽略可迁移的工作树绝对根。"""
+
+    if not isinstance(value, str) or not value or not value.startswith("/"):
+        return None
+    try:
+        parsed = PurePosixPath(value)
+        parts = parsed.parts
+        relative = tuple(PurePosixPath(PRODUCER_TOOL_RELATIVE).parts)
+    except (TypeError, ValueError):
+        return None
+    if (
+        str(parsed) != value
+        or any(part in {"", ".", ".."} for part in parts)
+        or len(parts) < len(relative)
+        or parts[-len(relative) :] != relative
+    ):
+        return None
+    return relative
+
+
 def _validated_producer_version(
     value: Any,
     *,
@@ -140,15 +178,25 @@ def _validated_producer_version(
         "producer",
     )
     current = _current_producer()
-    if producer == current:
+    # 同一字节 producer 在不同工作树根目录生成的收据可以直接承接；路径
+    # 只需落在相同的受管相对坐标，不能作为身份本身。
+    if (
+        producer.get("schema_version") == current["schema_version"]
+        and producer.get("version") == current["version"]
+        and producer.get("tool_sha256") == current["tool_sha256"]
+        and _producer_tool_coordinate(producer.get("tool")) is not None
+        and _producer_tool_coordinate(current.get("tool")) is not None
+    ):
         return PRODUCER_VERSION
     version = producer.get("version")
     if (
         allow_legacy_replay
         and producer.get("schema_version") == PRODUCER_SCHEMA
-        and producer.get("tool") == current["tool"]
         and isinstance(version, str)
-        and LEGACY_REPLAY_PRODUCERS.get(version) == producer.get("tool_sha256")
+        and _producer_tool_coordinate(producer.get("tool")) is not None
+        and _producer_tool_coordinate(current.get("tool")) is not None
+        and producer.get("tool_sha256")
+        in REGISTERED_REPLAY_PRODUCER_HASHES.get(version, frozenset())
     ):
         return version
     raise Arm64EnvironmentReceiptError("ARM64 事实采集器身份漂移")

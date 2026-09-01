@@ -196,6 +196,60 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
             ):
                 receipt.replay(root, receipt_path.name)
 
+    def test_replay_accepts_relocated_registered_v2_producer(self) -> None:
+        """工作树根迁移只改变坐标，不应使历史 ARM64 P0 失效。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            facts_path, _ = self._fixture(root)
+            producer = {
+                "schema_version": receipt.PRODUCER_SCHEMA,
+                "tool": (
+                    "/root/retired-codex-worktree/tools/official_client_capture/"
+                    "codex_upgrade_arm64_environment_receipt.py"
+                ),
+                "tool_sha256": (
+                    "a62a269e5e4cb0e64aac21e5223ddbde8b884ecbe383b405c560e3c6ebcea527"
+                ),
+                "version": "2",
+            }
+            facts = json.loads(facts_path.read_text(encoding="utf-8"))
+            facts["collector"] = producer
+            self._rewrite(facts_path, facts)
+            legacy_receipt = receipt._build_receipt(
+                root,
+                facts_path.name,
+                replay_producer=producer,
+            )
+            receipt_path = root / "p0-relocated-v2-receipt.json"
+            receipt._write_once(receipt_path, legacy_receipt)
+
+            replayed = receipt.replay(root, receipt_path.name)
+            self.assertEqual(replayed["producer"], producer)
+            with self.assertRaisesRegex(
+                receipt.Arm64EnvironmentReceiptError,
+                "身份漂移",
+            ):
+                receipt.build_receipt(root, facts_path.name)
+
+    def test_replay_rejects_registered_hash_at_wrong_coordinate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            facts_path, _ = self._fixture(root)
+            facts = json.loads(facts_path.read_text(encoding="utf-8"))
+            facts["collector"]["tool"] = "/tmp/codex_upgrade_arm64_environment_receipt.py"
+            facts["collector"]["tool_sha256"] = next(
+                iter(receipt.REGISTERED_REPLAY_PRODUCER_HASHES["2"])
+            )
+            self._rewrite(facts_path, facts)
+            with self.assertRaisesRegex(
+                receipt.Arm64EnvironmentReceiptError,
+                "身份漂移",
+            ):
+                receipt.validate_facts(facts, allow_legacy_replay=True)
+
     def test_contract_has_no_network_override_arguments(self) -> None:
         parser = receipt.build_parser()
         destinations = {
