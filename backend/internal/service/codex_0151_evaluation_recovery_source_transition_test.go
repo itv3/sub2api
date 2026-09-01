@@ -200,6 +200,12 @@ func codex0151EvaluationRecoverySupersedesService(path, priorDigest, currentDige
 		return false
 	}
 	receipts = append(receipts, managedScenarioRecovery)
+	manifestOrderRecovery, manifestOrderRecoveryErr :=
+		loadCodex0151EvidenceManifestOrderRecoveryService()
+	if manifestOrderRecoveryErr != nil {
+		return false
+	}
+	receipts = append(receipts, manifestOrderRecovery)
 	reachable := map[string]struct{}{priorDigest: {}}
 	for {
 		changed := false
@@ -474,7 +480,13 @@ func validateCodex0151ManagedScenarioRecoveryService(receipt codex0151ToolReadin
 			return errors.New("Codex CLI 0.151 受管场景恢复 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkServiceDigest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!codex0151EvidenceManifestOrderRecoverySupersedesService(
+				transition.Path,
+				transition.ToSHA256,
+				currentDigest,
+			)) {
 			return errors.New("Codex CLI 0.151 受管场景恢复 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -493,12 +505,22 @@ func codex0151ManagedScenarioRecoverySupersedesService(path, priorDigest, curren
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
-			return true
+		if transition.Path == path && transition.FromSHA256 == priorDigest {
+			if transition.ToSHA256 == currentDigest {
+				return true
+			}
+			return codex0151EvidenceManifestOrderRecoverySupersedesService(
+				path,
+				transition.ToSHA256,
+				currentDigest,
+			)
 		}
 	}
-	return false
+	return codex0151EvidenceManifestOrderRecoverySupersedesService(
+		path,
+		priorDigest,
+		currentDigest,
+	)
 }
 
 func TestCodex0151ManagedScenarioRecoverySourceTransitionServiceIsFrozen(t *testing.T) {
@@ -517,6 +539,147 @@ func TestCodex0151ManagedScenarioRecoverySourceTransitionServiceRejectsMutation(
 	mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
 	if err := validateCodex0151ManagedScenarioRecoveryService(mutated); err == nil {
 		t.Fatal("变异后的 Codex CLI 0.151 受管场景恢复 transition 被错误接受")
+	}
+}
+
+const codex0151EvidenceManifestOrderRecoveryServicePath = "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json"
+
+var (
+	codex0151EvidenceManifestOrderRecoveryServiceOnce   sync.Once
+	codex0151EvidenceManifestOrderRecoveryServiceCached codex0151ToolReadinessReceiptService
+	codex0151EvidenceManifestOrderRecoveryServiceErr    error
+)
+
+func loadCodex0151EvidenceManifestOrderRecoveryService() (codex0151ToolReadinessReceiptService, error) {
+	codex0151EvidenceManifestOrderRecoveryServiceOnce.Do(func() {
+		codex0151EvidenceManifestOrderRecoveryServiceCached, codex0151EvidenceManifestOrderRecoveryServiceErr =
+			readCodex0151EvidenceManifestOrderRecoveryService()
+	})
+	return codex0151EvidenceManifestOrderRecoveryServiceCached, codex0151EvidenceManifestOrderRecoveryServiceErr
+}
+
+func readCodex0151EvidenceManifestOrderRecoveryService() (codex0151ToolReadinessReceiptService, error) {
+	var receipt codex0151ToolReadinessReceiptService
+	raw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(codex0151EvidenceManifestOrderRecoveryServicePath)))
+	if err != nil {
+		return receipt, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return receipt, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return receipt, errors.New("Codex CLI 0.151 manifest 排序恢复 transition 尾部存在额外 JSON")
+	}
+	var identityDocument map[string]any
+	if err := json.Unmarshal(raw, &identityDocument); err != nil {
+		return receipt, err
+	}
+	delete(identityDocument, "identity_sha256")
+	canonical, err := json.Marshal(identityDocument)
+	if err != nil {
+		return receipt, err
+	}
+	canonical = append(canonical, '\n')
+	if upstreamMergeFrameworkServiceDigest(canonical) != receipt.IdentitySHA256 {
+		return receipt, errors.New("Codex CLI 0.151 manifest 排序恢复 transition 自摘要不一致")
+	}
+	if err := validateCodex0151EvidenceManifestOrderRecoveryService(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func validateCodex0151EvidenceManifestOrderRecoveryService(receipt codex0151ToolReadinessReceiptService) error {
+	if receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-evidence-manifest-order-recovery-source-transition/v1" ||
+		receipt.IssuedAtUTC != "2026-09-01T07:03:57Z" ||
+		receipt.BaseCommit != "ccd081841b7ee8f2e54feaf3d12db8fc9f0cc8dc" ||
+		receipt.Scope != "codex-cli-0.151-evidence-manifest-order-recovery" ||
+		receipt.Result != "passed_codex_cli_0151_evidence_manifest_order_recovery" {
+		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 顶层事实非法")
+	}
+	if receipt.Predecessor.Kind != "codex_cli_0151_managed_scenario_recovery" ||
+		receipt.Predecessor.Path != codex0151ManagedScenarioRecoveryServicePath ||
+		receipt.Predecessor.SHA256 != "a2ee0695c14773c9fa1af2f60e894378eecf6ba10389ec0f001c3761463e0b80" {
+		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 前序非法")
+	}
+	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
+	if err != nil || upstreamMergeFrameworkServiceDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 前序摘要不一致")
+	}
+	expectedVerification := []string{
+		"python3 -m unittest tools.official_client_capture.tests.test_codex_upgrade",
+		"make CAPTURE_TYPESCRIPT_MODULE=<locked-absolute-path> test-capture-tools",
+		"go test ./internal/officialegress ./internal/service -run 'TestCodex0151(EvidenceManifestOrderRecovery|ManagedScenarioRecovery|FrameworkClarification|EvaluationRecovery)' -count=1",
+		"make check-egress-spec",
+	}
+	if !slices.Equal(receipt.Verification, expectedVerification) {
+		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 验证集合非法")
+	}
+	if receipt.Safety.LiveAccountUsed || receipt.Safety.OnlineAcceptancePerformed ||
+		receipt.Safety.ProductionConfigChanged || receipt.Safety.OfficialEgressProfileChanged {
+		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 安全边界非法")
+	}
+	expectedFrom := map[string]string{
+		"backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go": "e77c7d8c822c1398ad56aab6880ca3b6da242bf0ca774a20a3f87c80715c7dfa",
+		"backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go":        "44501edb62785ae0d84e73e8d896ed7d62f272e4a1037aea0e2d2799bc55ef43",
+		"docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md":                                                 "41525a31943a65535800649b3972edea69d2d2496e0eec1af68a6d5face3275b",
+		"docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md":                                              "23eae275384371ab00d5786b755110332e7f6159e955dd16bdee85b4b0097c9c",
+		"tools/official_client_capture/codex_upgrade.py":                                           "6f65d94cd79cae8d04ca442c50c24337fd4bf2242dbb7f0f70d4f4499d32f35d",
+		"tools/official_client_capture/tests/test_codex_upgrade.py":                                "7b405fba5ea25d38de899be90cf0e888ba19851a0c4c86f9bd5cb9dc457aabd4",
+	}
+	transitionPaths := make([]string, 0, len(receipt.Transitions))
+	for _, transition := range receipt.Transitions {
+		if expectedFrom[transition.Path] != transition.FromSHA256 ||
+			!validOpenAIReplayOOMRepairServiceSHA(transition.ToSHA256) ||
+			transition.FromSHA256 == transition.ToSHA256 || strings.TrimSpace(transition.Reason) == "" {
+			return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 条目非法")
+		}
+		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
+		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+			return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 当前摘要不一致：" + transition.Path)
+		}
+		transitionPaths = append(transitionPaths, transition.Path)
+	}
+	if len(receipt.Transitions) != len(expectedFrom) || len(receipt.Additions) != 0 ||
+		!slices.IsSorted(transitionPaths) ||
+		len(transitionPaths) != len(slices.Compact(append([]string(nil), transitionPaths...))) {
+		return errors.New("Codex CLI 0.151 manifest 排序恢复路径闭集非法")
+	}
+	return nil
+}
+
+func codex0151EvidenceManifestOrderRecoverySupersedesService(path, priorDigest, currentDigest string) bool {
+	receipt, err := loadCodex0151EvidenceManifestOrderRecoveryService()
+	if err != nil {
+		return false
+	}
+	for _, transition := range receipt.Transitions {
+		if transition.Path == path && transition.FromSHA256 == priorDigest &&
+			transition.ToSHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCodex0151EvidenceManifestOrderRecoverySourceTransitionServiceIsFrozen(t *testing.T) {
+	if _, err := loadCodex0151EvidenceManifestOrderRecoveryService(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodex0151EvidenceManifestOrderRecoverySourceTransitionServiceRejectsMutation(t *testing.T) {
+	receipt, err := loadCodex0151EvidenceManifestOrderRecoveryService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := receipt
+	mutated.Transitions = append([]openAIReplayOOMRepairTransitionService(nil), receipt.Transitions...)
+	mutated.Transitions[0].ToSHA256 = strings.Repeat("0", 64)
+	if err := validateCodex0151EvidenceManifestOrderRecoveryService(mutated); err == nil {
+		t.Fatal("变异后的 Codex CLI 0.151 manifest 排序恢复 transition 被错误接受")
 	}
 }
 

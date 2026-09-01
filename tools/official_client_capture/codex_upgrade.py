@@ -8077,14 +8077,79 @@ _PHASE_EVALUATION_OPERATIONS = {
     "official": ("capture-official-seal", "deep-verify"),
     "candidate": ("capture-candidate-seal", "compare", "accept", "deep-verify"),
 }
+MAX_PHASE_EVALUATION_TRANSITIONS = 2
 
 
-def _evaluation_transition_preview_path(attempt_root: Path) -> Path:
-    return attempt_root / "evaluation-transition-preview.json"
+def _evaluation_transition_preview_path(
+    attempt_root: Path,
+    transition_index: int = 1,
+) -> Path:
+    if transition_index == 1:
+        return attempt_root / "evaluation-transition-preview.json"
+    return attempt_root / f"evaluation-transition-{transition_index:02d}-preview.json"
 
 
-def _evaluation_transition_path(attempt_root: Path) -> Path:
-    return attempt_root / "evaluation-transition.json"
+def _evaluation_transition_path(
+    attempt_root: Path,
+    transition_index: int = 1,
+) -> Path:
+    if transition_index == 1:
+        return attempt_root / "evaluation-transition.json"
+    return attempt_root / f"evaluation-transition-{transition_index:02d}.json"
+
+
+def _phase_evaluation_transition_index(
+    attempt_root: Path,
+    current_tool: Mapping[str, Any],
+    *,
+    allocate: bool,
+) -> int:
+    """选择当前工具的只追加 transition 槽位，并把替代次数限制为两次。"""
+
+    current_sha256 = str(current_tool.get("files_sha256", ""))
+    if not SHA256_RE.fullmatch(current_sha256):
+        raise ConfigurationError("当前评估工具身份非法。")
+    occupied: list[int] = []
+    matching: list[int] = []
+    for index in range(1, MAX_PHASE_EVALUATION_TRANSITIONS + 1):
+        paths = (
+            _evaluation_transition_preview_path(attempt_root, index),
+            _evaluation_transition_path(attempt_root, index),
+        )
+        targets: set[str] = set()
+        present = False
+        for path in paths:
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                raise ConfigurationError("评估 transition 路径不可信。")
+            if not path.is_file():
+                continue
+            present = True
+            payload = _read_json(path, "评估工具 transition 槽位")
+            target = str(payload.get("to_tool_files_sha256", ""))
+            if not SHA256_RE.fullmatch(target):
+                raise ConfigurationError("评估 transition 槽位缺少目标工具摘要。")
+            targets.add(target)
+        if not present:
+            continue
+        occupied.append(index)
+        if len(targets) != 1:
+            raise ConfigurationError("同一评估 transition 槽位的工具摘要不一致。")
+        if current_sha256 in targets:
+            matching.append(index)
+    if occupied and occupied != list(range(1, max(occupied) + 1)):
+        raise ConfigurationError("评估 transition 槽位不连续。")
+    if len(matching) > 1:
+        raise ConfigurationError("当前评估工具重复绑定多个 transition。")
+    if matching:
+        return matching[0]
+    if not allocate:
+        raise ConfigurationError(
+            "当前工具含阶段限定变化；先执行 evaluation-transition 并批准摘要。"
+        )
+    for index in range(1, MAX_PHASE_EVALUATION_TRANSITIONS + 1):
+        if index not in occupied:
+            return index
+    raise ConfigurationError("评估 transition 已达到两次上限，必须停线。")
 
 
 def _phase_recovery_controls_from_arguments(
@@ -8472,8 +8537,15 @@ def _validate_phase_evaluation_transition(
     attempt_root: Path,
     attempt: Mapping[str, Any],
     current_tool: Mapping[str, Any],
+    transition_index: int | None = None,
 ) -> dict[str, Any]:
-    path = _evaluation_transition_path(attempt_root)
+    if transition_index is None:
+        transition_index = _phase_evaluation_transition_index(
+            attempt_root,
+            current_tool,
+            allocate=False,
+        )
+    path = _evaluation_transition_path(attempt_root, transition_index)
     if path.is_symlink() or not path.is_file():
         raise ConfigurationError(
             "当前工具含阶段限定变化；先执行 evaluation-transition 并批准摘要。"
@@ -8518,7 +8590,8 @@ def _validate_phase_evaluation_transition(
     _require_file_binding(preview_binding, "评估工具 transition 预览")
     preview_path = _campaign_file(campaign_dir, str(preview_binding["path"]))
     if (
-        preview_path != _evaluation_transition_preview_path(attempt_root)
+        preview_path
+        != _evaluation_transition_preview_path(attempt_root, transition_index)
         or preview_path.is_symlink()
         or not preview_path.is_file()
         or file_sha256(preview_path) != preview_binding["sha256"]
@@ -8586,16 +8659,22 @@ def _load_phase_evaluation_transition(
 ) -> dict[str, str]:
     if set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES):
         raise ConfigurationError("评估 transition 不能放行产出侧工具漂移。")
+    transition_index = _phase_evaluation_transition_index(
+        attempt_root,
+        current_tool,
+        allocate=False,
+    )
     receipt = _validate_phase_evaluation_transition(
         campaign_dir,
         manifest,
         attempt_root=attempt_root,
         attempt=attempt,
         current_tool=current_tool,
+        transition_index=transition_index,
     )
     if operation not in receipt.get("allowed_operations", []):
         raise ConfigurationError(f"评估 transition 未授权当前操作：{operation}")
-    path = _evaluation_transition_path(attempt_root)
+    path = _evaluation_transition_path(attempt_root, transition_index)
     return {
         "path": path.relative_to(campaign_dir).as_posix(),
         "sha256": file_sha256(path),
@@ -8626,6 +8705,11 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
         manifest,
         current_tool,
     )
+    transition_index = _phase_evaluation_transition_index(
+        attempt_root,
+        current_tool,
+        allocate=True,
+    )
     preview = _build_phase_evaluation_transition_preview(
         campaign_dir,
         manifest,
@@ -8636,7 +8720,10 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
         current_tool=current_tool,
         recovery_controls=recovery_controls,
     )
-    preview_path = _evaluation_transition_preview_path(attempt_root)
+    preview_path = _evaluation_transition_preview_path(
+        attempt_root,
+        transition_index,
+    )
     _write_or_verify_json(preview_path, preview)
     approval = arguments.approve_transition_sha256
     if approval is None:
@@ -8646,13 +8733,14 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
             "candidate_id": candidate_id,
             "attempt_id": attempt["attempt_id"],
             "preview": str(preview_path),
+            "transition_index": transition_index,
             "review_sha256": preview["review_sha256"],
             "changed_files": preview["changed_files"],
             "raw_evidence_scanned_bytes": 0,
         }
     if not SHA256_RE.fullmatch(str(approval)) or approval != preview["review_sha256"]:
         raise ConfigurationError("评估 transition 批准摘要与预览不一致。")
-    receipt_path = _evaluation_transition_path(attempt_root)
+    receipt_path = _evaluation_transition_path(attempt_root, transition_index)
     if receipt_path.is_file() and not receipt_path.is_symlink():
         receipt = _validate_phase_evaluation_transition(
             campaign_dir,
@@ -8660,6 +8748,7 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
             attempt_root=attempt_root,
             attempt=attempt,
             current_tool=current_tool,
+            transition_index=transition_index,
         )
     else:
         preview_projection = {
@@ -8702,6 +8791,7 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
             attempt_root=attempt_root,
             attempt=attempt,
             current_tool=current_tool,
+            transition_index=transition_index,
         )
     return {
         "status": "approved",
@@ -8709,6 +8799,7 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
         "candidate_id": candidate_id,
         "attempt_id": attempt["attempt_id"],
         "transition": str(receipt_path),
+        "transition_index": transition_index,
         "transition_digest": receipt["transition_digest"],
         "raw_evidence_scanned_bytes": 0,
     }
@@ -10533,6 +10624,53 @@ def _verification_manifest_paths(
     return root / f"{suffix}.json", root / f"{suffix}.checkpoint.json"
 
 
+def _inventory_content_index(value: Any) -> dict[str, tuple[int, str]] | None:
+    """忽略条目顺序比较历史 Inventory 内容，同时拒绝重复路径。"""
+
+    if not isinstance(value, Mapping):
+        return None
+    entries = value.get("entries")
+    if (
+        not isinstance(entries, list)
+        or value.get("entry_count") != len(entries)
+    ):
+        return None
+    output: dict[str, tuple[int, str]] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping) or set(entry) != {
+            "path",
+            "size",
+            "sha256",
+        }:
+            return None
+        path = entry.get("path")
+        size = entry.get("size")
+        sha256 = entry.get("sha256")
+        if (
+            not isinstance(path, str)
+            or not path
+            or path in output
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or not isinstance(sha256, str)
+            or not SHA256_RE.fullmatch(sha256)
+        ):
+            return None
+        output[path] = (size, sha256)
+    return output
+
+
+def _inventory_contents_equal(left: Any, right: Any) -> bool:
+    left_index = _inventory_content_index(left)
+    right_index = _inventory_content_index(right)
+    return (
+        left_index is not None
+        and right_index is not None
+        and left_index == right_index
+    )
+
+
 def _materialize_stage_evidence_manifest(
     campaign_dir: Path,
     canonical: str,
@@ -10571,7 +10709,10 @@ def _materialize_stage_evidence_manifest(
         _write_or_verify_json(manifest_path, evidence_manifest)
     expected_security = projected.get("security")
     if (
-        evidence_manifest.get("inventory") != projected.get("evidence_inventory")
+        not _inventory_contents_equal(
+            evidence_manifest.get("inventory"),
+            projected.get("evidence_inventory"),
+        )
         or not isinstance(expected_security, dict)
         or expected_security
         != {"raw_evidence_private": True, **evidence_manifest["security"]}

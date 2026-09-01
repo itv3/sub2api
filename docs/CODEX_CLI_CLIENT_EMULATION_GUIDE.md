@@ -1372,6 +1372,10 @@ transition、imported checkpoint、seal 批准、`status`、compare 和 accept �
 新建 successor。新 Ledger 的 `create` 已自动写入 `doc-pre-p0-started`，不得再追加同阶段
 `stage_started`。
 
+历史 Inventory 与新 manifest 只允许排序差异：去重后的 `(path,size,sha256)` 全集和安全结论必须完全
+一致，旧 Inventory 摘要保持不变。若已批准 transition 后才发现新的评估侧缺陷，停线该控制链并用新
+Ledger、P0、完整 Job 演练追加一次替代 transition；禁止覆盖旧 transition，替代后仍失败则停止恢复。
+
 采集、探针、relay、脱敏、收据生成、环境快照和编排等产出侧工具变化会改变证据字节，必须
 新建 Campaign。评估侧工具只有在显式白名单内才允许漂移，并须登记摘要、重放全部受影响门禁；
 新增或未分类工具默认属于产出侧。被校验的工具树必须就是实际执行的工具树。

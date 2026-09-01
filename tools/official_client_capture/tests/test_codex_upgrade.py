@@ -686,6 +686,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 approved = codex_upgrade.create_phase_evaluation_transition(arguments)
             self.assertEqual(approved["status"], "approved")
             self.assertEqual(approved["raw_evidence_scanned_bytes"], 0)
+            self.assertEqual(approved["transition_index"], 1)
 
             wrong_attempt = {**attempt, "candidate_id": "c2"}
             with mock.patch.object(
@@ -704,6 +705,124 @@ class CodexUpgradeTest(unittest.TestCase):
                         attempt=wrong_attempt,
                         current_tool=current,
                     )
+
+            original_receipt = (
+                attempt_root / "evaluation-transition.json"
+            ).read_bytes()
+            replacement = identity("d" * 64)
+            replacement_controls = {
+                "schema_version": codex_upgrade.TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA,
+                "marker": "recovery-b",
+            }
+            arguments.approve_transition_sha256 = None
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_require_formal_campaign",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_tool_identity",
+                    return_value=replacement,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_recovery_controls_from_arguments",
+                    return_value=replacement_controls,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_validate_phase_recovery_controls",
+                    return_value=replacement_controls,
+                ),
+            ):
+                replacement_preview = (
+                    codex_upgrade.create_phase_evaluation_transition(arguments)
+                )
+            self.assertEqual(replacement_preview["transition_index"], 2)
+            self.assertTrue(
+                replacement_preview["preview"].endswith(
+                    "evaluation-transition-02-preview.json"
+                )
+            )
+
+            arguments.approve_transition_sha256 = replacement_preview[
+                "review_sha256"
+            ]
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_require_formal_campaign",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_tool_identity",
+                    return_value=replacement,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_recovery_controls_from_arguments",
+                    return_value=replacement_controls,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_validate_phase_recovery_controls",
+                    return_value=replacement_controls,
+                ),
+            ):
+                replacement_approved = (
+                    codex_upgrade.create_phase_evaluation_transition(arguments)
+                )
+            self.assertEqual(replacement_approved["transition_index"], 2)
+            self.assertEqual(
+                (attempt_root / "evaluation-transition.json").read_bytes(),
+                original_receipt,
+            )
+            self.assertTrue(
+                (attempt_root / "evaluation-transition-02.json").is_file()
+            )
+
+            arguments.approve_transition_sha256 = None
+            third = identity("e" * 64)
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_require_formal_campaign",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_tool_identity",
+                    return_value=third,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_recovery_controls_from_arguments",
+                    return_value=replacement_controls,
+                ),
+                self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    "达到两次上限",
+                ),
+            ):
+                codex_upgrade.create_phase_evaluation_transition(arguments)
 
     def test_campaign_loader_rejects_missing_invalid_and_tampered_mode(self) -> None:
         for mutation, update_digest, message in (
@@ -5624,6 +5743,36 @@ class EvidenceManifestTest(unittest.TestCase):
                         checkpoint_path=Path(directory) / "checkpoint.json",
                     )
             scanner.assert_not_called()
+
+    def test_historical_inventory_only_allows_order_difference(self) -> None:
+        first = {"path": "evidence/a.json", "size": 1, "sha256": "a" * 64}
+        second = {"path": "run/b.json", "size": 2, "sha256": "b" * 64}
+        historical = {
+            "entry_count": 2,
+            "entries": [first, second],
+            "digest": "c" * 64,
+        }
+        manifest = {
+            "entry_count": 2,
+            "entries": [second, first],
+            "digest": "d" * 64,
+        }
+        self.assertTrue(
+            codex_upgrade._inventory_contents_equal(historical, manifest)
+        )
+        changed = json.loads(json.dumps(manifest))
+        changed["entries"][0]["size"] = 3
+        self.assertFalse(
+            codex_upgrade._inventory_contents_equal(historical, changed)
+        )
+        duplicate = {
+            "entry_count": 2,
+            "entries": [first, first],
+            "digest": "e" * 64,
+        }
+        self.assertFalse(
+            codex_upgrade._inventory_contents_equal(historical, duplicate)
+        )
 
     def test_interrupted_scan_resumes_from_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
