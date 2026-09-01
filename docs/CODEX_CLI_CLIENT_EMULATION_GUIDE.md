@@ -1344,8 +1344,9 @@ successor 不得用于超时、扫描过慢、评估侧工具修复或临时失�
 演练，再在 `successor` 命令追加 `--job-rehearsal-root <root> --job-rehearsal-receipt <receipt>`。
 工具会按后继当前执行合同重放收据并替换旧绑定；缺少、部分提供或合同不一致均失败关闭。
 
-旧 Ledger 已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger、ARM64 收据和完整
-Job 演练。若原 attempt 已完成 live 请求、Kilo 后检查点完整且证据字节未变，严格按下列顺序原地恢复：
+以下原地恢复只适用于显式白名单内的评估侧工具修复；产出侧工具变化仍须新建 Campaign。旧 Ledger
+已超时时，先封存 `stop_the_line` checkpoint，再为恢复 P0 新建 Ledger、ARM64 收据和完整 Job 演练。
+若原 attempt 已完成 live 请求、Kilo 后检查点完整且证据字节未变，严格按下列顺序恢复：
 
 1. `evaluation-transition` 两步批准，绑定旧停线 checkpoint、新 Ledger、ARM64 收据和 Job 演练；
 2. `deep-verify` 只为缺少 manifest 的 imported official／classify 建立 checkpoint；
@@ -1522,8 +1523,7 @@ P0 还必须在 ARM64 使用不小于本次“最大单一 manifest 边界”的
 依赖、语法、二进制、bubblewrap 和 zstd 探针，不执行 Job，也不发送官方请求。
 
 ```bash
-install -d -m 0700 "$JOB_REHEARSAL_ROOT"
-test ! -L "$JOB_REHEARSAL_ROOT"
+mkdir -m 0700 "$JOB_REHEARSAL_ROOT"
 python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt collect \
   --campaign-dir "$PREFLIGHT_CAMPAIGN" --evidence-root "$JOB_REHEARSAL_ROOT" \
   --output facts.json

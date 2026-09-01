@@ -632,9 +632,10 @@ ready_for_operator_release
 - `successor` 只处理规则、画像、场景、产出语义或冻结运行身份变化；超时、性能问题、评估侧工具修复和
   普通临时失败不得创建 successor。工具不得自动创建 successor，同一根因最多允许一次人工批准的
   successor；后继再次命中同一根因必须停线。
-- `VC-1` 以后发现工具缺陷时先 `stop_the_line`，在独立 `preflight_only` 完成修复、离线回归和实规模
-  演练。若原 attempt 已完成 live 请求、检查点完整且证据字节未变，允许用受管评估工具 transition 在
-  原 Campaign／attempt 上生成首份 `EvidenceManifest` 并续作；不得重发请求或新建 candidate／Campaign。
+- `VC-1` 以后发现评估侧工具缺陷时先 `stop_the_line`，在独立 `preflight_only` 完成修复、离线回归和
+  实规模演练。若原 attempt 已完成 live 请求、检查点完整且证据字节未变，允许用受管评估工具 transition
+  在原 Campaign／attempt 上生成首份 `EvidenceManifest` 并续作；不得重发请求或新建 candidate／Campaign。
+  产出侧工具变化不得进入该恢复路径，仍须按前述边界新建 Campaign。
 - 上述原地恢复顺序固定为：绑定旧停线 checkpoint、新 active `UpgradeTimingLedger`、新 ARM64 P0 收据
   和新完整 Job 演练；两步批准 attempt／phase 限定的评估 transition（读取原始证据 0 字节）；仅为缺少
   manifest 的历史导入阶段执行一次 `deep-verify`；返回原 attempt 完成 seal 预览与零扫描批准。任一步
