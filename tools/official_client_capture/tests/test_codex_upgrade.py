@@ -361,12 +361,17 @@ class CodexUpgradeTest(unittest.TestCase):
                 job_rehearsal_receipt=rehearsal_receipt,
             )
             current_tool = codex_upgrade._tool_identity(include_git=False)
-            controls = codex_upgrade._phase_recovery_controls_from_arguments(
-                transition_arguments,
-                campaign_dir,
-                manifest,
-                current_tool,
-            )
+            with mock.patch.object(
+                codex_upgrade,
+                "_recovery_rehearsal_target_scenario_override",
+                return_value=None,
+            ):
+                controls = codex_upgrade._phase_recovery_controls_from_arguments(
+                    transition_arguments,
+                    campaign_dir,
+                    manifest,
+                    current_tool,
+                )
             self.assertEqual(
                 controls["stop_checkpoint"]["total_live_request_count"],
                 91,
