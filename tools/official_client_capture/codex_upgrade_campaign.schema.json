@@ -389,7 +389,14 @@
           "$ref": "#/$defs/sha256"
         },
         "reason": {
-          "const": "candidate_runtime_identity_correction"
+          "enum": [
+            "candidate_failed_job_tool_recovery",
+            "candidate_recovery_control_refresh",
+            "candidate_recovery_control_replacement",
+            "candidate_runtime_identity_correction",
+            "classification_fact_correction",
+            "sealed_stage_control_recovery"
+          ]
         }
       }
     },

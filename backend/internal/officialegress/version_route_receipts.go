@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/officialegress/bindingcontract"
+	"github.com/Wei-Shaw/sub2api/internal/officialegress/profilecontract"
 	"github.com/Wei-Shaw/sub2api/internal/officialegress/receiptcontract"
 )
 
@@ -25,6 +26,8 @@ import (
 //
 //go:embed catalogdata/version-route-migration-receipts.json catalogdata/version-route-migration-artifacts
 var versionRouteReceiptFS embed.FS
+
+const versionRouteFrozenProfileDirectory = "catalogdata/version-route-migration-artifacts/frozen-profiles"
 
 type versionRouteReceiptManifest struct {
 	SchemaVersion   int                      `json:"schema_version"`
@@ -370,6 +373,30 @@ func resolveVersionRouteBindingForProfiles(
 			matched = true
 		}
 		if !matched {
+			executable, archived, archiveErr := loadVersionRouteFrozenProfile(profileDigest)
+			if archiveErr != nil {
+				return EndpointBinding{}, nil, archiveErr
+			}
+			if archived {
+				bindings, bindingErr := NewEndpointBindingCatalog(sinks, physical, executable)
+				if bindingErr != nil {
+					return EndpointBinding{}, nil, bindingErr
+				}
+				candidate, present := bindings.ResolveBindingRoute(sink, route, physical)
+				if !present {
+					return EndpointBinding{}, nil, fmt.Errorf(
+						"版本 route 在冻结历史画像中无 EndpointBinding: %s: %s", input.ID, profileDigest,
+					)
+				}
+				if len(resolvedProfiles) > 0 && (candidate.EndpointID() != resolved.EndpointID() ||
+					candidate.ReleasePurpose() != resolved.ReleasePurpose()) {
+					return EndpointBinding{}, nil, fmt.Errorf("版本 route 在不同画像中连接到不同 EndpointBinding: %s", input.ID)
+				}
+				resolved = candidate
+				matched = true
+			}
+		}
+		if !matched {
 			return EndpointBinding{}, nil, fmt.Errorf("版本 route 引用未知画像摘要: %s", profileDigest)
 		}
 		resolvedProfiles = append(resolvedProfiles, profileDigest)
@@ -379,6 +406,45 @@ func resolveVersionRouteBindingForProfiles(
 		return EndpointBinding{}, nil, fmt.Errorf("版本 route 未指定冻结画像: %s", input.ID)
 	}
 	return resolved, resolvedProfiles, nil
+}
+
+// loadVersionRouteFrozenProfile 只加载历史 version-route 收据冻结的证明画像。
+// 文件不属于 releaseCatalogFS，因而不能进入 Active／Previous 或被生产 selector
+// 选中；其唯一用途是让不可改写的历史收据在旧运行画像退休后仍可自校验。
+func loadVersionRouteFrozenProfile(
+	profileDigest string,
+) (profilecontract.ExecutableProfile, bool, error) {
+	if !receiptcontract.ValidSHA256(profileDigest) {
+		return profilecontract.ExecutableProfile{}, false, errors.New("版本 route 冻结画像摘要非法")
+	}
+	profilePath := path.Join(versionRouteFrozenProfileDirectory, profileDigest+".json")
+	raw, err := versionRouteReceiptFS.ReadFile(profilePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return profilecontract.ExecutableProfile{}, false, nil
+	}
+	if err != nil {
+		return profilecontract.ExecutableProfile{}, false, err
+	}
+	snapshot, err := profilecontract.ParseSnapshot(raw)
+	if err != nil {
+		return profilecontract.ExecutableProfile{}, false, fmt.Errorf("解析版本 route 冻结画像: %w", err)
+	}
+	computedDigest, err := profilecontract.OfficialSnapshotDigest(snapshot)
+	if err != nil {
+		return profilecontract.ExecutableProfile{}, false, fmt.Errorf("计算版本 route 冻结画像摘要: %w", err)
+	}
+	if computedDigest != profileDigest || snapshot.Digest != profileDigest {
+		return profilecontract.ExecutableProfile{}, false, errors.New("版本 route 冻结画像内容摘要不一致")
+	}
+	profile, err := profilecontract.NewProfileSpec(snapshot)
+	if err != nil {
+		return profilecontract.ExecutableProfile{}, false, fmt.Errorf("构造版本 route 冻结画像: %w", err)
+	}
+	executable, err := profilecontract.CompileExecutableProfile(profile)
+	if err != nil {
+		return profilecontract.ExecutableProfile{}, false, fmt.Errorf("编译版本 route 冻结画像: %w", err)
+	}
+	return executable, true, nil
 }
 
 func verifyVersionRouteReceiptArtifacts(

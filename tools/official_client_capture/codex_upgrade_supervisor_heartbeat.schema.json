@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-heartbeat-v1.json",
+  "title": "Codex 升级监督器心跳",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "owner_pid", "owner_nonce", "updated_at_utc", "updated_at_epoch", "monotonic_ns", "operation", "job_id", "state", "event_sequence"],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-supervisor-heartbeat/v1"},
+    "owner_pid": {"type": "integer", "minimum": 1},
+    "owner_nonce": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "updated_at_utc": {"type": "string", "format": "date-time"},
+    "updated_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "monotonic_ns": {"type": "integer", "minimum": 0},
+    "operation": {"type": "string", "minLength": 1, "maxLength": 256},
+    "job_id": {"oneOf": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, {"type": "null"}]},
+    "state": {"enum": ["running", "failed", "stopped", "audit-incomplete", "watchdog-aborted"]},
+    "event_sequence": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}
+  }
+}

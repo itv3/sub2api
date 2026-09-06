@@ -59,6 +59,7 @@
       "$ref": "#/$defs/sha256"
     },
     "facts": {
+      "description": "facts 文件中的 jobs[] 由运行时 finalizer 按闭集合校验；失败项必须含 error，可选 duration_seconds 必须为有限非负数。",
       "$ref": "#/$defs/binding"
     },
     "producer": {

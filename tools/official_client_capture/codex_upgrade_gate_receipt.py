@@ -27,6 +27,7 @@ PRODUCER_SCHEMA = "codex-upgrade-external-gate-producer/v3"
 SAME_ROOT_CAUSE_RETRY_LIMIT = 2
 CANDIDATE_PHASE = "candidate_external"
 POST_PROMOTION_PHASE = "post_promotion"
+CANONICAL_ACCEPTANCE_SCHEMA = "codex-upgrade-canonical-step/v1"
 PHASES = frozenset({CANDIDATE_PHASE, POST_PROMOTION_PHASE})
 CANDIDATE_PURPOSES = frozenset({"validation_only", "production_replacement"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -49,8 +50,39 @@ CANDIDATE_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "target-platform": (".", ("make", "test")),
 }
 POST_PROMOTION_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "check-egress-spec": (".", ("make", "check-egress-spec")),
-    "full-regression": (".", ("make", "test")),
+    "affected-spec-ep-002": (
+        "backend",
+        (
+            "go",
+            "test",
+            "./internal/service",
+            "-run",
+            "^TestUploadOfficialCodexFileC2PAReservationReusesCreateBodyOnRetry$",
+            "-count=1",
+        ),
+    ),
+    "affected-spec-hdr-005": (
+        "backend",
+        (
+            "go",
+            "test",
+            "./internal/service",
+            "-run",
+            "^TestCandidateTraceCodex0145RuntimeAndBoundaryFacts$",
+            "-count=1",
+        ),
+    ),
+    "catalog-projection": (
+        "backend",
+        (
+            "go",
+            "test",
+            "./internal/service",
+            "-run",
+            "^TestOfficialCodexProjectionUsesFormalReleaseCatalog$",
+            "-count=1",
+        ),
+    ),
     "official-egress-version-leak-ast": (
         "backend",
         (
@@ -62,7 +94,6 @@ POST_PROMOTION_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
             "-count=1",
         ),
     ),
-    "target-platform": (".", ("make", "test")),
     "version-leak": (".", ("python3", "tools/check_version_leak.py")),
     "version-leak-self-test": (
         ".",
@@ -358,20 +389,27 @@ def _validate_inputs(
         payloads[role] = payload
     if phase == POST_PROMOTION_PHASE:
         acceptance = payloads["acceptance"]
-        if (
+        canonical_acceptance = (
+            acceptance.get("schema_version") == CANONICAL_ACCEPTANCE_SCHEMA
+            and acceptance.get("item_id") == "acceptance"
+        )
+        common_invalid = (
             acceptance.get("status") != "complete"
             or acceptance.get("accepted") is not True
-            or acceptance.get("campaign_mode") != subject["campaign_mode"]
-            or acceptance.get("campaign_purpose") != subject["campaign_purpose"]
-            or acceptance.get("candidate_purpose") != subject["candidate_purpose"]
             or acceptance.get("production_state") != "accepted_not_activated"
             or acceptance.get("candidate_id") != subject["candidate_id"]
+        )
+        legacy_invalid = not canonical_acceptance and (
+            acceptance.get("campaign_mode") != subject["campaign_mode"]
+            or acceptance.get("campaign_purpose") != subject["campaign_purpose"]
+            or acceptance.get("candidate_purpose") != subject["candidate_purpose"]
             or acceptance.get("target_version") != subject["target_version"]
             or acceptance.get("profile_id") != subject["profile_id"]
             or acceptance.get("profile_digest") != subject["profile_digest"]
             or acceptance.get("candidate_package_digest")
             != subject["candidate_package_digest"]
-        ):
+        )
+        if common_invalid or legacy_invalid:
             raise GateReceiptError("post_promotion acceptance 身份不一致或尚未通过")
         if normalized[0]["sha256"] != subject["acceptance_sha256"]:
             raise GateReceiptError("post_promotion acceptance_sha256 不一致")

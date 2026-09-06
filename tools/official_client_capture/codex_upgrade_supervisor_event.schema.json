@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-event-v1.json",
+  "title": "Codex 升级监督器事件",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sequence", "recorded_at_utc", "recorded_at_epoch", "event_type", "operation", "campaign_id", "phase", "owner_pid", "owner_nonce", "job_id", "status", "reason", "started_at_epoch", "ended_at_epoch", "metadata", "previous_event_sha256", "event_sha256"],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-supervisor-event/v1"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "recorded_at_utc": {"type": "string", "format": "date-time"},
+    "recorded_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "event_type": {"type": "string", "minLength": 1, "maxLength": 64},
+    "operation": {"type": "string", "minLength": 1, "maxLength": 256},
+    "campaign_id": {"$ref": "#/$defs/safeId"},
+    "phase": {"type": "string", "minLength": 1, "maxLength": 32},
+    "owner_pid": {"type": "integer", "minimum": 1},
+    "owner_nonce": {"$ref": "#/$defs/nonce"},
+    "job_id": {"oneOf": [{"$ref": "#/$defs/safeId"}, {"type": "null"}]},
+    "status": {"type": "string", "minLength": 1, "maxLength": 32},
+    "reason": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    "started_at_epoch": {"oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "null"}]},
+    "ended_at_epoch": {"oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "null"}]},
+    "metadata": {"type": "object"},
+    "previous_event_sha256": {"oneOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+    "event_sha256": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "nonce": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

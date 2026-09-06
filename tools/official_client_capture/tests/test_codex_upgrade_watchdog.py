@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import json
 import copy
+import contextlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -15,19 +16,176 @@ from tools.official_client_capture import incremental_recovery
 
 
 class WatchdogTests(unittest.TestCase):
-    def test_watchdog_only_files_are_low_risk_evaluator_components(self) -> None:
-        for path in (
-            "codex_upgrade_arm64_environment_receipt.py",
-            "codex_upgrade_environment_probe.py",
-            "codex_upgrade_timing_ledger.py",
-        ):
-            self.assertEqual(codex_upgrade._tool_component_for_path(path), "evaluator")
+    @staticmethod
+    def _lease_campaign(root: Path) -> Path:
+        campaign = root / "lease-campaign"
+        campaign.mkdir(mode=0o700)
+        manifest = campaign / "campaign.json"
+        manifest.write_text("{}\n", encoding="utf-8")
+        manifest.chmod(0o600)
+        return campaign
+
+    def test_campaign_lease_serializes_owner_and_releases_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self._lease_campaign(Path(directory))
+            deadline = incremental_recovery.WallClockDeadline(30)
+            deadline.heartbeat_seconds = 1
+            lease = codex_upgrade.CampaignLease(
+                campaign,
+                phase="official",
+                candidate_id=None,
+                deadline=deadline,
+                command="capture-official",
+                campaign_id="lease-campaign",
+            )
+            with mock.patch.object(
+                codex_upgrade,
+                "load_campaign_manifest",
+                return_value={"campaign_id": "lease-campaign"},
+            ):
+                lease.acquire()
+                try:
+                    payload = json.loads(
+                        (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    self.assertEqual(payload["state"], "active")
+                    self.assertEqual(payload["owner_pid"], __import__("os").getpid())
+                    self.assertEqual(payload["campaign_id"], "lease-campaign")
+                    competing = codex_upgrade.CampaignLease(
+                        campaign,
+                        phase="official",
+                        candidate_id=None,
+                        deadline=incremental_recovery.WallClockDeadline(30),
+                        command="capture-official",
+                        campaign_id="lease-campaign",
+                    )
+                    with self.assertRaisesRegex(
+                        codex_upgrade.ConfigurationError, "lease 已被占用"
+                    ):
+                        competing.acquire()
+                finally:
+                    lease.release()
+            released = json.loads(
+                (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(released["state"], "released")
+
+    def test_stale_campaign_lease_writes_immutable_stop_and_requires_explicit_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self._lease_campaign(Path(directory))
+            old = datetime.now(timezone.utc) - timedelta(minutes=10)
+            payload = {
+                "schema_version": codex_upgrade.CAMPAIGN_LEASE_SCHEMA,
+                "campaign_id": "lease-campaign",
+                "phase": "official",
+                "candidate_id": None,
+                "owner_pid": 999999999,
+                "owner_nonce": "a" * 64,
+                "attempt_id": None,
+                "started_at_utc": (old - timedelta(minutes=1)).isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "deadline_at_utc": (old + timedelta(minutes=1)).isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "last_heartbeat_at_utc": old.isoformat().replace("+00:00", "Z"),
+                "heartbeat_seconds": 30,
+                "operation": "capture-official",
+                "state": "active",
+                "recovered_owner_nonce": None,
+            }
+            (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).write_text(
+                json.dumps(payload) + "\n", encoding="utf-8"
+            )
+            (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).chmod(0o600)
+            with mock.patch.object(
+                codex_upgrade,
+                "load_campaign_manifest",
+                return_value={"campaign_id": "lease-campaign"},
+            ):
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError, "已过期并已停线"
+                ):
+                    codex_upgrade.CampaignLease(
+                        campaign,
+                        phase="official",
+                        candidate_id=None,
+                        deadline=incremental_recovery.WallClockDeadline(30),
+                        command="capture-official",
+                        campaign_id="lease-campaign",
+                    ).acquire()
+                stops = sorted(
+                    (campaign / codex_upgrade.CAMPAIGN_LEASE_STOP_DIRECTORY).glob("*.json")
+                )
+                self.assertEqual(len(stops), 1)
+                stop_before = stops[0].read_bytes()
+                recovering = codex_upgrade.CampaignLease(
+                    campaign,
+                    phase="official",
+                    candidate_id=None,
+                    deadline=incremental_recovery.WallClockDeadline(30),
+                    command="resume-rerun-failed",
+                    allow_stale_recovery=True,
+                    campaign_id="lease-campaign",
+                )
+                with recovering:
+                    current = json.loads(
+                        (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    self.assertEqual(current["recovered_owner_nonce"], "a" * 64)
+                self.assertEqual(stop_before, stops[0].read_bytes())
+
+    def test_campaign_lease_deadline_creates_stop_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self._lease_campaign(Path(directory))
+            deadline = incremental_recovery.WallClockDeadline(0.08)
+            deadline.heartbeat_seconds = 0.02
+            with mock.patch.object(
+                codex_upgrade,
+                "load_campaign_manifest",
+                return_value={"campaign_id": "lease-campaign"},
+            ):
+                lease = codex_upgrade.CampaignLease(
+                    campaign,
+                    phase="official",
+                    candidate_id=None,
+                    deadline=deadline,
+                    command="capture-official",
+                    campaign_id="lease-campaign",
+                )
+                lease.acquire()
+                time_module = __import__("time")
+                time_module.sleep(0.15)
+                with self.assertRaises(incremental_recovery.WallClockTimeoutError):
+                    lease.check("lease-test")
+                lease.release()
+            self.assertTrue(
+                list((campaign / codex_upgrade.CAMPAIGN_LEASE_STOP_DIRECTORY).glob("*.json"))
+            )
+
+    def test_watchdog_files_keep_independent_low_risk_components(self) -> None:
+        expected = {
+            "codex_upgrade_arm64_environment_receipt.py": "environment",
+            "codex_upgrade_environment_probe.py": "environment",
+            "codex_upgrade_timing_ledger.py": "control",
+            "codex_upgrade_supervisor.py": "control",
+        }
+        for path, component in expected.items():
+            self.assertEqual(
+                codex_upgrade._tool_component_for_path(path), component
+            )
 
     def test_legacy_shared_watchdog_classification_does_not_invalidate_jobs(self) -> None:
         current = codex_upgrade._tool_identity(include_git=False)
         legacy = copy.deepcopy(current)
-        # 0.149.1 Campaign 将这三个接线文件记在 shared；模拟旧组件摘要，
-        # 内容保持不变，比较器应把它们规范化到 evaluator 后判定无漂移。
+        # 0.149.1 Campaign 将这些接线文件记在 shared；模拟旧组件摘要，
+        # 内容保持不变，比较器应把它们规范化到当前独立组件后判定无漂移。
         legacy.pop("component_identity_sha256", None)
         for path in codex_upgrade._WATCHDOG_ONLY_TOOL_FILES:
             moved = False
@@ -48,6 +206,7 @@ class WatchdogTests(unittest.TestCase):
             value["sha256"] = incremental_recovery.digest(
                 {"entries": value["entries"]}
             )
+        legacy.pop("component_identity_sha256", None)
         self.assertEqual(
             codex_upgrade._tool_component_drift(legacy, current)["changed_components"],
             [],
@@ -55,6 +214,214 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(
             codex_upgrade._tool_identity_side_digest(legacy, "production"),
             codex_upgrade._tool_identity_side_digest(current, "production"),
+        )
+
+    def test_legacy_shared_evaluator_file_reclassification_does_not_invalidate_jobs(self) -> None:
+        current = codex_upgrade._tool_identity(include_git=False)
+        legacy = copy.deepcopy(current)
+        moved = False
+        for component, value in legacy["components"].items():
+            for index, entry in enumerate(value["entries"]):
+                if entry["path"] == "codex_upgrade_receipt_finalizer.py":
+                    legacy["components"]["shared"]["entries"].append(
+                        value["entries"].pop(index)
+                    )
+                    moved = True
+                    break
+            if moved:
+                break
+        self.assertTrue(moved)
+        for value in legacy["components"].values():
+            value["entries"].sort(key=lambda item: item["path"])
+            value["entry_count"] = len(value["entries"])
+            value["sha256"] = incremental_recovery.digest(
+                {"entries": value["entries"]}
+            )
+        legacy.pop("component_identity_sha256", None)
+        drift = codex_upgrade._tool_component_drift(legacy, current)
+        self.assertEqual(drift["changed_components"], [])
+        self.assertEqual(
+            codex_upgrade._tool_component_digest_map(legacy, canonical=True),
+            codex_upgrade._tool_component_digest_map(current, canonical=True),
+        )
+
+    def test_reused_result_survives_evaluator_reclassification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign = root / "campaign"
+            attempt_root = campaign / "official" / "attempts" / "A1"
+            attempt_root.mkdir(parents=True, mode=0o700)
+            receipt = attempt_root / "attempt.json"
+            receipt.write_text("source\n", encoding="utf-8")
+            receipt.chmod(0o600)
+
+            current = codex_upgrade._tool_identity(include_git=False)
+            legacy = copy.deepcopy(current)
+            for component, value in legacy["components"].items():
+                for index, entry in enumerate(value["entries"]):
+                    if entry["path"] == "codex_upgrade_receipt_finalizer.py":
+                        legacy["components"]["shared"]["entries"].append(
+                            value["entries"].pop(index)
+                        )
+                        break
+                else:
+                    continue
+                break
+            for value in legacy["components"].values():
+                value["entries"].sort(key=lambda item: item["path"])
+                value["entry_count"] = len(value["entries"])
+                value["sha256"] = incremental_recovery.digest(
+                    {"entries": value["entries"]}
+                )
+            legacy.pop("component_identity_sha256", None)
+
+            job = codex_upgrade.Job(
+                job_id="job-shared",
+                phase="official",
+                suites=("full",),
+                description="shared dependency",
+                steps=({"argv": ["bash", "/tmp/shared-helper.sh"]},),
+                evidence_roots=(),
+                covers=(),
+            )
+            identity = {"cli_version": "0.151.0"}
+            historical = codex_upgrade._job_incremental_metadata(
+                job,
+                identity=identity,
+                tool_identity=legacy,
+            )
+            result = {
+                "id": job.job_id,
+                "phase": "official",
+                "status": "complete",
+                "execution_sha256": historical["input_sha256"],
+                "incremental_result_key": historical["result_key"],
+                "tool_components": historical["components"],
+                "tool_component_digests": historical["component_digests"],
+                "tool_dependency_files": historical["tool_dependency_files"],
+                "input_sha256": historical["input_sha256"],
+                "environment_sha256": historical["environment_sha256"],
+                "dependency_sha256": historical["dependency_sha256"],
+            }
+            payload = {"status": "failed", "identity": identity, "results": [result]}
+            manifest = {"campaign_id": "camp", "tool_identity": legacy}
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "load_campaign_manifest",
+                    return_value=manifest,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_ordered_capture_attempts",
+                    return_value=[(attempt_root, {})],
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, payload),
+                ),
+            ):
+                reused = codex_upgrade._prior_complete_results(
+                    campaign,
+                    Path("official"),
+                    [job],
+                    phase="official",
+                    candidate_id=None,
+                    identity=identity,
+                    tool_identity=current,
+                    expected_reuse_job_ids=[job.job_id],
+                    source_attempt_id="A1",
+                )
+            self.assertEqual([item["id"] for item in reused], [job.job_id])
+            self.assertEqual(reused[0]["disposition"], "reused")
+            current_metadata = codex_upgrade._job_incremental_metadata(
+                job,
+                identity=identity,
+                tool_identity=current,
+            )
+            self.assertEqual(
+                reused[0]["incremental_result_key"],
+                current_metadata["result_key"],
+            )
+            self.assertEqual(
+                result["incremental_result_key"],
+                current_metadata["result_key"],
+            )
+
+    def test_hybrid_orchestrator_change_does_not_invalidate_unrelated_job(self) -> None:
+        """阶段限定编排器修复只应触发 transition，不应误伤 relay 结果。"""
+
+        current = codex_upgrade._tool_identity(include_git=False)
+        historical = copy.deepcopy(current)
+        old_sha = "a" * 64
+        changed = False
+        for entry in historical["entries"]:
+            if entry["path"] == "codex_upgrade.py":
+                entry["sha256"] = old_sha
+                changed = True
+                break
+        self.assertTrue(changed)
+        for value in historical["components"].values():
+            for entry in value["entries"]:
+                if entry["path"] == "codex_upgrade.py":
+                    entry["sha256"] = old_sha
+            value["sha256"] = incremental_recovery.digest(
+                {"entries": value["entries"]}
+            )
+        historical["files_sha256"] = codex_upgrade._fingerprint(
+            {"entries": historical["entries"]}
+        )
+        historical["component_identity_sha256"] = codex_upgrade._fingerprint(
+            {
+                "schema_version": incremental_recovery.SCHEMA_VERSION,
+                "component_count": len(historical["components"]),
+                "components": historical["components"],
+                "all_sha256": historical["files_sha256"],
+            }
+        )
+        sides = codex_upgrade._tool_identity_sides(historical["entries"])
+        historical.update(sides)
+
+        job = codex_upgrade.Job(
+            job_id="job-relay",
+            phase="official",
+            suites=("full",),
+            description="relay dependency",
+            steps=(
+                {"argv": ["bash", "run_official_codex_compact_capture.sh"]},
+            ),
+            evidence_roots=(),
+            covers=(),
+        )
+        identity = {"cli_version": "0.151.0"}
+        metadata = codex_upgrade._job_incremental_metadata(
+            job,
+            identity=identity,
+            tool_identity=historical,
+        )
+        result = {
+            "id": job.job_id,
+            "phase": job.phase,
+            "status": "complete",
+            "execution_sha256": metadata["input_sha256"],
+            "incremental_result_key": metadata["result_key"],
+            "tool_components": metadata["components"],
+            "tool_component_digests": metadata["component_digests"],
+            "tool_dependency_files": metadata["tool_dependency_files"],
+            "input_sha256": metadata["input_sha256"],
+            "environment_sha256": metadata["environment_sha256"],
+            "dependency_sha256": metadata["dependency_sha256"],
+        }
+        self.assertTrue(
+            codex_upgrade._historical_result_metadata_matches(
+                result,
+                job,
+                identity,
+                historical,
+                metadata["input_sha256"],
+                current_tool=current,
+            )
         )
 
     def test_incremental_noop_isolated_from_attempts_and_validated(self) -> None:
@@ -116,6 +483,256 @@ class WatchdogTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code, 0)
+
+    def test_capture_noop_short_circuits_before_reservation_and_runtime(self) -> None:
+        """冻结 scope 为空时不得创建 attempt、探针或触发真实请求。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign = root / "campaign"
+            campaign.mkdir(mode=0o700)
+            campaign_file = campaign / "campaign.json"
+            campaign_file.write_text("{}\n", encoding="utf-8")
+            campaign_file.chmod(0o600)
+            source_root = campaign / "official" / "attempts" / "source"
+            source_root.mkdir(parents=True, mode=0o700)
+            source_receipts: list[dict[str, object]] = []
+            for index in (1, 2):
+                path = source_root / f"job-{index}.json"
+                path.write_text("{}\n", encoding="utf-8")
+                path.chmod(0o600)
+                source_receipts.append(
+                    {
+                        "id": f"job-{index}",
+                        "source_receipt": {
+                            "path": path.relative_to(campaign).as_posix(),
+                            "sha256": codex_upgrade.file_sha256(path),
+                            "bytes": path.stat().st_size,
+                        },
+                    }
+                )
+            jobs = [
+                codex_upgrade.Job(
+                    job_id=f"job-{index}",
+                    phase="official",
+                    suites=("full",),
+                    description="no-op boundary",
+                    steps=({"argv": ["true"]},),
+                    evidence_roots=(),
+                    covers=(),
+                )
+                for index in (1, 2)
+            ]
+            manifest = {
+                "campaign_id": "noop-campaign",
+                "campaign_mode": "formal",
+                "campaign_purpose": "validation_only",
+                "official_identity": {"cli_version": "0.151.0"},
+            }
+            scope = {
+                "planned_job_ids": ["job-1", "job-2"],
+                "completed_job_ids": ["job-1", "job-2"],
+                "failed_job_ids": [],
+                "pending_job_ids": [],
+                "execute_job_ids": [],
+            }
+            arguments = type(
+                "Arguments",
+                (),
+                {
+                    "campaign_dir": campaign,
+                    "candidate_id": None,
+                    "rerun_failed": True,
+                    "acknowledge_live_requests": False,
+                    "max_wall_seconds": 30,
+                    "heartbeat_seconds": 1,
+                    "attempt_id": None,
+                    "capture_manifest": None,
+                    "assertion_evidence_root": None,
+                    "restoration_report": None,
+                    "evidence_root": [],
+                    "approve_seal_sha256": None,
+                    "observed_profile_receipt": None,
+                    "client_evidence": [],
+                },
+            )()
+            forbidden = {
+                name: mock.patch.object(
+                    codex_upgrade,
+                    name,
+                    side_effect=AssertionError(f"no-op 不得调用 {name}"),
+                )
+                for name in (
+                    "_reserve_capture_attempt",
+                    "_verify_plan_identity",
+                    "_verify_execution_tree",
+                    "_verify_official_binaries",
+                    "_probe_capture_environment",
+                    "_capture_arm64_environment_receipt",
+                )
+            }
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_load_stage_result",
+                        side_effect=codex_upgrade.ConfigurationError(
+                            "阶段尚未封存：capture-official"
+                        ),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(codex_upgrade, "_reject_contaminated_campaign")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade, "_campaign_jobs", return_value=jobs
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade, "_active_unsealed_attempts", return_value=[]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_tool_identity",
+                        return_value={"components": {}},
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_cheap_capture_tool_impact",
+                        return_value={
+                            "changed_components": [],
+                            "affected_job_ids": [],
+                        },
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_latest_failed_attempt_for_identity",
+                        return_value=(source_root, {"status": "failed"}),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_phase_evaluation_recovery_scope",
+                        return_value=scope,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_validate_recovery_scope_plan",
+                        return_value=(set(scope["completed_job_ids"]), set()),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        codex_upgrade,
+                        "_prior_complete_results",
+                        return_value=source_receipts,
+                    )
+                )
+                for patcher in forbidden.values():
+                    stack.enter_context(patcher)
+                result = codex_upgrade._run_capture_attempt(
+                    arguments,
+                    "official",
+                    _lease=mock.Mock(),
+                    _manifest=manifest,
+                    _deadline=incremental_recovery.WallClockDeadline(30),
+                )
+            self.assertEqual(result["status"], "incremental-noop")
+            self.assertEqual(result["execute_job_ids"], [])
+            self.assertEqual(result["reused_job_ids"], ["job-1", "job-2"])
+            self.assertEqual(
+                sorted(path.name for path in (campaign / "official" / "attempts").iterdir()),
+                ["source"],
+            )
+            self.assertTrue((campaign / "incremental-noop" / "official").is_dir())
+
+    def test_mutating_cli_command_gets_one_persistent_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self._lease_campaign(Path(directory))
+            manifest = {"campaign_id": "lease-campaign"}
+            with (
+                mock.patch.object(
+                    codex_upgrade, "load_campaign_manifest", return_value=manifest
+                ),
+                mock.patch.object(
+                    codex_upgrade, "_main_without_campaign_lease", return_value=0
+                ),
+            ):
+                code = codex_upgrade.main(
+                    [
+                        "compare",
+                        "--campaign-dir",
+                        str(campaign),
+                        "--candidate-id",
+                        "candidate-a",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            payload = json.loads(
+                (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(payload["state"], "released")
+            self.assertEqual(payload["phase"], "candidate")
+            self.assertEqual(payload["candidate_id"], "candidate-a")
+
+    def test_failed_mutating_cli_command_leaves_stop_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self._lease_campaign(Path(directory))
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "load_campaign_manifest",
+                    return_value={"campaign_id": "lease-campaign"},
+                ),
+                mock.patch.object(
+                    codex_upgrade, "_main_without_campaign_lease", return_value=1
+                ),
+            ):
+                code = codex_upgrade.main(
+                    [
+                        "compare",
+                        "--campaign-dir",
+                        str(campaign),
+                        "--candidate-id",
+                        "candidate-a",
+                    ]
+                )
+            self.assertEqual(code, 1)
+            stops = list(
+                (campaign / codex_upgrade.CAMPAIGN_LEASE_STOP_DIRECTORY).glob("*.json")
+            )
+            self.assertEqual(len(stops), 1)
+            self.assertEqual(
+                json.loads(
+                    (campaign / codex_upgrade.CAMPAIGN_LEASE_FILENAME).read_text(
+                        encoding="utf-8"
+                    )
+                )["state"],
+                "stop_the_line",
+            )
+            supervisor_runs = list((campaign / ".supervisor").glob("run-*/state.json"))
+            self.assertEqual(len(supervisor_runs), 1)
+            supervisor_state = json.loads(
+                supervisor_runs[0].read_text(encoding="utf-8")
+            )
+            self.assertEqual(supervisor_state["state"], "failed")
+            report = codex_upgrade.codex_upgrade_supervisor._audit_command(
+                supervisor_runs[0].parent
+            )
+            self.assertFalse(report["audit_incomplete"])
 
     def _valid_payload(self, root: Path) -> tuple[Path, dict[str, object], set[str]]:
         campaign = root / "campaign"

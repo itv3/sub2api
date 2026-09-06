@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-minute-v1.json",
+  "title": "Codex 升级分钟审计账本记录",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "bucket_start_utc", "bucket_end_utc", "recorded_at_utc", "bucket_start_epoch", "bucket_end_epoch", "duration_seconds", "classification", "operation", "job_id", "state", "owner_alive", "heartbeat_age_seconds", "source_event_sequence", "reason"],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-supervisor-minute/v1"},
+    "bucket_start_utc": {"type": "string", "format": "date-time"},
+    "bucket_end_utc": {"type": "string", "format": "date-time"},
+    "recorded_at_utc": {"type": "string", "format": "date-time"},
+    "bucket_start_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "bucket_end_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "duration_seconds": {"type": "number", "minimum": 0},
+    "classification": {"enum": ["active", "planning", "orchestrator-idle", "waiting", "stopped", "failed", "audit-incomplete"]},
+    "operation": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    "job_id": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    "state": {"type": "string"},
+    "owner_alive": {"type": "boolean"},
+    "heartbeat_age_seconds": {"oneOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+    "source_event_sequence": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "reason": {"oneOf": [{"type": "string"}, {"type": "null"}]}
+  }
+}

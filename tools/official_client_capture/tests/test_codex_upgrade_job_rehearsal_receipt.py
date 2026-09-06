@@ -18,6 +18,304 @@ from tools.official_client_capture.tests.control_receipt_fixtures import (
 
 
 class JobRehearsalReceiptTests(unittest.TestCase):
+    def test_evaluator_manifests_do_not_invalidate_capture_jobs(self) -> None:
+        """评估器和版本化清单变化不得被 shared 扩大成抓包 Job 重跑。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            contract = self._contract(Path(directory))
+        old_entries = [
+            {"path": "stable_helper.py", "sha256": "1" * 64},
+            {"path": "candidate_rule_assertion.py", "sha256": "2" * 64},
+            {
+                "path": "candidate_rule_expectations_0_149_1.json",
+                "sha256": "3" * 64,
+            },
+            {
+                "path": "codex_upgrade_rules_0_151_0.json",
+                "sha256": "4" * 64,
+            },
+            {
+                "path": "codex_upgrade_scenarios_0_151_0.json",
+                "sha256": "5" * 64,
+            },
+            {
+                "path": "codex_upgrade_evidence_labels_0_151_0.json",
+                "sha256": "6" * 64,
+            },
+        ]
+        new_entries = copy.deepcopy(old_entries)
+        for item in new_entries:
+            if item["path"] != "stable_helper.py":
+                item["sha256"] = "f" * 64
+
+        job = codex_upgrade.Job(
+            job_id="candidate-frozen-aux",
+            phase="candidate",
+            suites=("full",),
+            description="candidate-frozen-aux",
+            steps=({"argv": ["true"], "environment": {}, "timeout": 1},),
+            evidence_roots=(),
+            covers=(),
+        )
+        old_components = receipt._component_summary({"entries": old_entries})
+        document = receipt._job_document(job)
+        metadata = receipt._job_incremental_metadata(document, old_components)
+        previous_facts = {
+            "execution_contract": contract,
+            "tool_components": old_components,
+            "tool_trees": {"managed_host": {"entries": old_entries}},
+            "jobs": [
+                {
+                    "id": job.job_id,
+                    "status": "passed",
+                    "job_contract_sha256": metadata["input_sha256"],
+                    "incremental_result_key": metadata["result_key"],
+                    "input_sha256": metadata["input_sha256"],
+                    "environment_sha256": metadata["environment_sha256"],
+                    "dependency_sha256": metadata["dependency_sha256"],
+                    "tool_components": metadata["components"],
+                    "tool_component_digests": metadata["component_digests"],
+                }
+            ],
+        }
+
+        current_contract = copy.deepcopy(contract)
+        current_contract["evidence_label_declaration_sha256"] = "f" * 64
+        plan = receipt._select_rehearsal_plan(
+            [job],
+            current_contract,
+            receipt._component_summary({"entries": new_entries}),
+            previous_facts,
+        )
+
+        self.assertEqual(plan["execute_job_ids"], [])
+        self.assertEqual(plan["reused_job_ids"], ["candidate-frozen-aux"])
+        for path in (
+            "candidate_rule_assertion.py",
+            "candidate_rule_expectations_0_149_1.json",
+            "codex_upgrade_rules_0_151_0.json",
+            "codex_upgrade_scenarios_0_151_0.json",
+            "codex_upgrade_evidence_labels_0_151_0.json",
+        ):
+            self.assertEqual(receipt._job_component_for_path(path), "evaluator")
+
+    def test_mitm_checkpoint_helper_only_invalidates_mitm_runner_jobs(self) -> None:
+        """新增 MITM helper 不得误伤依赖 shared 的 frozen-aux。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            contract = self._contract(Path(directory))
+        old_entries = [
+            {"path": "stable_helper.py", "sha256": "1" * 64},
+            {
+                "path": "run_sub2api_openai_mitm_matrix.sh",
+                "sha256": "2" * 64,
+            },
+        ]
+        new_entries = [
+            *old_entries,
+            {"path": "mitm_scenario_checkpoint.py", "sha256": "3" * 64},
+        ]
+
+        def job(job_id: str, argv: list[str]) -> object:
+            return codex_upgrade.Job(
+                job_id=job_id,
+                phase="candidate",
+                suites=("full",),
+                description=job_id,
+                steps=(
+                    {
+                        "argv": argv,
+                        "environment": {},
+                        "timeout": 120,
+                    },
+                ),
+                evidence_roots=(),
+                covers=(),
+            )
+
+        jobs = [
+            job(
+                "candidate-core-mitm",
+                [
+                    "bash",
+                    "/root/oauth-capture/tools/official_client_capture/"
+                    "run_sub2api_openai_mitm_matrix.sh",
+                ],
+            ),
+            job("candidate-frozen-aux", ["true"]),
+        ]
+        old_components = receipt._component_summary({"entries": old_entries})
+        previous_jobs = []
+        for current in jobs:
+            document = receipt._job_document(current)
+            metadata = receipt._job_incremental_metadata(
+                document,
+                old_components,
+            )
+            previous_jobs.append(
+                {
+                    "id": current.job_id,
+                    "status": "passed",
+                    "job_contract_sha256": metadata["input_sha256"],
+                    "incremental_result_key": metadata["result_key"],
+                    "input_sha256": metadata["input_sha256"],
+                    "environment_sha256": metadata["environment_sha256"],
+                    "dependency_sha256": metadata["dependency_sha256"],
+                    "tool_components": metadata["components"],
+                    "tool_component_digests": metadata["component_digests"],
+                }
+            )
+        previous_facts = {
+            "execution_contract": contract,
+            "tool_components": old_components,
+            "tool_trees": {"managed_host": {"entries": old_entries}},
+            "jobs": previous_jobs,
+        }
+
+        plan = receipt._select_rehearsal_plan(
+            jobs,
+            contract,
+            receipt._component_summary({"entries": new_entries}),
+            previous_facts,
+        )
+
+        self.assertEqual(plan["execute_job_ids"], ["candidate-core-mitm"])
+        self.assertEqual(plan["reused_job_ids"], ["candidate-frozen-aux"])
+        self.assertEqual(
+            receipt._job_component_for_path("mitm_scenario_checkpoint.py"),
+            "runner.run_sub2api_openai_mitm_matrix",
+        )
+
+    def test_fingerprint_capture_files_only_map_to_mitm_runner(self) -> None:
+        """指纹转发器、预热与专用启动接线不得落入 shared。"""
+
+        for path in (
+            "build_fingerprint_proxy.sh",
+            "prewarm_codex_home.py",
+            "runtime_scripts/run_fingerprint_mitm_pair.sh",
+            "runtime_scripts/start_mitm.sh",
+            "fingerprint_proxy/go.mod",
+            "fingerprint_proxy/go.sum",
+            "fingerprint_proxy/main.go",
+        ):
+            self.assertEqual(
+                receipt._job_component_for_path(path),
+                "runner.run_sub2api_openai_mitm_matrix",
+            )
+
+    def test_historical_component_remap_only_invalidates_changed_runner(self) -> None:
+        """旧 relay/shared 粗分组不得把控制变化扩大为全部 Job。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            contract = self._contract(Path(directory))
+        old_entries = [
+            {"path": "codex_upgrade.py", "sha256": "1" * 64},
+            {"path": "codex_upgrade_job_rehearsal_receipt.py", "sha256": "2" * 64},
+            {"path": "codex_upgrade_supervisor.py", "sha256": "3" * 64},
+            {"path": "run_sub2api_direct_matrix.sh", "sha256": "4" * 64},
+            {"path": "run_sub2api_openai_mitm_matrix.sh", "sha256": "5" * 64},
+        ]
+        new_entries = copy.deepcopy(old_entries)
+        for item in new_entries:
+            if item["path"] in {
+                "codex_upgrade.py",
+                "codex_upgrade_job_rehearsal_receipt.py",
+                "codex_upgrade_supervisor.py",
+                "run_sub2api_openai_mitm_matrix.sh",
+            }:
+                item["sha256"] = "f" * 64
+        current_components = receipt._component_summary({"entries": new_entries})
+        broad_components = incremental_recovery.build_component_identities(
+            old_entries,
+            {item["path"]: "shared" for item in old_entries},
+            default_component="shared",
+        )
+
+        def job(job_id: str, runner: str) -> object:
+            return codex_upgrade.Job(
+                job_id=job_id,
+                phase="candidate",
+                suites=("full",),
+                description=job_id,
+                steps=(
+                    {
+                        "argv": [
+                            "bash",
+                            "/root/oauth-capture/tools/official_client_capture/"
+                            + runner,
+                        ],
+                        "environment": {},
+                        "timeout": 120,
+                    },
+                ),
+                evidence_roots=(),
+                covers=(),
+            )
+
+        jobs = [
+            job("candidate-core-direct", "run_sub2api_direct_matrix.sh"),
+            job("candidate-core-mitm", "run_sub2api_openai_mitm_matrix.sh"),
+        ]
+        previous_jobs = []
+        for current in jobs:
+            document = receipt._job_document(current)
+            previous_jobs.append(
+                {
+                    "id": current.job_id,
+                    "status": "passed",
+                    "job_contract_sha256": receipt._fingerprint(document),
+                    "incremental_result_key": "a" * 64,
+                }
+            )
+        previous_facts = {
+            "execution_contract": contract,
+            "tool_components": broad_components,
+            "tool_trees": {"managed_host": {"entries": old_entries}},
+            "jobs": previous_jobs,
+        }
+        plan = receipt._select_rehearsal_plan(
+            jobs,
+            contract,
+            current_components,
+            previous_facts,
+        )
+        self.assertEqual(plan["execute_job_ids"], ["candidate-core-mitm"])
+        self.assertEqual(plan["reused_job_ids"], ["candidate-core-direct"])
+        self.assertEqual(
+            plan["reasons"]["candidate-core-direct"],
+            "historical_component_map_reclassified",
+        )
+
+    def test_collect_forwards_original_previous_receipt_root(self) -> None:
+        """跨 Campaign 复用必须保留前序收据的原始根坐标。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            source_root = root / "source"
+            source_root.mkdir(mode=0o700)
+            current_root = root / "current"
+            current_root.mkdir(mode=0o700)
+            campaign = root / "campaign"
+            campaign.mkdir(mode=0o700)
+            with mock.patch.object(
+                receipt,
+                "collect_facts",
+                return_value={"status": "incremental-noop"},
+            ) as collect_facts:
+                receipt.collect(
+                    current_root,
+                    "facts.json",
+                    campaign_dir=campaign,
+                    previous_receipt="receipt.json",
+                    previous_receipt_root=source_root,
+                    rerun_failed=True,
+                )
+            self.assertEqual(
+                collect_facts.call_args.kwargs["previous_receipt_root"],
+                source_root,
+            )
+
     def _contract(self, root: Path) -> dict[str, object]:
         scenario_path = Path(receipt.__file__).with_name(
             "codex_upgrade_scenarios_0_151_0.json"
@@ -91,6 +389,121 @@ class JobRehearsalReceiptTests(unittest.TestCase):
             },
         )
 
+    def test_job_probe_accepts_empty_optional_environment_value(self) -> None:
+        """可选环境变量的空字符串必须与场景 Schema 和计划器保持一致。"""
+
+        job = codex_upgrade.Job(
+            job_id="candidate-frozen-aux",
+            phase="candidate",
+            suites=("full",),
+            description="candidate-frozen-aux",
+            steps=(
+                {
+                    "argv": ["true"],
+                    "environment": {
+                        "CODEX_VERSION": "0.151.0",
+                        "LIVE_ATTESTATION_COMPOSE_DIR": "",
+                    },
+                    "timeout": 1,
+                },
+            ),
+            evidence_roots=("/root/oauth-capture/runs/candidate-frozen-aux",),
+            covers=("SPEC-EP-002",),
+        )
+        with mock.patch.object(
+            receipt,
+            "_syntax_probe",
+            return_value=("host", []),
+        ):
+            result = receipt._job_probe(job, "capture-cli")
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["step_count"], 1)
+
+    def test_incremental_plan_reuses_exact_campaign_coordinate_relocation(
+        self,
+    ) -> None:
+        """新 preflight 只改受管 Campaign 坐标时不得重跑已通过 Job。"""
+
+        old_campaign = "c0151-p0-old"
+        new_campaign = "c0151-p0-new"
+
+        def job(campaign_id: str, *, description: str = "official-compact") -> object:
+            return codex_upgrade.Job(
+                job_id="official-compact",
+                phase="official",
+                suites=("full",),
+                description=description,
+                steps=(
+                    {
+                        "argv": [
+                            "bash",
+                            "/root/oauth-capture/tools/official_client_capture/"
+                            "run_official_codex_compact_capture.sh",
+                        ],
+                        "environment": {"RUN_ID": f"{campaign_id}-official-compact"},
+                        "timeout": 1200,
+                    },
+                ),
+                evidence_roots=(
+                    f"/root/oauth-capture/runs/{campaign_id}-official-compact",
+                ),
+                covers=("SPEC-EP-007",),
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            contract = self._contract(Path(directory))
+        component_summary = receipt._component_summary(
+            receipt._tool_tree_summary(Path(receipt.__file__).resolve().parent)
+        )
+        old_job = job(old_campaign)
+        old_document = receipt._job_document(old_job)
+        old_meta = receipt._job_incremental_metadata(
+            old_document,
+            component_summary,
+        )
+        previous_facts = {
+            "execution_contract": contract,
+            "preflight_campaign": {"campaign_id": old_campaign},
+            "tool_components": component_summary,
+            "jobs": [
+                {
+                    "id": old_job.job_id,
+                    "status": "passed",
+                    "job_contract_sha256": old_meta["input_sha256"],
+                    "input_sha256": old_meta["input_sha256"],
+                    "environment_sha256": old_meta["environment_sha256"],
+                    "dependency_sha256": old_meta["dependency_sha256"],
+                    "incremental_result_key": old_meta["result_key"],
+                    "tool_components": old_meta["components"],
+                    "tool_component_digests": old_meta["component_digests"],
+                }
+            ],
+        }
+
+        plan = receipt._select_rehearsal_plan(
+            [job(new_campaign)],
+            contract,
+            component_summary,
+            previous_facts,
+            current_campaign_id=new_campaign,
+        )
+        self.assertEqual(plan["execute_job_ids"], [])
+        self.assertEqual(plan["reused_job_ids"], ["official-compact"])
+        self.assertEqual(
+            plan["reasons"]["official-compact"],
+            "campaign_coordinate_relocated",
+        )
+
+        changed = receipt._select_rehearsal_plan(
+            [job(new_campaign, description="changed")],
+            contract,
+            component_summary,
+            previous_facts,
+            current_campaign_id=new_campaign,
+        )
+        self.assertEqual(changed["execute_job_ids"], ["official-compact"])
+
     def test_missing_0151_evidence_label_declaration_fails_closed(self) -> None:
         scenario_path = Path(receipt.__file__).with_name(
             "codex_upgrade_scenarios_0_151_0.json"
@@ -143,6 +556,48 @@ class JobRehearsalReceiptTests(unittest.TestCase):
             replayed = receipt.replay(root, path.name)
         self.assertEqual(replayed["status"], "passed")
         self.assertEqual(replayed["job_count"], 38)
+
+    def test_failed_job_duration_is_part_of_replayable_contract(self) -> None:
+        """失败 Job 的耗时字段必须能被封存和独立重放。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            create_job_rehearsal_receipt(
+                root,
+                contract=self._contract(root),
+                preflight_campaign_id="preflight-0151",
+            )
+            facts_path = root / "facts.json"
+            facts = json.loads(facts_path.read_text(encoding="utf-8"))
+            failed = facts["jobs"][0]
+            failed.update(
+                {
+                    "status": "failed",
+                    "steps": [],
+                    "error": "synthetic failure",
+                    "duration_seconds": 0.125,
+                }
+            )
+            facts["summary"].update(
+                {
+                    "passed_job_count": facts["summary"]["job_count"] - 1,
+                    "status": "failed",
+                    "failed_job_ids": [failed["id"]],
+                }
+            )
+            facts["runtime_identity_sha256"] = receipt._runtime_identity(facts)
+            self._rewrite(facts_path, facts)
+            failed_receipt = receipt.finalize(
+                root,
+                "facts.json",
+                "failed-receipt.json",
+            )
+            replayed = receipt.replay(root, "failed-receipt.json")
+
+        self.assertEqual(failed_receipt["status"], "failed")
+        self.assertEqual(failed_receipt["failed_job_ids"], [failed["id"]])
+        self.assertEqual(replayed["status"], "failed")
 
     def test_checkpoint_context_keeps_storage_schema(self) -> None:
         """运行上下文不得覆盖增量 checkpoint 存储器的 schema 字段。"""
@@ -436,6 +891,59 @@ class JobRehearsalReceiptTests(unittest.TestCase):
                 receipt.JobRehearsalReceiptError, "不是完整 Job 演练"
             ):
                 receipt.assert_formal_compatible(built, contract)
+            source = receipt.assert_recovery_compatible(built, contract)
+            self.assertEqual(source["status"], "passed")
+            self.assertRegex(source["runtime_identity_sha256"], r"^[0-9a-f]{64}$")
+            self.assertFalse(
+                codex_upgrade._manifest_allows_incremental_noop_rehearsal(
+                    {"campaign_mode": "formal"}
+                )
+            )
+            self.assertTrue(
+                codex_upgrade._manifest_allows_incremental_noop_rehearsal(
+                    {
+                        "campaign_mode": "formal",
+                        "predecessor": {
+                            "reason": "sealed_stage_control_recovery"
+                        },
+                    }
+                )
+            )
+            verified_source = codex_upgrade._assert_job_rehearsal_compatible(
+                built,
+                contract,
+                allow_incremental_noop=True,
+            )
+            self.assertEqual(
+                verified_source["runtime_identity_sha256"],
+                source["runtime_identity_sha256"],
+            )
+
+            noop_receipt_path = root / "noop-receipt.json"
+            noop_receipt_path.write_bytes(receipt._canonical(built))
+            noop_receipt_path.chmod(0o600)
+            control = codex_upgrade._job_rehearsal_control_from_receipt(
+                root,
+                noop_receipt_path,
+                contract,
+                allow_incremental_noop=True,
+            )
+            self.assertEqual(
+                control["runtime_identity_sha256"],
+                source["runtime_identity_sha256"],
+            )
+            self.assertEqual(
+                control["preflight_campaign_id"],
+                "preflight-0151",
+            )
+
+            source_receipt_path = source_root / source_receipt.name
+            original = source_receipt_path.read_bytes()
+            source_receipt_path.write_bytes(original + b"\n")
+            with self.assertRaisesRegex(
+                receipt.JobRehearsalReceiptError, "原始通过收据漂移"
+            ):
+                receipt.assert_recovery_compatible(built, contract)
 
 
 if __name__ == "__main__":

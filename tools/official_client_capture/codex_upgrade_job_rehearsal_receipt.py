@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -168,18 +169,61 @@ _EVALUATOR_FILES = {
     "codex_upgrade_job_rehearsal_receipt.py",
     "incremental_recovery.py",
     "codex_upgrade_gate_receipt.py",
+    "candidate_rule_assertion.py",
+}
+
+# 这些版本化清单只改变分类、断言或 Job 定义的生成输入，不会直接产生抓包
+# 字节。Job 定义发生变化时由逐 Job document/result_key 精确失效；若把清单
+# 本身归入 shared，会把一次评估侧修复错误扩大成全部 Job 重跑。
+_EVALUATOR_FILE_PREFIXES = (
+    "candidate_rule_expectations_",
+    "codex_upgrade_rules_",
+    "codex_upgrade_scenarios_",
+    "codex_upgrade_evidence_labels_",
+)
+
+_CONTROL_FILE_PREFIXES = (
+    "codex_upgrade_supervisor",
+    "codex_upgrade_campaign_lease",
+)
+
+_MITM_FINGERPRINT_RUNNER_FILES = {
+    "build_fingerprint_proxy.sh",
+    "prewarm_codex_home.py",
+    "runtime_scripts/run_fingerprint_mitm_pair.sh",
+    "runtime_scripts/start_mitm.sh",
 }
 
 
 def _job_component_for_path(path: str) -> str:
+    normalized = path.replace("\\", "/").lstrip("./")
     basename = path.rsplit("/", 1)[-1]
+    if basename.startswith(_CONTROL_FILE_PREFIXES):
+        return "control"
+    # MITM checkpoint helper 只被对应矩阵 runner 导入。它不是全局 shared
+    # 依赖；否则新增或修复 helper 会误使没有脚本 argv 的 frozen-aux Job
+    # 失效，破坏“只补跑两个 MITM Job”的闭集。
+    if (
+        basename == "mitm_scenario_checkpoint.py"
+        or normalized in _MITM_FINGERPRINT_RUNNER_FILES
+        or normalized.startswith("fingerprint_proxy/")
+    ):
+        return "runner.run_sub2api_openai_mitm_matrix"
+    if basename.startswith(("run_", "drive_")):
+        stem = basename.rsplit(".", 1)[0]
+        return f"runner.{stem}"
     for component, names in _JOB_COMPONENT_FILES.items():
         if basename in names:
+            if component == "relay":
+                stem = basename.rsplit(".", 1)[0]
+                return f"runner.{stem}"
             return component
-    if path.endswith(".schema.json") or basename in _EVALUATOR_FILES:
+    if (
+        path.endswith(".schema.json")
+        or basename in _EVALUATOR_FILES
+        or basename.startswith(_EVALUATOR_FILE_PREFIXES)
+    ):
         return "evaluator"
-    if basename.startswith("run_") or basename.startswith("drive_"):
-        return "producer"
     return "shared"
 
 
@@ -802,8 +846,9 @@ def _contract_reuse_identity(contract: Mapping[str, Any]) -> dict[str, Any]:
 
     ``tool_files_sha256``、场景总摘要和 Job 集合摘要只是全局审计字段；把它们
     放进复用判定会导致改一个评估器或一个 Job 就把整轮清空。真正的失效由每个
-    Job 的输入／环境／组件依赖键决定。目标二进制、运行配置和证据标签仍属于
-    共享前提，变化时全部结果失效。
+    Job 的输入／环境／组件依赖键决定。目标二进制和运行配置仍属于共享前提，
+    变化时全部结果失效；证据标签只影响已封存证据的离线编目，不属于请求
+    生产合同。
     """
 
     stable_fields = (
@@ -813,7 +858,6 @@ def _contract_reuse_identity(contract: Mapping[str, Any]) -> dict[str, Any]:
         "target_package_sha256",
         "target_code_mode_host_sha256",
         "suite",
-        "evidence_label_declaration_sha256",
         "configuration",
         "c2pa_job_identities",
     )
@@ -821,16 +865,21 @@ def _contract_reuse_identity(contract: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _facts_component_summary(facts: Mapping[str, Any]) -> dict[str, Any]:
-    """读取新旧 facts 中的组件摘要；历史 facts 没有该字段时现场补算。"""
+    """按当前依赖映射只读重算历史组件摘要。
 
+    历史 ``tool_components`` 仍由 facts 校验器保护，但不能把旧版粗粒度
+    ``relay/shared`` 分组继续当作当前失效边界。只要历史工具树条目完整，
+    就从原始路径和摘要重算；没有条目的更旧收据才回退到原分组。
+    """
+
+    trees = facts.get("tool_trees")
+    tree = trees.get("managed_host") if isinstance(trees, Mapping) else None
+    if isinstance(tree, Mapping) and isinstance(tree.get("entries"), list):
+        return _component_summary(tree)
     value = facts.get("tool_components")
     if isinstance(value, Mapping):
         return dict(value)
-    trees = facts.get("tool_trees")
-    tree = trees.get("managed_host") if isinstance(trees, Mapping) else None
-    if not isinstance(tree, Mapping):
-        raise JobRehearsalReceiptError("前序 facts 缺少工具组件或 managed_host 摘要")
-    return _component_summary(tree)
+    raise JobRehearsalReceiptError("前序 facts 缺少工具组件或 managed_host 摘要")
 
 
 def _source_binding(
@@ -1257,6 +1306,46 @@ def _job_document(job: Any) -> dict[str, Any]:
     }
 
 
+def _relocate_rehearsal_campaign_coordinate(
+    document: Mapping[str, Any],
+    current_campaign_id: str,
+    previous_campaign_id: str,
+) -> dict[str, Any]:
+    """把当前 Job 的受管 Campaign 坐标投影回前序坐标。
+
+    只迁移会由 ``plan`` 注入 Campaign ID 的三个执行字段。调用方仍须把
+    迁移后的完整 Job 摘要与前序收据逐字比对，不能用本函数放宽其他差异。
+    """
+
+    current = _safe_id(current_campaign_id, "当前 preflight campaign_id")
+    previous = _safe_id(previous_campaign_id, "前序 preflight campaign_id")
+
+    def relocate(value: Any) -> Any:
+        return value.replace(current, previous) if isinstance(value, str) else value
+
+    relocated = dict(document)
+    roots = document.get("evidence_roots")
+    if isinstance(roots, list):
+        relocated["evidence_roots"] = [relocate(value) for value in roots]
+    steps: list[dict[str, Any]] = []
+    for raw_step in document.get("steps", []):
+        if not isinstance(raw_step, Mapping):
+            steps.append(dict(raw_step) if isinstance(raw_step, dict) else {})
+            continue
+        step = dict(raw_step)
+        argv = raw_step.get("argv")
+        if isinstance(argv, list):
+            step["argv"] = [relocate(value) for value in argv]
+        environment = raw_step.get("environment")
+        if isinstance(environment, Mapping):
+            step["environment"] = {
+                str(key): relocate(value) for key, value in environment.items()
+            }
+        steps.append(step)
+    relocated["steps"] = steps
+    return relocated
+
+
 def _job_probe(
     job: Any,
     container: str,
@@ -1279,7 +1368,10 @@ def _job_probe(
             or not argv
             or not all(isinstance(value, str) and value for value in argv)
             or not isinstance(environment, dict)
-            or not all(isinstance(key, str) and isinstance(value, str) and value for key, value in environment.items())
+            or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in environment.items()
+            )
             or not isinstance(timeout, int)
             or isinstance(timeout, bool)
             or timeout <= 0
@@ -1508,6 +1600,7 @@ def _select_rehearsal_plan(
     previous_facts: Mapping[str, Any] | None,
     *,
     previous_global_tool_sha256: str | None = None,
+    current_campaign_id: str | None = None,
 ) -> dict[str, Any]:
     """选择最小 Job 执行集合；失败项始终优先，成功项按结果键复用。"""
 
@@ -1539,6 +1632,16 @@ def _select_rehearsal_plan(
     previous_component_summary = (
         _facts_component_summary(previous_facts)
         if isinstance(previous_facts, Mapping)
+        else None
+    )
+    previous_campaign = (
+        previous_facts.get("preflight_campaign")
+        if isinstance(previous_facts, Mapping)
+        else None
+    )
+    previous_campaign_id = (
+        previous_campaign.get("campaign_id")
+        if isinstance(previous_campaign, Mapping)
         else None
     )
 
@@ -1593,13 +1696,63 @@ def _select_rehearsal_plan(
             and previous.get("job_contract_sha256") == current_meta["input_sha256"]
             and _legacy_dependency_match(current_document)
         )
+        coordinate_matches = False
+        prior_coordinate_document: dict[str, Any] | None = None
+        if (
+            isinstance(current_campaign_id, str)
+            and isinstance(previous_campaign_id, str)
+            and current_campaign_id != previous_campaign_id
+        ):
+            prior_coordinate_document = _relocate_rehearsal_campaign_coordinate(
+                current_document,
+                current_campaign_id,
+                previous_campaign_id,
+            )
+            coordinate_matches = (
+                previous.get("job_contract_sha256")
+                == _fingerprint(prior_coordinate_document)
+                and previous.get("dependency_sha256")
+                == current_meta["dependency_sha256"]
+                and previous.get("environment_sha256")
+                == current_meta["environment_sha256"]
+                and previous.get("tool_components")
+                == current_meta["components"]
+                and previous.get("tool_component_digests")
+                == current_meta["component_digests"]
+            )
+        # 旧收据可能使用 relay/shared 粗分组并已写入 result_key。只要完整
+        # Job 文档（或唯一 Campaign 坐标迁移）相等，且从历史工具条目按
+        # 当前映射重算后的直接依赖未变，就可安全复用；控制面变化不会再
+        # 扩大为全部 Job。
+        remapped_input_matches = previous.get("job_contract_sha256") in {
+            current_meta["input_sha256"],
+            (
+                _fingerprint(prior_coordinate_document)
+                if prior_coordinate_document is not None
+                else ""
+            ),
+        }
+        remapped_matches = (
+            remapped_input_matches
+            and _legacy_dependency_match(current_document)
+        )
         if (
             contract_identity_same
             and previous.get("status") == "passed"
-            and (key_matches or legacy_matches)
+            and (
+                key_matches
+                or legacy_matches
+                or coordinate_matches
+                or remapped_matches
+            )
         ):
             reused.append(job_id)
-            reasons[job_id] = "unchanged_dependency"
+            if coordinate_matches and not (key_matches or legacy_matches):
+                reasons[job_id] = "campaign_coordinate_relocated"
+            elif remapped_matches and not (key_matches or legacy_matches):
+                reasons[job_id] = "historical_component_map_reclassified"
+            else:
+                reasons[job_id] = "unchanged_dependency"
         else:
             execute.append(job_id)
             reasons[job_id] = (
@@ -1849,6 +2002,7 @@ def _collect_facts(
         component_summary,
         previous_facts,
         previous_global_tool_sha256=previous_global_tool_sha256,
+        current_campaign_id=str(manifest["campaign_id"]),
     )
     if not plan["execute_job_ids"]:
         # 失败项为空时必须在所有昂贵探针之前结束。此处不创建 checkpoint，
@@ -1886,7 +2040,11 @@ def _collect_facts(
         == container_tree["entries"]
         and managed_tree["files_sha256"] == contract["tool_files_sha256"]
     ):
-        raise JobRehearsalReceiptError("受管、执行和 capture-cli 工具树不一致")
+        execute = list(plan["execute_job_ids"])
+        raise JobRehearsalReceiptError(
+            "受管、执行和 capture-cli 工具树不一致；"
+            f"execute_count={len(execute)}，execute_job_ids={execute[:10]}"
+        )
     binary_verification = codex_upgrade._verify_official_binaries(
         manifest,
         deadline=deadline,
@@ -1978,11 +2136,40 @@ def _collect_facts(
                 _job_document(job), component_summary
             )
             reused = dict(prior)
+            rebound_steps: list[dict[str, Any]] = []
+            current_document = _job_document(job)
+            current_steps = current_document["steps"]
+            prior_steps = prior.get("steps")
+            if (
+                not isinstance(prior_steps, list)
+                or len(prior_steps) != len(current_steps)
+            ):
+                raise JobRehearsalReceiptError(
+                    f"复用 Job 的步骤数量漂移：{job_id}"
+                )
+            for prior_step, current_step in zip(prior_steps, current_steps):
+                if not isinstance(prior_step, Mapping):
+                    raise JobRehearsalReceiptError(
+                        f"复用 Job 的步骤事实非法：{job_id}"
+                    )
+                rebound_step = dict(prior_step)
+                rebound_step.update(
+                    {
+                        "argv_sha256": _fingerprint(current_step["argv"]),
+                        "environment_sha256": _fingerprint(
+                            current_step["environment"]
+                        ),
+                        "timeout_seconds": current_step["timeout"],
+                    }
+                )
+                rebound_steps.append(rebound_step)
             reused.update(
                 {
                     "status": "passed",
                     "disposition": "reused",
                     "source_receipt": dict(source_binding or {}),
+                    "job_contract_sha256": current_meta["input_sha256"],
+                    "steps": rebound_steps,
                     "tool_components": current_meta["components"],
                     "tool_component_digests": current_meta["component_digests"],
                     "input_sha256": current_meta["input_sha256"],
@@ -2691,6 +2878,7 @@ def validate_facts(
         }
         optional_job_fields = {
             "error",
+            "duration_seconds",
             "disposition",
             "source_receipt",
             "tool_components",
@@ -2725,6 +2913,17 @@ def validate_facts(
             current.get("error"), str
         ):
             raise JobRehearsalReceiptError(f"{job_id} 失败缺少 error")
+        if "duration_seconds" in current:
+            duration = current.get("duration_seconds")
+            if (
+                isinstance(duration, bool)
+                or not isinstance(duration, (int, float))
+                or not math.isfinite(float(duration))
+                or duration < 0
+            ):
+                raise JobRehearsalReceiptError(
+                    f"{job_id} duration_seconds 非法"
+                )
         disposition = current.get("disposition")
         if disposition is not None and disposition not in {"executed", "reused"}:
             raise JobRehearsalReceiptError(f"{job_id} disposition 非法")
@@ -2989,6 +3188,7 @@ def collect(
     *,
     campaign_dir: Path,
     previous_receipt: str | None = None,
+    previous_receipt_root: Path | None = None,
     rerun_failed: bool = False,
     checkpoint_relative: str | None = None,
     deadline: incremental_recovery.WallClockDeadline | None = None,
@@ -3000,6 +3200,10 @@ def collect(
         raise JobRehearsalReceiptError(
             "--rerun-failed 必须同时提供 --previous-receipt"
         )
+    if previous_receipt_root is not None and not previous_receipt:
+        raise JobRehearsalReceiptError(
+            "--previous-receipt-root 必须同时提供 --previous-receipt"
+        )
     checkpoint_root = (
         _relative(root, checkpoint_relative, "checkpoint root")
         if checkpoint_relative
@@ -3008,7 +3212,7 @@ def collect(
     facts = collect_facts(
         campaign_dir,
         previous_receipt=(Path(previous_receipt) if previous_receipt else None),
-        previous_receipt_root=root,
+        previous_receipt_root=(previous_receipt_root or root),
         rerun_failed=rerun_failed,
         checkpoint_root=checkpoint_root,
         deadline=deadline,
@@ -3113,6 +3317,88 @@ def assert_formal_compatible(
         raise JobRehearsalReceiptError("Formal 所需完整 Job 演练收据未通过")
 
 
+def assert_recovery_compatible(
+    receipt: Mapping[str, Any], expected_contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """校验恢复用演练，并返回承载原始通过事实的收据。
+
+    普通 Formal 仍只能直接绑定 ``passed`` 收据。评估工具恢复允许使用
+    ``incremental-noop`` 证明当前 preflight、工具和 Job 合同无需重跑，但
+    no-op 本身不产生新的通过事实；因此必须现场重放其 ``source_receipt``，
+    并从该原始 ``passed`` 收据取得运行时身份。
+    """
+
+    if receipt.get("status") != INCREMENTAL_NOOP_STATUS:
+        assert_formal_compatible(receipt, expected_contract)
+        return dict(receipt)
+
+    validate_execution_contract(dict(expected_contract))
+    actual = receipt.get("execution_contract")
+    if not isinstance(actual, dict):
+        raise JobRehearsalReceiptError(
+            "恢复 incremental-noop 缺少 execution_contract"
+        )
+    validate_execution_contract(actual)
+    expected = dict(expected_contract)
+    if (
+        actual != expected
+        or receipt.get("execution_contract_sha256")
+        != execution_contract_sha256(expected)
+        or receipt.get("job_count") != expected.get("job_count")
+    ):
+        raise JobRehearsalReceiptError(
+            "恢复 incremental-noop 与当前执行合同不一致"
+        )
+
+    noop = receipt.get("incremental_noop")
+    if not isinstance(noop, Mapping):
+        raise JobRehearsalReceiptError("恢复 incremental-noop 缺少来源绑定")
+    source_root_raw = noop.get("source_root")
+    source_binding = noop.get("source_receipt")
+    if (
+        not isinstance(source_root_raw, str)
+        or not source_root_raw.startswith("/")
+        or not isinstance(source_binding, Mapping)
+        or set(source_binding) != {"path", "sha256", "bytes"}
+        or not isinstance(source_binding.get("path"), str)
+    ):
+        raise JobRehearsalReceiptError("恢复 incremental-noop 来源坐标非法")
+
+    source_root = _private_root(Path(source_root_raw))
+    source_relative = str(source_binding["path"])
+    source_path = _relative(source_root, source_relative, "原始通过收据")
+    try:
+        source_raw = source_path.read_bytes()
+    except OSError as error:
+        raise JobRehearsalReceiptError("恢复 incremental-noop 原始通过收据不存在") from error
+    if (
+        _sha256_bytes(source_raw) != source_binding.get("sha256")
+        or len(source_raw) != source_binding.get("bytes")
+    ):
+        raise JobRehearsalReceiptError("恢复 incremental-noop 原始通过收据漂移")
+
+    source = replay(source_root, source_relative)
+    source_contract = source.get("execution_contract")
+    if not isinstance(source_contract, dict):
+        raise JobRehearsalReceiptError("原始通过收据缺少执行合同")
+    validate_execution_contract(source_contract)
+    runtime_identity = source.get("runtime_identity_sha256")
+    if (
+        source.get("status") != "passed"
+        or _contract_reuse_identity(source_contract)
+        != _contract_reuse_identity(expected)
+        or source.get("job_count") != receipt.get("job_count")
+        or source.get("job_set_sha256") != receipt.get("job_set_sha256")
+        or source.get("job_count") != noop.get("source_job_count")
+        or source.get("job_set_sha256") != noop.get("source_job_set_sha256")
+        or not SHA256_RE.fullmatch(str(runtime_identity or ""))
+    ):
+        raise JobRehearsalReceiptError(
+            "恢复 incremental-noop 的原始通过事实不完整或不兼容"
+        )
+    return dict(source)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -3123,6 +3409,11 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument(
         "--previous-receipt",
         help="前一轮演练收据（相对 evidence-root），用于只重跑失败／受影响 Job",
+    )
+    collect_parser.add_argument(
+        "--previous-receipt-root",
+        type=Path,
+        help="前一轮演练收据的原始 0700 evidence root；跨 Campaign 复用时必须提供。",
     )
     collect_parser.add_argument(
         "--rerun-failed",
@@ -3172,6 +3463,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.output,
                 campaign_dir=arguments.campaign_dir,
                 previous_receipt=arguments.previous_receipt,
+                previous_receipt_root=arguments.previous_receipt_root,
                 rerun_failed=arguments.rerun_failed,
                 checkpoint_relative=arguments.checkpoint_root,
                 deadline=deadline,

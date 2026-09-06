@@ -1,0 +1,433 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-control-epoch-v1.json",
+  "title": "Codex 升级原 Campaign 控制纪元收据",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "epoch_index",
+    "created_at_utc",
+    "campaign_id",
+    "campaign_manifest_sha256",
+    "previous_epoch_sha256",
+    "previous_controls",
+    "stop_checkpoint",
+    "successor_controls",
+    "source",
+    "invariants",
+    "boundary",
+    "budget",
+    "receipt_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-control-epoch/v1"},
+    "status": {"const": "active"},
+    "epoch_index": {"type": "integer", "minimum": 1, "maximum": 2},
+    "created_at_utc": {"type": "string", "format": "date-time"},
+    "campaign_id": {"$ref": "#/$defs/safeId"},
+    "campaign_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "previous_epoch_sha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/sha256"}
+      ]
+    },
+    "previous_controls": {"$ref": "#/$defs/controlReceipts"},
+    "stop_checkpoint": {"$ref": "#/$defs/stopCheckpoint"},
+    "successor_controls": {"$ref": "#/$defs/controlReceipts"},
+    "source": {
+      "oneOf": [
+        {"$ref": "#/$defs/candidateSource"},
+        {"$ref": "#/$defs/officialSource"}
+      ]
+    },
+    "invariants": {"$ref": "#/$defs/invariants"},
+    "boundary": {"$ref": "#/$defs/zeroBoundary"},
+    "budget": {"$ref": "#/$defs/budget"},
+    "execution_authorization": {"$ref": "#/$defs/finalExecutionAuthorization"},
+    "receipt_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"epoch_index": {"const": 1}}},
+      "then": {"properties": {"previous_epoch_sha256": {"type": "null"}}},
+      "else": {"properties": {"previous_epoch_sha256": {"$ref": "#/$defs/sha256"}}}
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "absolutePath": {"type": "string", "pattern": "^/[^\\u0000]*$"},
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]+$"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "receiptBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "receipt_sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 1},
+        "receipt_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ledger_dir",
+        "ledger_plan_sha256",
+        "receipt",
+        "upgrade_id",
+        "evidence_decision",
+        "checkpoint_head_sha256"
+      ],
+      "properties": {
+        "ledger_dir": {"$ref": "#/$defs/absolutePath"},
+        "ledger_plan_sha256": {"$ref": "#/$defs/sha256"},
+        "receipt": {"$ref": "#/$defs/binding"},
+        "upgrade_id": {"$ref": "#/$defs/safeId"},
+        "evidence_decision": {"enum": ["reuse", "recapture"]},
+        "checkpoint_head_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "arm64": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_root",
+        "receipt",
+        "subject_id",
+        "contract_sha256",
+        "continuity_identity_sha256"
+      ],
+      "properties": {
+        "evidence_root": {"$ref": "#/$defs/absolutePath"},
+        "receipt": {"$ref": "#/$defs/binding"},
+        "subject_id": {"$ref": "#/$defs/safeId"},
+        "contract_sha256": {"$ref": "#/$defs/sha256"},
+        "continuity_identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "rehearsal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_root",
+        "receipt",
+        "preflight_campaign_id",
+        "preflight_campaign_manifest_sha256",
+        "execution_contract_sha256",
+        "runtime_identity_sha256",
+        "job_count",
+        "job_set_sha256"
+      ],
+      "properties": {
+        "evidence_root": {"$ref": "#/$defs/absolutePath"},
+        "receipt": {"$ref": "#/$defs/binding"},
+        "preflight_campaign_id": {"$ref": "#/$defs/safeId"},
+        "preflight_campaign_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "execution_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "runtime_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "job_count": {"type": "integer", "minimum": 1},
+        "job_set_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "controlReceipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["upgrade_timing", "arm64_environment", "job_rehearsal"],
+      "properties": {
+        "upgrade_timing": {"$ref": "#/$defs/timing"},
+        "arm64_environment": {"$ref": "#/$defs/arm64"},
+        "job_rehearsal": {"$ref": "#/$defs/rehearsal"}
+      }
+    },
+    "stopCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ledger_dir",
+        "receipt",
+        "upgrade_id",
+        "active_phase",
+        "head_sequence",
+        "head_sha256",
+        "total_elapsed_seconds",
+        "total_live_request_count",
+        "total_deadline_at_utc"
+      ],
+      "properties": {
+        "ledger_dir": {"$ref": "#/$defs/absolutePath"},
+        "receipt": {"$ref": "#/$defs/binding"},
+        "upgrade_id": {"$ref": "#/$defs/safeId"},
+        "active_phase": {"enum": ["VC-2", "VC-4"]},
+        "head_sequence": {"type": "integer", "minimum": 1},
+        "head_sha256": {"$ref": "#/$defs/sha256"},
+        "total_elapsed_seconds": {"type": "integer", "minimum": 0},
+        "total_live_request_count": {"const": 0},
+        "total_deadline_at_utc": {"type": "string", "format": "date-time"}
+      }
+    },
+    "idArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/safeId"}
+    },
+    "candidateSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "attempt_id",
+        "attempt_digest",
+        "candidate_identity_sha256",
+        "source_transition",
+        "recovery_scope_sha256",
+        "planned_job_ids",
+        "execute_job_ids",
+        "reused_job_ids",
+        "failed_job_ids",
+        "pending_job_ids",
+        "production_paths",
+        "target_scenario"
+      ],
+      "properties": {
+        "candidate_id": {"$ref": "#/$defs/safeId"},
+        "attempt_id": {"$ref": "#/$defs/safeId"},
+        "attempt_digest": {"$ref": "#/$defs/sha256"},
+        "candidate_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "source_transition": {"$ref": "#/$defs/fileBinding"},
+        "recovery_scope_sha256": {"$ref": "#/$defs/sha256"},
+        "planned_job_ids": {"$ref": "#/$defs/idArray"},
+        "execute_job_ids": {"$ref": "#/$defs/idArray"},
+        "reused_job_ids": {"$ref": "#/$defs/idArray"},
+        "failed_job_ids": {"$ref": "#/$defs/idArray"},
+        "pending_job_ids": {"$ref": "#/$defs/idArray"},
+        "production_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/relativePath"}
+        },
+        "target_scenario": {"$ref": "#/$defs/fileBinding"}
+      }
+    },
+    "officialSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "official_stage",
+        "previous_sealed_stage_recovery",
+        "previous_controls",
+        "target_scenario"
+      ],
+      "properties": {
+        "mode": {"const": "official_sealed"},
+        "official_stage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "package_digest"],
+          "properties": {
+            "path": {"const": "official/result.json"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "package_digest": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "previous_sealed_stage_recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "campaign_dir",
+            "campaign_id",
+            "campaign_manifest_sha256",
+            "reason"
+          ],
+          "properties": {
+            "campaign_dir": {"$ref": "#/$defs/absolutePath"},
+            "campaign_id": {"$ref": "#/$defs/safeId"},
+            "campaign_manifest_sha256": {"$ref": "#/$defs/sha256"},
+            "reason": {"const": "sealed_stage_control_recovery"}
+          }
+        },
+        "previous_controls": {"$ref": "#/$defs/controlReceipts"},
+        "target_scenario": {"$ref": "#/$defs/fileBinding"}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_files_sha256",
+        "tool_production_sha256",
+        "compose_sha256",
+        "required_active_phase"
+      ],
+      "properties": {
+        "tool_files_sha256": {"$ref": "#/$defs/sha256"},
+        "tool_production_sha256": {"$ref": "#/$defs/sha256"},
+        "compose_sha256": {"$ref": "#/$defs/sha256"},
+        "required_active_phase": {"enum": ["VC-2", "VC-4"]}
+      }
+    },
+    "zeroBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reservation_count",
+        "attempt_count",
+        "checkpoint_count",
+        "live_request_count",
+        "scanned_bytes"
+      ],
+      "properties": {
+        "reservation_count": {"const": 0},
+        "attempt_count": {"const": 0},
+        "checkpoint_count": {"const": 0},
+        "live_request_count": {"const": 0},
+        "scanned_bytes": {"const": 0}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "predecessor_total_deadline_at_utc",
+        "successor_total_deadline_at_utc",
+        "predecessor_elapsed_seconds",
+        "successor_elapsed_seconds",
+        "cumulative_elapsed_seconds",
+        "predecessor_live_request_count",
+        "successor_live_request_count",
+        "cumulative_live_request_count"
+      ],
+      "properties": {
+        "predecessor_total_deadline_at_utc": {"type": "string", "format": "date-time"},
+        "successor_total_deadline_at_utc": {"type": "string", "format": "date-time"},
+        "predecessor_elapsed_seconds": {"type": "integer", "minimum": 0},
+        "successor_elapsed_seconds": {"type": "integer", "minimum": 0},
+        "cumulative_elapsed_seconds": {"type": "integer", "minimum": 0},
+        "predecessor_live_request_count": {"const": 0},
+        "successor_live_request_count": {"const": 0},
+        "cumulative_live_request_count": {"const": 0}
+      }
+    },
+    "supervisorAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_dir",
+        "state",
+        "stop_receipt",
+        "events",
+        "minute_ledger",
+        "summary"
+      ],
+      "properties": {
+        "run_dir": {"$ref": "#/$defs/absolutePath"},
+        "state": {"$ref": "#/$defs/binding"},
+        "stop_receipt": {"$ref": "#/$defs/binding"},
+        "events": {"$ref": "#/$defs/binding"},
+        "minute_ledger": {"$ref": "#/$defs/binding"},
+        "summary": {
+          "type": "object",
+          "required": ["audit_incomplete", "integrity_errors", "state"],
+          "properties": {
+            "audit_incomplete": {"const": false},
+            "integrity_errors": {"type": "array", "maxItems": 0},
+            "state": {"const": "stopped"}
+          }
+        }
+      }
+    },
+    "finalExecutionScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planned_job_ids",
+        "execute_job_ids",
+        "reused_job_ids",
+        "execute_count",
+        "reused_count"
+      ],
+      "properties": {
+        "planned_job_ids": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/safeId"}
+        },
+        "execute_job_ids": {
+          "type": "array",
+          "prefixItems": [
+            {"const": "candidate-compact-mitm"},
+            {"const": "candidate-core-mitm"}
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "reused_job_ids": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/safeId"}
+        },
+        "execute_count": {"const": 2},
+        "reused_count": {"const": 7}
+      }
+    },
+    "finalExecutionAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "mode",
+        "previous_runtime_repair",
+        "supervisor_audit",
+        "scope",
+        "maximum_execution_budget_seconds"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "codex-upgrade-control-epoch-final-execution/v1"
+        },
+        "mode": {"const": "replacement-final-execution"},
+        "previous_runtime_repair": {"$ref": "#/$defs/receiptBinding"},
+        "supervisor_audit": {"$ref": "#/$defs/supervisorAudit"},
+        "scope": {"$ref": "#/$defs/finalExecutionScope"},
+        "maximum_execution_budget_seconds": {"const": 21600}
+      }
+    }
+  }
+}

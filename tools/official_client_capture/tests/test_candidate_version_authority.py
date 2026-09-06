@@ -22,6 +22,8 @@ class CandidateVersionAuthorityTest(unittest.TestCase):
             "ENABLE_CANDIDATE_CORE_SYNTHETIC": "YES_I_ACCEPT_SYNTHETIC_ONLY",
             "ENABLE_CANDIDATE_AUX_SYNTHETIC": "YES_I_ACCEPT_SYNTHETIC_ONLY",
             "ACCOUNT_ID": "1",
+            "CODEX_ACCOUNT_ID": "1",
+            "API_KEY_ID": "1",
             "RUN_ID": "candidate-version-unit-test",
         }
         if version is not None:

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
+import errno
 import fcntl
 import glob
 import hashlib
@@ -22,12 +24,13 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import tomllib
 import urllib.parse
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
 from typing import Any, Iterable
@@ -85,8 +88,11 @@ from tools.official_client_capture import codex_upgrade_arm64_environment_receip
 from tools.official_client_capture import codex_upgrade_evidence_manifest
 from tools.official_client_capture import codex_upgrade_job_rehearsal_receipt
 from tools.official_client_capture import codex_upgrade_timing_ledger
+from tools.official_client_capture import codex_upgrade_supervisor
+from tools.official_client_capture import codex_upgrade_legacy_boundary
 from tools.official_client_capture import codex_upgrade_gate_receipt as external_gate_receipt
 from tools.official_client_capture import incremental_recovery
+from tools.official_client_capture import production_activation_receipt
 from tools.official_client_capture.codex_upgrade_receipt_finalizer import (
     CLIENT_BINDING_SCHEMA as FINALIZED_CLIENT_BINDING_SCHEMA,
     OBSERVED_PROFILE_SCHEMA as FINALIZED_OBSERVED_PROFILE_SCHEMA,
@@ -151,6 +157,11 @@ TOOL_EVALUATION_TRANSITION_SCHEMA = "codex-upgrade-tool-evaluation-transition/v1
 TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA = (
     "codex-upgrade-tool-evaluation-recovery-controls/v1"
 )
+TOOL_EVALUATION_TERMINAL_PREFLIGHT_SCHEMA = (
+    "codex-upgrade-tool-evaluation-terminal-preflight/v1"
+)
+CONTROL_EPOCH_SCHEMA = "codex-upgrade-control-epoch/v1"
+METADATA_ONLY_STOP_NEXT_ACTION_PREFIX = "permanent-stop-"
 DEEP_VERIFY_RECEIPT_SCHEMA = "codex-upgrade-deep-verify/v1"
 SCENARIO_SCHEMA = "codex-upgrade-scenarios/v1"
 STAGE_SCHEMA = "codex-upgrade-stage-result/v2"
@@ -162,8 +173,35 @@ PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA = (
 PREDECESSOR_RUNTIME_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v4"
 PREDECESSOR_REHEARSAL_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v5"
 PREDECESSOR_RECOVERY_IMPORT_SCHEMA = "codex-upgrade-predecessor-import/v6"
+PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA_V1 = (
+    "codex-upgrade-predecessor-import/v7"
+)
+PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA = (
+    "codex-upgrade-predecessor-import/v8"
+)
+PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA = (
+    "codex-upgrade-predecessor-import/v9"
+)
+PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA = (
+    "codex-upgrade-predecessor-import/v10"
+)
+PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS = frozenset(
+    {
+        PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA_V1,
+        PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA,
+    }
+)
 COMPARISON_SCHEMA = "codex-upgrade-comparison/v2"
 ACCEPTANCE_SCHEMA = "codex-upgrade-acceptance/v2"
+CANONICAL_IMPORT_RECEIPT_SCHEMA = "codex-upgrade-canonical-import/v1"
+CANONICAL_STEP_RECEIPT_SCHEMA = "codex-upgrade-canonical-step/v1"
+CANONICAL_DIRECTORY = "canonical"
+CANONICAL_CHECKPOINT_DIRECTORY = "checkpoints"
+CANONICAL_IMPORT_RECEIPT_FILENAME = "import-receipt.json"
+CANONICAL_PRODUCTION_STEPS = frozenset(
+    {"production-activation", "rollback-verification", "retire-0.147.0"}
+)
+CANONICAL_REMOVAL_RECEIPT_SCHEMA = "codex-runtime-profile-removal/v1"
 CAMPAIGN_MODES = frozenset({"preflight_only", "formal"})
 CANDIDATE_PURPOSES = frozenset({"validation_only", "production_replacement"})
 MIGRATION_CLASSIFICATIONS = {
@@ -178,13 +216,100 @@ ASSERTION_STATUSES = {"pass", "fail", "blocked", "not_applicable"}
 REQUIRED_CLIENT_BINDINGS = frozenset({"kilo-compatible", "kilo-responses"})
 SUCCESSOR_REASONS = frozenset(
     {
+        "candidate_failed_job_tool_recovery",
+        "candidate_recovery_control_refresh",
+        "candidate_recovery_control_replacement",
         "candidate_runtime_identity_correction",
         "classification_fact_correction",
+        "sealed_stage_control_recovery",
+    }
+)
+CANDIDATE_INCREMENTAL_SUCCESSOR_REASONS = frozenset(
+    {
+        "candidate_failed_job_tool_recovery",
+        "candidate_recovery_control_refresh",
+        "candidate_recovery_control_replacement",
+        "candidate_runtime_identity_correction",
     }
 )
 RECLASSIFICATION_SUCCESSOR_REASONS = frozenset(
     {"classification_fact_correction"}
 )
+SEALED_STAGE_RECOVERY_SUCCESSOR_REASONS = frozenset(
+    {"sealed_stage_control_recovery"}
+)
+RUNTIME_CODEX_BINARY_JOB_IDS = frozenset(
+    {
+        "candidate-core-direct",
+        "candidate-ws-handshake-repeat",
+        "candidate-core-mitm",
+        "candidate-compact-direct",
+        "candidate-compact-mitm",
+    }
+)
+# 这三个历史 direct Job 已由下列脚本在请求前把缺省路径唯一展开为
+# /opt/codex-$CODEX_VERSION/bin/codex，并执行 ``codex --version`` 硬校验。
+# 仅该逐字脚本摘要可把“缺少显式 CODEX_BIN”视为同一实际执行；任何脚本
+# 或其它环境字段变化都不得进入兼容路径。
+LEGACY_DEFAULT_CODEX_BIN_JOB_SCRIPTS = {
+    job_id: (
+        "run_sub2api_direct_matrix.sh",
+        "6cd0a9f9cff4d600ddfa39a572274638b86ecb9a9443519a5b114be08242219f",
+    )
+    for job_id in (
+        "candidate-core-direct",
+        "candidate-ws-handshake-repeat",
+        "candidate-compact-direct",
+    )
+}
+SCENARIO_JOB_EXECUTION_FIELDS = frozenset(
+    {
+        "id",
+        "phase",
+        "suites",
+        "required",
+        "steps",
+        "evidence_roots",
+        "required_scenario_receipts",
+        "track",
+        "model_id",
+        "expected_use_responses_lite",
+        "required_model_receipt",
+    }
+)
+# v9 运行时纠正允许承接历史通过结果时，产出侧变化必须逐文件映射到本轮
+# execute 闭集。历史 attempt 只记录了粗粒度组件摘要，不能因为一个 relay
+# 组件变化就无条件放行整个组件；未知文件或触及 reused Job 的变化一律停线。
+RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS = {
+    "build_fingerprint_proxy.sh": frozenset(
+        {"candidate-core-mitm", "candidate-compact-mitm"}
+    ),
+    "codex_upgrade_scenarios_0_151_0.json": RUNTIME_CODEX_BINARY_JOB_IDS,
+    "run_sub2api_direct_matrix.sh": frozenset(
+        {
+            "candidate-core-direct",
+            "candidate-ws-handshake-repeat",
+            "candidate-compact-direct",
+        }
+    ),
+    "run_sub2api_openai_mitm_matrix.sh": frozenset(
+        {"candidate-core-mitm", "candidate-compact-mitm"}
+    ),
+    "mitm_scenario_checkpoint.py": frozenset(
+        {"candidate-core-mitm", "candidate-compact-mitm"}
+    ),
+    "prewarm_codex_home.py": frozenset(
+        {"candidate-core-mitm", "candidate-compact-mitm"}
+    ),
+    "run_codex_scenario_target.py": RUNTIME_CODEX_BINARY_JOB_IDS,
+    "run_candidate_aux_capture.sh": frozenset({"candidate-frozen-aux"}),
+    "runtime_scripts/run_fingerprint_mitm_pair.sh": frozenset(
+        {"candidate-core-mitm", "candidate-compact-mitm"}
+    ),
+    "runtime_scripts/start_mitm.sh": frozenset(
+        {"candidate-core-mitm", "candidate-compact-mitm"}
+    ),
+}
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 CODEX_USER_AGENT_VERSION_RE = re.compile(
     r"(?:codex_exec|codex-tui|codex_cli_rs)/(\d+\.\d+\.\d+)"
@@ -321,6 +446,132 @@ def _job_tool_components(job: Job) -> tuple[str, ...]:
     return tuple(sorted(components))
 
 
+def _tool_entry_digest_map(identity: Mapping[str, Any]) -> dict[str, str]:
+    """把工具身份规范化为逐文件摘要；组件仅作为兼容输入。"""
+
+    entries = identity.get("entries")
+    if not isinstance(entries, list):
+        components = identity.get("components")
+        if not isinstance(components, Mapping):
+            raise ConfigurationError("工具身份缺少逐文件清单。")
+        entries = [
+            entry
+            for component in components.values()
+            if isinstance(component, Mapping)
+            for entry in component.get("entries", [])
+            if isinstance(entry, Mapping)
+        ]
+    output: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise ConfigurationError("工具逐文件身份条目非法。")
+        path = str(entry.get("path", ""))
+        digest = str(entry.get("sha256", ""))
+        parsed = PurePosixPath(path)
+        if (
+            not path
+            or path in output
+            or parsed.is_absolute()
+            or str(parsed) != path
+            or any(part in {"", ".", ".."} for part in parsed.parts)
+            or not SHA256_RE.fullmatch(digest)
+        ):
+            raise ConfigurationError("工具逐文件身份路径或摘要非法。")
+        output[path] = digest
+    return dict(sorted(output.items()))
+
+
+def _job_tool_dependency_files(
+    job: Job,
+    tool_identity: Mapping[str, Any],
+) -> dict[str, str]:
+    """解析 Job 启动器及其受管传递引用，生成逐文件依赖。"""
+
+    index = _tool_entry_digest_map(tool_identity)
+    if not index:
+        return {}
+    basename_index: dict[str, list[str]] = {}
+    module_index: dict[str, str] = {}
+    for path in index:
+        basename_index.setdefault(PurePosixPath(path).name, []).append(path)
+        if path.endswith(".py"):
+            module = path[:-3].replace("/", ".")
+            module_index[module] = path
+            module_index[f"tools.official_client_capture.{module}"] = path
+
+    def contains_token(text: str, token: str) -> bool:
+        """只匹配独立路径／标识符，避免 capture 命中 capture_root。"""
+
+        return re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])",
+            text,
+        ) is not None
+
+    def references(text: str) -> set[str]:
+        found = {path for path in index if contains_token(text, path)}
+        for basename, paths in basename_index.items():
+            if len(paths) == 1 and contains_token(text, basename):
+                found.add(paths[0])
+        for module, path in module_index.items():
+            # 裸模块名由下方 AST import 解析；任意文本子串匹配会把变量名或
+            # 注释误当依赖。这里只补充 shell 中的限定 ``python -m`` 模块。
+            if "." in module and contains_token(text, module):
+                found.add(path)
+        return found
+
+    seed = json.dumps(
+        [
+            {
+                "argv": step.get("argv", []),
+                "environment": step.get("environment", {}),
+            }
+            for step in job.steps
+            if isinstance(step, Mapping)
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    pending = list(references(seed))
+    for path, job_ids in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS.items():
+        if job.job_id in job_ids and path in index:
+            pending.append(path)
+    dependencies: set[str] = set()
+    tool_root = Path(__file__).resolve().parent
+    while pending:
+        path = pending.pop()
+        if path in dependencies:
+            continue
+        dependencies.add(path)
+        source = tool_root / path
+        if (
+            source.is_symlink()
+            or not source.is_file()
+            or source.suffix not in {".py", ".sh"}
+        ):
+            continue
+        try:
+            content = source.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ConfigurationError(f"无法读取 Job 工具依赖：{path}") from error
+        pending.extend(references(content) - dependencies)
+        if source.suffix == ".py":
+            try:
+                tree = ast.parse(content, filename=path)
+            except SyntaxError as error:
+                raise ConfigurationError(f"Job 工具依赖 Python 语法非法：{path}") from error
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    matched = module_index.get(node.module)
+                    if matched is not None and matched not in dependencies:
+                        pending.append(matched)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        matched = module_index.get(alias.name)
+                        if matched is not None and matched not in dependencies:
+                            pending.append(matched)
+    return {path: index[path] for path in sorted(dependencies)}
+
+
 def _job_incremental_metadata(
     job: Job,
     identity: Mapping[str, Any] | None = None,
@@ -343,13 +594,16 @@ def _job_incremental_metadata(
             str(item.get("sha256", ""))
         ):
             raise ConfigurationError(f"Job {job.job_id} 的工具组件摘要缺失：{name}")
-        dependency_rows.append(
-            {
-                "id": f"tool:{name}",
-                "status": "passed",
-                "result_sha256": str(item["sha256"]),
-            }
-        )
+    dependency_files = _job_tool_dependency_files(job, current_tool)
+    dependency_rows.extend(
+        {
+            "id": "tool-file:"
+            + hashlib.sha256(path.encode("utf-8")).hexdigest()[:24],
+            "status": "passed",
+            "result_sha256": digest,
+        }
+        for path, digest in dependency_files.items()
+    )
     # identity 只绑定稳定的官方／候选运行坐标；run_nonce 和证据路径不进入键。
     identity_sha = _fingerprint(dict(identity)) if identity is not None else "0" * 64
     dependency_sha = incremental_recovery.dependency_digest(dependency_rows)
@@ -367,6 +621,7 @@ def _job_incremental_metadata(
         "component_digests": {
             name: str(components[name]["sha256"]) for name in names
         },
+        "tool_dependency_files": dependency_files,
         "dependency_sha256": dependency_sha,
         "input_sha256": input_sha,
         "environment_sha256": environment_sha,
@@ -770,6 +1025,196 @@ def _relocated_job_execution_matches(
         if relocated_surface.get(key) != value:
             return False
     return _fingerprint(relocated) == recorded_sha256
+
+
+def _successor_job_execution_matches(
+    job: Job,
+    recorded_sha256: Any,
+    frozen_job: Mapping[str, Any] | None,
+    *,
+    current_campaign_id: str,
+    predecessor_campaign_id: str,
+    current_candidate_id: str | None,
+    predecessor_candidate_id: str | None,
+) -> bool:
+    """校验同版本后继只改变受管 Campaign／Candidate 坐标。
+
+    v9 运行时身份纠正后继会生成新的 Campaign ID，但未受场景变化影响的
+    Job 仍可复用前序通过结果。这里只替换 plan 注入的两个安全 ID，并把
+    完整执行摘要投影回前序；脚本、参数、环境或证据根的其他变化都会使
+    摘要不相等而失败关闭。
+    """
+
+    if not SHA256_RE.fullmatch(str(recorded_sha256)) or frozen_job is None:
+        return False
+    identifiers = (
+        current_campaign_id,
+        predecessor_campaign_id,
+        *(
+            (current_candidate_id, predecessor_candidate_id)
+            if current_candidate_id is not None
+            or predecessor_candidate_id is not None
+            else ()
+        ),
+    )
+    if any(
+        not isinstance(value, str) or not SAFE_ID_RE.fullmatch(value)
+        for value in identifiers
+    ):
+        return False
+    current_campaign = current_campaign_id
+    predecessor_campaign = predecessor_campaign_id
+    current_candidate = current_candidate_id
+    predecessor_candidate = predecessor_candidate_id
+    if (
+        frozen_job.get("id") != job.job_id
+        or (
+            frozen_job.get("phase") is not None
+            and frozen_job.get("phase") != job.phase
+        )
+    ):
+        return False
+
+    replacements = [(current_campaign, predecessor_campaign)]
+    if (
+        current_candidate is not None
+        and predecessor_candidate is not None
+        and current_candidate != predecessor_candidate
+    ):
+        replacements.append((current_candidate, predecessor_candidate))
+    replacements.sort(key=lambda item: len(item[0]), reverse=True)
+
+    def relocate(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        output = value
+        for current, predecessor in replacements:
+            output = output.replace(current, predecessor)
+        return output
+
+    payload = _job_execution_payload(job)
+    current_roots = _managed_repo_roots(payload)
+    frozen_roots = _managed_repo_roots(frozen_job)
+    if current_roots != frozen_roots:
+        managed_root = str(Path(__file__).resolve().parents[2])
+        if (
+            current_roots != {managed_root}
+            or len(frozen_roots) != 1
+            or not _is_safe_managed_repo_root(managed_root)
+        ):
+            return False
+        historical_root = next(iter(frozen_roots))
+        if not _is_safe_managed_repo_root(historical_root):
+            return False
+        if historical_root != managed_root:
+            # ARM64 部署前必须从暂存树跑真实 preview。这里
+            # 只投影精确的受管工具根，其他绝对路径保持不变。
+            payload = _relocate_job_execution_payload(
+                payload,
+                managed_root,
+                historical_root,
+            )
+            if _managed_repo_roots(payload) != {historical_root}:
+                return False
+    relocated = dict(payload)
+    relocated["evidence_roots"] = [
+        relocate(value) for value in payload.get("evidence_roots", [])
+    ]
+    steps: list[dict[str, Any]] = []
+    for raw_step in payload.get("steps", []):
+        if not isinstance(raw_step, Mapping):
+            return False
+        step = dict(raw_step)
+        argv = raw_step.get("argv")
+        if isinstance(argv, list):
+            step["argv"] = [relocate(value) for value in argv]
+        environment = raw_step.get("environment")
+        if isinstance(environment, Mapping):
+            step["environment"] = {
+                str(key): relocate(value) for key, value in environment.items()
+            }
+        steps.append(step)
+    relocated["steps"] = steps
+    return _fingerprint(relocated) == str(recorded_sha256)
+
+
+def _legacy_default_codex_bin_execution_matches(
+    job: Job,
+    recorded_sha256: Any,
+    frozen_manifest: Mapping[str, Any],
+    result: Mapping[str, Any],
+    *,
+    authorized_job_ids: frozenset[str],
+    current_campaign_id: str,
+    predecessor_campaign_id: str,
+    current_candidate_id: str | None,
+    predecessor_candidate_id: str | None,
+) -> bool:
+    """只读证明历史缺省 Codex 路径与当前显式绑定实际等价。"""
+
+    script_binding = LEGACY_DEFAULT_CODEX_BIN_JOB_SCRIPTS.get(job.job_id)
+    if (
+        script_binding is None
+        or job.job_id not in authorized_job_ids
+        or authorized_job_ids != RUNTIME_CODEX_BINARY_JOB_IDS
+        or len(job.steps) != 1
+    ):
+        return False
+    script_name, expected_script_sha256 = script_binding
+    step = job.steps[0]
+    argv = step.get("argv")
+    environment = step.get("environment")
+    target_version = frozen_manifest.get("target_version")
+    if (
+        not isinstance(argv, list)
+        or len(argv) < 2
+        or not isinstance(argv[1], str)
+        or PurePosixPath(argv[1]).name != script_name
+        or not isinstance(environment, Mapping)
+        or not isinstance(target_version, str)
+        or not VERSION_RE.fullmatch(target_version)
+        or environment.get("CODEX_BIN")
+        != f"/opt/codex-{target_version}/bin/codex"
+    ):
+        return False
+
+    tool_identity = frozen_manifest.get("tool_identity")
+    components = (
+        tool_identity.get("components")
+        if isinstance(tool_identity, Mapping)
+        else None
+    )
+    relay = components.get("relay") if isinstance(components, Mapping) else None
+    entries = relay.get("entries") if isinstance(relay, Mapping) else None
+    matching_entries = [
+        entry
+        for entry in (entries if isinstance(entries, list) else [])
+        if isinstance(entry, Mapping) and entry.get("path") == script_name
+    ]
+    recorded_digests = result.get("tool_component_digests")
+    if (
+        len(matching_entries) != 1
+        or matching_entries[0].get("sha256") != expected_script_sha256
+        or result.get("tool_components") != ["relay"]
+        or not isinstance(recorded_digests, Mapping)
+        or recorded_digests.get("relay") != relay.get("sha256")
+    ):
+        return False
+
+    legacy_step = dict(step)
+    legacy_environment = dict(environment)
+    legacy_environment.pop("CODEX_BIN")
+    legacy_step["environment"] = legacy_environment
+    legacy_job = replace(job, steps=(legacy_step,))
+    return _successor_job_execution_matches(
+        legacy_job,
+        recorded_sha256,
+        _frozen_job_definition(frozen_manifest, job.job_id),
+        current_campaign_id=current_campaign_id,
+        predecessor_campaign_id=predecessor_campaign_id,
+        current_candidate_id=current_candidate_id,
+        predecessor_candidate_id=predecessor_candidate_id,
+    )
 
 
 def _is_rfc3339_timestamp(value: Any) -> bool:
@@ -1923,6 +2368,7 @@ def load_scenario_jobs(
     expected_rule_sha256: str | None = None,
     require_bindings: bool = False,
     historical_source_spec_binding: HistoricalSourceSpecBinding | None = None,
+    execution_scenario_override: Mapping[str, Any] | None = None,
 ) -> list[Job]:
     """从版本化场景清单生成任务，并封闭当前或历史规格摘要绑定。"""
 
@@ -1939,9 +2385,19 @@ def load_scenario_jobs(
         )
 
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        stored_payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ConfigurationError(f"无法读取场景清单 {path}：{error}") from error
+    payload = stored_payload
+    if execution_scenario_override is not None:
+        override_payload = json.loads(
+            json.dumps(execution_scenario_override, ensure_ascii=False)
+        )
+        if _scenario_non_execution_contract(stored_payload) != (
+            _scenario_non_execution_contract(override_payload)
+        ):
+            raise ConfigurationError("场景执行覆盖改变了批准评估语义。")
+        payload = override_payload
     if payload.get("schema_version") != SCENARIO_SCHEMA:
         raise ConfigurationError("场景清单 schema_version 不受支持。")
     _validate_scenario_manifest_shape(payload)
@@ -2207,6 +2663,76 @@ def _wait_process(
             if time.monotonic() >= step_deadline:
                 _terminate_process(process, deadline=deadline)
                 return 124
+
+
+def _run_external_command(
+    argv: Iterable[str],
+    *,
+    operation: str,
+    timeout_seconds: float,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    check: bool = False,
+    capture_output: bool = True,
+    text: bool = True,
+    cwd: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    heartbeat: Any | None = None,
+    job_id: str | None = None,
+) -> subprocess.CompletedProcess[Any]:
+    """统一执行宿主／Docker／生成器命令并接入 Campaign 监督器。
+
+    Formal 命令存在活动 Campaign lease 时必须走独立监督器；没有 lease 的
+    只读单元测试或早期 plan 才允许退回有界 runner。所有分支仍使用显式
+    timeout 和 ``shell=False``，不会产生无界子进程。
+    """
+
+    command = [str(item) for item in argv]
+    if not command or any(not item for item in command):
+        raise ConfigurationError("统一外部命令入口收到空参数。")
+    active = _ACTIVE_CAMPAIGN_LEASE
+    if active is not None:
+        result = active.run_command(
+            command,
+            operation=operation,
+            timeout_seconds=timeout_seconds,
+            cwd=cwd,
+            env=env,
+            heartbeat_callback=heartbeat,
+            job_id=job_id,
+            merge_stderr=not capture_output,
+        )
+        if check and result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                command,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return result
+    if deadline is not None:
+        return incremental_recovery.run_bounded_subprocess(
+            command,
+            timeout=timeout_seconds,
+            deadline=deadline,
+            operation=operation,
+            check=check,
+            capture_output=capture_output,
+            text=text,
+            cwd=cwd,
+            env=env,
+            heartbeat=heartbeat,
+        )
+    return subprocess.run(
+        command,
+        check=check,
+        stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+        stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+        text=text,
+        cwd=cwd,
+        env=dict(env) if env is not None else None,
+        timeout=float(timeout_seconds),
+        shell=False,
+    )
 
 
 def _evidence_root_has_bytes(
@@ -2475,7 +3001,7 @@ def _revalidate_model_condition_result(job: Job, result: dict[str, Any]) -> None
             raise ConfigurationError(f"{job.job_id} 的模型条件结果字段 {key} 不一致。")
 
 
-def run_job(
+def _run_job_impl(
     job: Job,
     log_root: Path,
     attempt_index: int = 1,
@@ -2502,10 +3028,22 @@ def run_job(
     )
     step_results: list[dict[str, Any]] = []
     for index, step in enumerate(job.steps, 1):
+        step_operation = (
+            f"job:{job.job_id}:step-{index}:attempt-{attempt_index}"
+        )
+        active_lease = _ACTIVE_CAMPAIGN_LEASE
+        supervised_runner = bool(
+            active_lease is not None
+            and callable(getattr(active_lease, "run_command", None))
+        )
+        step_event_started = False
         if deadline is not None:
             deadline.check(f"job:{job.job_id}:step-{index}:prepare")
         if heartbeat is not None:
             heartbeat(f"job:{job.job_id}:step-{index}:start")
+        if active_lease is not None and not supervised_runner:
+            active_lease.event_start(step_operation, job_id=job.job_id)
+            step_event_started = True
         log_path = log_root / (
             f"{job.job_id}-{index}.log"
             if attempt_index == 1
@@ -2514,27 +3052,62 @@ def run_job(
         environment = os.environ.copy()
         environment.update(step.get("environment", {}))
         argv = list(step["argv"])
-        with log_path.open("w", encoding="utf-8") as log:
-            os.chmod(log_path, 0o600)
-            process = subprocess.Popen(
-                argv,
-                env=environment,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                start_new_session=True,
-            )
-            try:
-                return_code = _wait_process(
-                    process,
-                    step.get("timeout", 1800),
-                    deadline=deadline,
-                    operation=f"job:{job.job_id}:step-{index}",
-                    heartbeat=heartbeat,
+        try:
+            with log_path.open("w", encoding="utf-8") as log:
+                os.chmod(log_path, 0o600)
+                if supervised_runner:
+                    step_result = active_lease.run_command(
+                        argv,
+                        operation=step_operation,
+                        timeout_seconds=float(step.get("timeout", 1800)),
+                        env=environment,
+                        output_stream=log,
+                        heartbeat_callback=heartbeat,
+                        job_id=job.job_id,
+                    )
+                    return_code = int(step_result.returncode)
+                else:
+                    process = subprocess.Popen(
+                        argv,
+                        env=environment,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        start_new_session=True,
+                    )
+                    try:
+                        return_code = _wait_process(
+                            process,
+                            step.get("timeout", 1800),
+                            deadline=deadline,
+                            operation=f"job:{job.job_id}:step-{index}",
+                            heartbeat=heartbeat,
+                        )
+                    except KeyboardInterrupt:
+                        _terminate_process(process, deadline=deadline)
+                        raise
+        except BaseException as error:
+            if step_event_started and active_lease is not None:
+                active_lease.event_fail(
+                    step_operation,
+                    job_id=job.job_id,
+                    reason=type(error).__name__,
                 )
-            except KeyboardInterrupt:
-                _terminate_process(process, deadline=deadline)
-                raise
+            raise
+        if step_event_started and active_lease is not None:
+            if return_code == 0:
+                active_lease.event_end(
+                    step_operation,
+                    job_id=job.job_id,
+                    status="passed",
+                    metadata={"returncode": return_code},
+                )
+            else:
+                active_lease.event_fail(
+                    step_operation,
+                    job_id=job.job_id,
+                    reason=f"returncode={return_code}",
+                )
         step_results.append(
             {
                 "step": index,
@@ -2637,11 +3210,74 @@ def run_job(
         # 原 execution_sha256 规则读取，不会把历史证据改写成新格式。
         "tool_components": incremental["components"],
         "tool_component_digests": incremental["component_digests"],
+        "tool_dependency_files": incremental["tool_dependency_files"],
         "input_sha256": incremental["input_sha256"],
         "environment_sha256": incremental["environment_sha256"],
         "dependency_sha256": incremental["dependency_sha256"],
         "incremental_result_key": incremental["result_key"],
     }
+
+
+def run_job(
+    job: Job,
+    log_root: Path,
+    attempt_index: int = 1,
+    scenario_context: ScenarioReceiptContext | None = None,
+    *,
+    identity: Mapping[str, Any] | None = None,
+    tool_identity: Mapping[str, Any] | None = None,
+    deadline: incremental_recovery.WallClockDeadline | None = None,
+    heartbeat: Any | None = None,
+) -> dict[str, Any]:
+    """受监督执行一个 Job，并把开始／结束／失败实时写入事件账本。"""
+
+    lease = _ACTIVE_CAMPAIGN_LEASE
+    operation = f"job:{job.job_id}:attempt-{attempt_index}"
+    event_started = False
+    if lease is not None:
+        lease.event_start(operation, job_id=job.job_id)
+        event_started = True
+    try:
+        result = _run_job_impl(
+            job,
+            log_root,
+            attempt_index,
+            scenario_context,
+            identity=identity,
+            tool_identity=tool_identity,
+            deadline=deadline,
+            heartbeat=heartbeat,
+        )
+    except BaseException as error:
+        if event_started and lease is not None:
+            lease.event_fail(
+                operation,
+                job_id=job.job_id,
+                reason=type(error).__name__,
+            )
+        raise
+    if event_started and lease is not None:
+        if result.get("status") == "complete":
+            lease.event_end(
+                operation,
+                job_id=job.job_id,
+                status="passed",
+                metadata={
+                    "step_count": len(job.steps),
+                    "attempt_index": attempt_index,
+                },
+            )
+        else:
+            lease.event_fail(
+                operation,
+                job_id=job.job_id,
+                reason="job-status-failed",
+                metadata={
+                    "step_count": len(job.steps),
+                    "attempt_index": attempt_index,
+                },
+            )
+    return result
 
 
 # 上游波动（模型 at capacity、压缩原因未触发、CLI 偶发多一次信任提示）会让个别任务
@@ -2664,18 +3300,101 @@ JOB_RETRY_LIMIT = 2
 JOB_RETRY_DELAY_SECONDS = 30
 DEFAULT_ATTEMPT_WALL_SECONDS = 90 * 60
 MAX_ATTEMPT_WALL_SECONDS = 6 * 60 * 60
-DEFAULT_HEARTBEAT_SECONDS = 30
+# 审计规范固定为 5 秒 owner 心跳；独立监督器在 20 秒内判定失联。
+# MAX_HEARTBEAT_SECONDS 保留较宽上限以兼容历史离线收据和单元测试，正式 CLI
+# 默认始终使用 5 秒，且监督器的停线阈值不能低于 20 秒。
+DEFAULT_HEARTBEAT_SECONDS = codex_upgrade_supervisor.DEFAULT_HEARTBEAT_SECONDS
 MAX_HEARTBEAT_SECONDS = 5 * 60
+DEFAULT_WATCHDOG_TIMEOUT_SECONDS = (
+    codex_upgrade_supervisor.DEFAULT_WATCHDOG_TIMEOUT_SECONDS
+)
 WATCHDOG_HEARTBEAT_SCHEMA = "codex-upgrade-watchdog-heartbeat/v1"
 WATCHDOG_CHECKPOINT_SCHEMA = "codex-upgrade-watchdog-checkpoint/v1"
 JOB_CHECKPOINT_SCHEMA = "codex-upgrade-job-checkpoint/v1"
 INCREMENTAL_NOOP_SCHEMA = "codex-upgrade-incremental-noop/v1"
+CLASSIFICATION_CANDIDATE_REUSE_PREVIEW_SCHEMA = (
+    "classification-candidate-reuse-preview/v1"
+)
+CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_SCHEMA = (
+    "classification-candidate-reuse-transition/v1"
+)
+CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_FILENAME = (
+    "classification-candidate-reuse-transition.json"
+)
+CLASSIFICATION_CANDIDATE_REUSE_SOURCE_MANIFEST_FILENAME = (
+    "source-evidence-manifest.json"
+)
+CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS = frozenset(
+    {
+        "candidate-compact-direct",
+        "candidate-compact-mitm",
+        "candidate-core-direct",
+        "candidate-core-mitm",
+        "candidate-frozen-aux",
+        "candidate-frozen-core",
+        "candidate-h1-wire",
+        "candidate-images-wire",
+        "candidate-ws-handshake-repeat",
+    }
+)
+CAMPAIGN_LEASE_SCHEMA = "codex-upgrade-campaign-lease/v1"
+CAMPAIGN_LEASE_FILENAME = ".campaign-lease.json"
+CAMPAIGN_LEASE_LOCK_FILENAME = ".campaign-lease.lock"
+CAMPAIGN_LEASE_STOP_DIRECTORY = "stop-the-line"
+CAMPAIGN_LEASE_STOP_SCHEMA = "codex-upgrade-campaign-lease-stop/v1"
+CAMPAIGN_LEASE_STALE_MULTIPLIER = 3
+CAMPAIGN_LEASE_MAX_STOP_RECEIPTS = 64
+CONTROL_EPOCH_DIRECTORY = "control-epochs"
+CONTROL_EPOCH_FILENAME = "control-epoch-01.json"
+CONTROL_EPOCH_MAX_COUNT = 2
+CONTROL_EPOCH_FILENAME_RE = re.compile(r"^control-epoch-(\d{2})\.json$")
+CONTROL_EPOCH_RUNTIME_REPAIR_FILENAME = "control-epoch-01-runtime-repair.json"
+CONTROL_EPOCH_RUNTIME_REPAIR_AMENDMENT_FILENAME = (
+    "control-epoch-01-runtime-repair-02.json"
+)
+CONTROL_EPOCH_RUNTIME_REPAIR_SCHEMA = "codex-upgrade-control-epoch-runtime-repair/v1"
+CONTROL_EPOCH_FINAL_EXECUTION_SCHEMA = (
+    "codex-upgrade-control-epoch-final-execution/v1"
+)
+CONTROL_EPOCH_FINAL_EXECUTION_MODE = "replacement-final-execution"
+CONTROL_EPOCH_FINAL_EXECUTION_MAX_SECONDS = MAX_ATTEMPT_WALL_SECONDS
+CONTROL_EPOCH_FINAL_EXECUTION_JOB_IDS = (
+    "candidate-compact-mitm",
+    "candidate-core-mitm",
+)
 WATCHDOG_OPERATION_RE = re.compile(r"^[A-Za-z0-9._:/*?+={}\[\](), -]{1,256}$")
 WATCHDOG_SENSITIVE_RE = re.compile(
     r"(authorization|api[-_]?key|cookie|token|secret|password|credential|bearer)",
     re.IGNORECASE,
 )
-CAPTURE_SUCCESS_STATUSES = frozenset({"complete", "incremental-noop"})
+CAPTURE_SUCCESS_STATUSES = frozenset(
+    {"complete", "incremental-noop", "recovery_plan"}
+)
+CAMPAIGN_LEASE_STATES = frozenset({"active", "released", "stop_the_line"})
+
+# 只在当前进程持有租约期间设置；attempt heartbeat 会把同一操作标签同步到
+# Campaign 租约，从而覆盖没有 attempt 目录的 CLI 命令间隙。
+_ACTIVE_CAMPAIGN_LEASE: "CampaignLease | None" = None
+
+# 这些命令会创建 successor／epoch／transition 等旧写入对象。它们只能由
+# 历史离线夹具读取，不能从新的 campaign-run 正式流程进入。
+LEGACY_WRITE_COMMANDS = codex_upgrade_legacy_boundary.LEGACY_WRITE_COMMANDS
+FORMAL_CAMPAIGN_RUN_COMMANDS = frozenset(
+    {
+        "capture-official",
+        "classify",
+        "prepare-profile",
+        "stage-profile",
+        "capture-candidate",
+        "compare",
+        "accept",
+        "all",
+        "canonical-import",
+        "canonical-advance",
+        "resume",
+        "deep-verify",
+    }
+)
 
 
 def _normalize_watchdog_operation(value: Any) -> str:
@@ -2694,6 +3413,1144 @@ def _normalize_watchdog_operation(value: Any) -> str:
             "watchdog operation 含非法字符或敏感字段，拒绝写入 heartbeat。"
         )
     return operation
+
+
+def _normalize_campaign_lease_note(value: Any, *, label: str) -> str:
+    """规范化停线原因／下一动作；允许中文，但拒绝秘密和控制字符。"""
+
+    if not isinstance(value, str):
+        raise ConfigurationError(f"Campaign lease {label} 必须是字符串。")
+    note = " ".join(value.strip().split())
+    if (
+        not note
+        or len(note) > 512
+        or any(ord(character) < 0x20 for character in note)
+        or WATCHDOG_SENSITIVE_RE.search(note)
+    ):
+        raise ConfigurationError(f"Campaign lease {label} 非法。")
+    return note
+
+
+def _campaign_lease_pid_alive(pid: Any) -> bool:
+    """以无副作用的 kill(pid, 0) 判断 owner 是否仍存在。"""
+
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as error:
+        return error.errno == errno.EPERM
+    return True
+
+
+def _validate_campaign_lease_payload(
+    payload: Mapping[str, Any],
+    *,
+    campaign_id: str | None = None,
+) -> dict[str, Any]:
+    """校验持久租约的小型 JSON；绝不读取证据目录。"""
+
+    required = {
+        "schema_version",
+        "campaign_id",
+        "phase",
+        "candidate_id",
+        "owner_pid",
+        "owner_nonce",
+        "attempt_id",
+        "started_at_utc",
+        "deadline_at_utc",
+        "last_heartbeat_at_utc",
+        "heartbeat_seconds",
+        "operation",
+        "state",
+        "recovered_owner_nonce",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != required:
+        raise ConfigurationError("Campaign lease 字段不闭合。")
+    if (
+        payload.get("schema_version") != CAMPAIGN_LEASE_SCHEMA
+        or not SAFE_ID_RE.fullmatch(str(payload.get("campaign_id", "")))
+        or (campaign_id is not None and payload.get("campaign_id") != campaign_id)
+        or payload.get("phase") not in {"official", "candidate"}
+        or not isinstance(payload.get("owner_pid"), int)
+        or isinstance(payload.get("owner_pid"), bool)
+        or int(payload.get("owner_pid", 0)) <= 0
+        or not SHA256_RE.fullmatch(str(payload.get("owner_nonce", "")))
+        or payload.get("state") not in CAMPAIGN_LEASE_STATES
+        or not _is_rfc3339_timestamp(payload.get("started_at_utc"))
+        or not _is_rfc3339_timestamp(payload.get("deadline_at_utc"))
+        or not _is_rfc3339_timestamp(payload.get("last_heartbeat_at_utc"))
+        or not isinstance(payload.get("heartbeat_seconds"), (int, float))
+        or isinstance(payload.get("heartbeat_seconds"), bool)
+        or not math.isfinite(float(payload.get("heartbeat_seconds")))
+        or float(payload.get("heartbeat_seconds")) <= 0
+        or float(payload.get("heartbeat_seconds")) > MAX_HEARTBEAT_SECONDS
+        or not isinstance(payload.get("operation"), str)
+        or _normalize_watchdog_operation(payload.get("operation"))
+        != payload.get("operation")
+    ):
+        raise ConfigurationError("Campaign lease 身份或数值非法。")
+    candidate_id = payload.get("candidate_id")
+    attempt_id = payload.get("attempt_id")
+    recovered = payload.get("recovered_owner_nonce")
+    if payload.get("phase") == "official":
+        if candidate_id is not None:
+            raise ConfigurationError("official Campaign lease 不得携带 candidate-id。")
+    elif not isinstance(candidate_id, str) or not SAFE_ID_RE.fullmatch(candidate_id):
+        raise ConfigurationError("candidate Campaign lease 缺少合法 candidate-id。")
+    if attempt_id is not None and (
+        not isinstance(attempt_id, str) or not SAFE_ID_RE.fullmatch(attempt_id)
+    ):
+        raise ConfigurationError("Campaign lease attempt-id 非法。")
+    if recovered is not None and not SHA256_RE.fullmatch(str(recovered)):
+        raise ConfigurationError("Campaign lease recovered owner nonce 非法。")
+    started = _rfc3339_datetime(payload["started_at_utc"], "lease.started_at_utc")
+    deadline = _rfc3339_datetime(payload["deadline_at_utc"], "lease.deadline_at_utc")
+    heartbeat = _rfc3339_datetime(
+        payload["last_heartbeat_at_utc"], "lease.last_heartbeat_at_utc"
+    )
+    if deadline <= started or heartbeat < started:
+        raise ConfigurationError("Campaign lease 时间窗口非法。")
+    return dict(payload)
+
+
+def _read_campaign_lease(campaign_dir: Path) -> dict[str, Any] | None:
+    """只读读取当前租约；不存在时返回 ``None``。"""
+
+    _validate_existing_campaign_path(campaign_dir)
+    path = campaign_dir / CAMPAIGN_LEASE_FILENAME
+    _reject_symlink_components(path, campaign_dir, "Campaign lease")
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError("Campaign lease 必须是普通文件。")
+    metadata = path.stat()
+    if (
+        metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size <= 0
+        or metadata.st_size > 1024 * 1024
+    ):
+        raise ConfigurationError("Campaign lease 权限或大小非法。")
+    payload = _read_json(path, "Campaign lease")
+    return _validate_campaign_lease_payload(payload)
+
+
+def _campaign_lease_staleness(
+    payload: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> tuple[bool, str, bool, bool]:
+    """返回 ``(stale, reason, owner_alive, deadline_expired)``。"""
+
+    if payload.get("state") != "active":
+        return False, "", _campaign_lease_pid_alive(payload.get("owner_pid")), False
+    observed = now or datetime.now(timezone.utc)
+    deadline = _rfc3339_datetime(payload["deadline_at_utc"], "lease.deadline_at_utc")
+    heartbeat = _rfc3339_datetime(
+        payload["last_heartbeat_at_utc"], "lease.last_heartbeat_at_utc"
+    )
+    deadline_expired = observed >= deadline
+    age = max(0.0, (observed - heartbeat).total_seconds())
+    stale_after = max(
+        float(payload["heartbeat_seconds"]) * CAMPAIGN_LEASE_STALE_MULTIPLIER,
+        float(DEFAULT_HEARTBEAT_SECONDS),
+    )
+    owner_alive = _campaign_lease_pid_alive(payload.get("owner_pid"))
+    if deadline_expired:
+        return True, "deadline_expired", owner_alive, True
+    if not owner_alive:
+        return True, "owner_not_alive", False, False
+    if age > stale_after:
+        return True, "heartbeat_expired", True, False
+    return False, "", True, False
+
+
+def _campaign_lease_stop_path(campaign_dir: Path, owner_nonce: str) -> Path:
+    if not SHA256_RE.fullmatch(owner_nonce):
+        raise ConfigurationError("Campaign lease owner nonce 非法。")
+    root = ensure_private_directory(
+        campaign_dir / CAMPAIGN_LEASE_STOP_DIRECTORY,
+        campaign_dir,
+    )
+    return root / f"lease-{owner_nonce}.json"
+
+
+def _write_campaign_lease_stop_once(
+    campaign_dir: Path,
+    payload: Mapping[str, Any],
+    *,
+    reason: str,
+    next_action: str,
+) -> Path:
+    """发布不可覆盖的租约停线收据；重复发现只重放原文件。"""
+
+    lease = _validate_campaign_lease_payload(payload)
+    reason = _normalize_campaign_lease_note(reason, label="reason")
+    next_action = _normalize_campaign_lease_note(next_action, label="next_action")
+    path = _campaign_lease_stop_path(campaign_dir, str(lease["owner_nonce"]))
+    if path.exists() or path.is_symlink():
+        if path.is_symlink() or not path.is_file():
+            raise ConfigurationError("Campaign lease stop 收据路径不可信。")
+        existing = _read_json(path, "Campaign lease stop 收据")
+        _validate_campaign_lease_stop_receipt(existing, path)
+        if (
+            existing.get("campaign_id") != lease.get("campaign_id")
+            or existing.get("phase") != lease.get("phase")
+            or existing.get("candidate_id") != lease.get("candidate_id")
+            or existing.get("owner_nonce") != lease.get("owner_nonce")
+        ):
+            raise ConfigurationError("Campaign lease stop 收据身份与租约不一致。")
+        return path
+    receipt: dict[str, Any] = {
+        "schema_version": CAMPAIGN_LEASE_STOP_SCHEMA,
+        "campaign_id": lease["campaign_id"],
+        "phase": lease["phase"],
+        "candidate_id": lease["candidate_id"],
+        "owner_pid": lease["owner_pid"],
+        "owner_nonce": lease["owner_nonce"],
+        "attempt_id": lease["attempt_id"],
+        "started_at_utc": lease["started_at_utc"],
+        "deadline_at_utc": lease["deadline_at_utc"],
+        "last_heartbeat_at_utc": lease["last_heartbeat_at_utc"],
+        "operation": lease["operation"],
+        "reason": reason,
+        "detected_at_utc": _utc_now(),
+        "next_action": next_action,
+    }
+    receipt["receipt_sha256"] = _fingerprint(receipt)
+    _secure_write_json_once(path, receipt)
+    return path
+
+
+def _validate_campaign_lease_stop_receipt(
+    payload: Mapping[str, Any],
+    path: Path,
+    *,
+    campaign_id: str | None = None,
+) -> dict[str, Any]:
+    """校验单份停线收据，并确保其身份与所属 Campaign 一致。"""
+
+    required = {
+        "schema_version",
+        "campaign_id",
+        "phase",
+        "candidate_id",
+        "owner_pid",
+        "owner_nonce",
+        "attempt_id",
+        "started_at_utc",
+        "deadline_at_utc",
+        "last_heartbeat_at_utc",
+        "operation",
+        "reason",
+        "detected_at_utc",
+        "next_action",
+        "receipt_sha256",
+    }
+    if set(payload) != required:
+        raise ConfigurationError("Campaign lease stop 收据字段不闭合。")
+    unsigned = dict(payload)
+    digest = unsigned.pop("receipt_sha256")
+    if (
+        payload.get("schema_version") != CAMPAIGN_LEASE_STOP_SCHEMA
+        or not SAFE_ID_RE.fullmatch(str(payload.get("campaign_id", "")))
+        or (campaign_id is not None and payload.get("campaign_id") != campaign_id)
+        or payload.get("phase") not in {"official", "candidate"}
+        or not isinstance(payload.get("owner_pid"), int)
+        or isinstance(payload.get("owner_pid"), bool)
+        or payload.get("owner_pid", 0) <= 0
+        or not SHA256_RE.fullmatch(str(payload.get("owner_nonce", "")))
+        or path.name != f"lease-{payload.get('owner_nonce')}.json"
+        or not _is_rfc3339_timestamp(payload.get("started_at_utc"))
+        or not _is_rfc3339_timestamp(payload.get("deadline_at_utc"))
+        or not _is_rfc3339_timestamp(payload.get("last_heartbeat_at_utc"))
+        or not _is_rfc3339_timestamp(payload.get("detected_at_utc"))
+        or not isinstance(payload.get("operation"), str)
+        or _normalize_watchdog_operation(payload.get("operation"))
+        != payload.get("operation")
+        or not isinstance(payload.get("reason"), str)
+        or not isinstance(payload.get("next_action"), str)
+        or digest != _fingerprint(unsigned)
+    ):
+        raise ConfigurationError("Campaign lease stop 收据身份或摘要非法。")
+    if payload.get("phase") == "official":
+        if payload.get("candidate_id") is not None:
+            raise ConfigurationError("official stop 收据不得携带 candidate-id。")
+    elif not isinstance(payload.get("candidate_id"), str) or not SAFE_ID_RE.fullmatch(
+        str(payload.get("candidate_id"))
+    ):
+        raise ConfigurationError("candidate stop 收据缺少合法 candidate-id。")
+    attempt_id = payload.get("attempt_id")
+    if attempt_id is not None and (
+        not isinstance(attempt_id, str) or not SAFE_ID_RE.fullmatch(attempt_id)
+    ):
+        raise ConfigurationError("Campaign lease stop 收据 attempt-id 非法。")
+    _normalize_campaign_lease_note(payload["reason"], label="reason")
+    _normalize_campaign_lease_note(payload["next_action"], label="next_action")
+    return dict(payload)
+
+
+def _read_campaign_lease_stop_receipts(
+    campaign_dir: Path,
+    *,
+    campaign_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """有限读取租约停线摘要，供 status 使用。"""
+
+    root = campaign_dir / CAMPAIGN_LEASE_STOP_DIRECTORY
+    if not root.exists():
+        return []
+    _reject_symlink_components(root, campaign_dir, "Campaign lease stop 目录")
+    if root.is_symlink() or not root.is_dir():
+        raise ConfigurationError("Campaign lease stop 目录不可信。")
+    paths = sorted(root.iterdir())
+    if len(paths) > CAMPAIGN_LEASE_MAX_STOP_RECEIPTS:
+        raise ConfigurationError("Campaign lease stop 收据数量超过上限。")
+    output: list[dict[str, Any]] = []
+    for path in paths:
+        if path.is_symlink() or not path.is_file() or not re.fullmatch(
+            r"lease-[0-9a-f]{64}\.json", path.name
+        ):
+            raise ConfigurationError("Campaign lease stop 目录含非法文件。")
+        payload = _read_json(path, "Campaign lease stop 收据")
+        output.append(
+            _validate_campaign_lease_stop_receipt(
+                payload,
+                path,
+                campaign_id=campaign_id,
+            )
+        )
+    return output
+
+
+class CampaignLease:
+    """Campaign 级持久租约。
+
+    OS 文件锁只负责并发互斥；JSON 租约负责跨进程留下 owner、deadline 和
+    最后 heartbeat。进程被强杀时文件不会消失，下一次命令会把 stale owner
+    固化为不可覆盖停线收据，而不会静默重新跑全量任务。
+
+    进程由 ``campaign-run`` 派发时，租约仅附加到父监督器的 run 目录，
+    不再创建本地 lease 文件或第二个 monitor。
+    """
+
+    def __init__(
+        self,
+        campaign_dir: Path,
+        *,
+        phase: str,
+        candidate_id: str | None,
+        deadline: incremental_recovery.WallClockDeadline,
+        attempt_id: str | None = None,
+        command: str,
+        allow_stale_recovery: bool = False,
+        campaign_id: str | None = None,
+    ) -> None:
+        if phase not in {"official", "candidate"}:
+            raise ConfigurationError("Campaign lease phase 非法。")
+        if phase == "official" and candidate_id is not None:
+            raise ConfigurationError("official Campaign lease 不得携带 candidate-id。")
+        if phase == "candidate" and (
+            not isinstance(candidate_id, str) or not SAFE_ID_RE.fullmatch(candidate_id)
+        ):
+            raise ConfigurationError("candidate Campaign lease 缺少合法 candidate-id。")
+        if attempt_id is not None and not SAFE_ID_RE.fullmatch(str(attempt_id)):
+            raise ConfigurationError("Campaign lease attempt-id 非法。")
+        if not isinstance(deadline, incremental_recovery.WallClockDeadline):
+            raise ConfigurationError("Campaign lease 必须绑定 WallClockDeadline。")
+        self.campaign_dir = campaign_dir
+        if campaign_id is not None and not SAFE_ID_RE.fullmatch(str(campaign_id)):
+            raise ConfigurationError("Campaign lease campaign-id 非法。")
+        self.campaign_id = str(campaign_id) if campaign_id is not None else None
+        self.phase = phase
+        self.candidate_id = candidate_id
+        self.deadline = deadline
+        self.attempt_id = attempt_id
+        self.command = _normalize_watchdog_operation(command)
+        self.allow_stale_recovery = bool(allow_stale_recovery)
+        self.owner_pid = os.getpid()
+        self.owner_nonce = secrets.token_hex(32)
+        self._descriptor: int | None = None
+        self._path = campaign_dir / CAMPAIGN_LEASE_FILENAME
+        self._payload: dict[str, Any] | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._mutex = threading.RLock()
+        self._last_heartbeat_monotonic = 0.0
+        self._failure: BaseException | None = None
+        self._stop_recorded = False
+        self._attached_parent = False
+        self._previous_global: CampaignLease | None = None
+        # 进程内线程只作低延迟备用；真正的强停检测和分钟账本由这个独立进程负责。
+        self._supervisor: codex_upgrade_supervisor.SupervisorClient | None = None
+
+    @property
+    def acquired(self) -> bool:
+        return (
+            self._attached_parent
+            or (self._descriptor is not None and self._payload is not None)
+        )
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        if self._payload is None:
+            raise ConfigurationError("Campaign lease 尚未取得。")
+        return dict(self._payload)
+
+    def _open_lock(self) -> int:
+        _validate_existing_campaign_path(self.campaign_dir)
+        lock_path = self.campaign_dir / CAMPAIGN_LEASE_LOCK_FILENAME
+        _reject_symlink_components(lock_path, self.campaign_dir, "Campaign lease 锁")
+        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        created = False
+        try:
+            descriptor = os.open(
+                lock_path,
+                flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            created = True
+        except FileExistsError:
+            descriptor = os.open(lock_path, flags)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or (not created and stat.S_IMODE(metadata.st_mode) != 0o600)
+        ):
+            os.close(descriptor)
+            raise ConfigurationError("Campaign lease 锁必须是当前用户拥有的 0600 文件。")
+        os.fchmod(descriptor, 0o600)
+        return descriptor
+
+    def _write_payload(self, payload: Mapping[str, Any]) -> None:
+        if self._path.is_symlink() or (self._path.exists() and not self._path.is_file()):
+            raise ConfigurationError("Campaign lease 文件路径不可信。")
+        secure_write_json(self._path, dict(payload))
+        metadata = self._path.stat()
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ConfigurationError("Campaign lease 写入后权限或属主非法。")
+
+    def acquire(self) -> "CampaignLease":
+        global _ACTIVE_CAMPAIGN_LEASE
+        if self.acquired:
+            raise ConfigurationError("Campaign lease 不得重复取得。")
+        # campaign-run 是正式流程的唯一父监督器。子命令收到父上下文时，
+        # 只附加到已有 supervisor，不再创建 lease 文件、锁或第二个 monitor。
+        try:
+            attached = codex_upgrade_supervisor.SupervisorClient.attach_from_environment()
+        except codex_upgrade_supervisor.SupervisorError as error:
+            raise ConfigurationError(f"无法附加 campaign-run 父监督器：{error}") from error
+        if attached is not None:
+            try:
+                self.deadline.check("campaign-lease:attach")
+                campaign_manifest = self.campaign_dir / "campaign.json"
+                if campaign_manifest.is_file():
+                    manifest = _read_json(campaign_manifest, "Campaign 清单")
+                    if manifest.get("campaign_id") != attached.campaign_id:
+                        raise ConfigurationError(
+                            "campaign-run 父监督器与 Campaign 清单身份不一致。"
+                        )
+                    if manifest.get("campaign_mode") != "formal":
+                        raise ConfigurationError(
+                            "campaign-run 只能承载 formal Campaign。"
+                        )
+                remaining = attached.deadline_at_epoch - time.time()
+                if remaining <= 0:
+                    raise ConfigurationError("campaign-run 父监督器全局 deadline 已到期。")
+                self.deadline = incremental_recovery.WallClockDeadline(
+                    remaining,
+                    label=f"{self.phase}-campaign-run",
+                )
+                # 绑定父 run 的单调时钟边界，而不是以子进程启动时刻重新
+                # 起算；WallClockDeadline 只保留同一绝对 deadline。
+                self.deadline.started_monotonic = (
+                    float(attached._started_monotonic_ns) / 1_000_000_000
+                )
+                self.deadline.deadline_monotonic = (
+                    float(attached._deadline_monotonic_ns) / 1_000_000_000
+                )
+                self.deadline.heartbeat_seconds = float(attached.heartbeat_seconds)
+                self._supervisor = attached
+                self._attached_parent = True
+                self.owner_pid = attached.owner_pid
+                self.owner_nonce = attached.owner_nonce
+                self._payload = {
+                    "schema_version": CAMPAIGN_LEASE_SCHEMA,
+                    "campaign_id": attached.campaign_id,
+                    "phase": self.phase,
+                    "candidate_id": self.candidate_id,
+                    "owner_pid": attached.owner_pid,
+                    "owner_nonce": attached.owner_nonce,
+                    "attempt_id": self.attempt_id,
+                    "state": "active",
+                    "operation": self.command,
+                    "attached_to_run_dir": str(attached.run_dir),
+                }
+                self._last_heartbeat_monotonic = time.monotonic()
+                self._previous_global = _ACTIVE_CAMPAIGN_LEASE
+                _ACTIVE_CAMPAIGN_LEASE = self
+                attached.heartbeat(f"attach:{self.command}", force=True)
+                return self
+            except BaseException:
+                if attached is not None:
+                    try:
+                        attached._started = False
+                    except BaseException:
+                        pass
+                raise
+        self.deadline.check("campaign-lease:acquire")
+        descriptor = self._open_lock()
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                current = _read_campaign_lease(self.campaign_dir)
+                owner = (
+                    f"owner_pid={current.get('owner_pid')} nonce={current.get('owner_nonce')}"
+                    if current
+                    else "owner=unknown"
+                )
+                raise ConfigurationError(f"Campaign lease 已被占用（{owner}）。")
+            current = _read_campaign_lease(self.campaign_dir)
+            recovered_nonce: str | None = None
+            if current is not None and current.get("state") == "active":
+                stale, reason, _alive, _expired = _campaign_lease_staleness(current)
+                if not stale:
+                    raise ConfigurationError(
+                        "Campaign lease 仍在有效期内，禁止并发或重复运行："
+                        f"owner_pid={current.get('owner_pid')} nonce={current.get('owner_nonce')}"
+                    )
+                _write_campaign_lease_stop_once(
+                    self.campaign_dir,
+                    current,
+                    reason=reason,
+                    next_action=(
+                        "仅允许绑定同一失败源 attempt 的 resume --rerun-failed；"
+                        "先校验 recovery_scope"
+                    ),
+                )
+                recovered_nonce = str(current.get("owner_nonce"))
+                if not self.allow_stale_recovery:
+                    raise ConfigurationError(
+                        "Campaign lease 已过期并已停线；普通 run 禁止接管，"
+                        "请使用同一失败源的显式 resume --rerun-failed。"
+                    )
+            elif current is not None and current.get("state") not in {
+                "released",
+                "stop_the_line",
+            }:
+                raise ConfigurationError("Campaign lease 状态非法。")
+            started = datetime.now(timezone.utc)
+            remaining = self.deadline.remaining_seconds
+            if remaining <= 0:
+                raise incremental_recovery.WallClockTimeoutError(
+                    "campaign-lease:acquire",
+                    elapsed_seconds=self.deadline.elapsed_seconds,
+                    budget_seconds=self.deadline.budget_seconds,
+                )
+            payload: dict[str, Any] = {
+                "schema_version": CAMPAIGN_LEASE_SCHEMA,
+                "campaign_id": self.campaign_id or str(
+                    load_campaign_manifest(
+                        self.campaign_dir,
+                        _control_epoch_bootstrap=(self.command == "control-epoch"),
+                    ).get("campaign_id", "")
+                ),
+                "phase": self.phase,
+                "candidate_id": self.candidate_id,
+                "owner_pid": self.owner_pid,
+                "owner_nonce": self.owner_nonce,
+                "attempt_id": self.attempt_id,
+                "started_at_utc": started.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                "deadline_at_utc": (started + timedelta(seconds=remaining)).isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                "last_heartbeat_at_utc": started.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                "heartbeat_seconds": float(getattr(self.deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS)),
+                "operation": self.command,
+                "state": "active",
+                "recovered_owner_nonce": recovered_nonce,
+            }
+            _validate_campaign_lease_payload(payload)
+            self._descriptor = descriptor
+            self._payload = payload
+            self._write_payload(payload)
+            try:
+                self._supervisor = codex_upgrade_supervisor.SupervisorClient(
+                    self.campaign_dir / ".supervisor",
+                    campaign_id=str(payload["campaign_id"]),
+                    phase=self.phase,
+                    deadline_at_epoch=time.time() + remaining,
+                    owner_pid=self.owner_pid,
+                    heartbeat_seconds=float(
+                        getattr(
+                            self.deadline,
+                            "heartbeat_seconds",
+                            DEFAULT_HEARTBEAT_SECONDS,
+                        )
+                    ),
+                    watchdog_timeout_seconds=DEFAULT_WATCHDOG_TIMEOUT_SECONDS,
+                    ledger_interval_seconds=60,
+                    # Campaign lease 运行在 CLI 宿主进程内；监督器只负责封存
+                    # watchdog 终态，不得为了一个阶段 deadline 误杀共享宿主
+                    # （例如测试 runner 或上层服务）。外部调用者若使用独立
+                    # owner 进程，可在 SupervisorClient 层显式选择终止。
+                    terminate_owner=False,
+                )
+                self._supervisor.start()
+            except (OSError, codex_upgrade_supervisor.SupervisorError) as error:
+                # 独立监督器是正式可变命令的硬门禁；启动失败不能退化成只有
+                # 进程内线程的不可审计模式。
+                self._supervisor = None
+                self._payload["state"] = "stop_the_line"
+                self._payload["operation"] = "supervisor-start-failed"
+                try:
+                    self._write_payload(self._payload)
+                finally:
+                    raise ConfigurationError(
+                        f"独立升级监督器启动失败：{error}"
+                    ) from error
+            self._last_heartbeat_monotonic = time.monotonic()
+            self._previous_global = _ACTIVE_CAMPAIGN_LEASE
+            _ACTIVE_CAMPAIGN_LEASE = self
+            self._thread = threading.Thread(
+                target=self._watchdog_loop,
+                name=f"codex-campaign-lease-{self.owner_nonce[:8]}",
+                daemon=True,
+            )
+            self._thread.start()
+            return self
+        except BaseException:
+            if self._supervisor is not None:
+                try:
+                    self._supervisor.stop(
+                        reason="supervisor-acquire-failed",
+                        status="failed",
+                    )
+                except BaseException:
+                    pass
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+            raise
+
+    def __enter__(self) -> "CampaignLease":
+        return self.acquire()
+
+    def _mark_stop_line(self, reason: str, *, next_action: str | None = None) -> None:
+        with self._mutex:
+            if self._payload is None:
+                return
+            if self._stop_recorded:
+                return
+            if self._attached_parent:
+                self._stop_recorded = True
+                if self._supervisor is not None:
+                    try:
+                        self._supervisor.event_fail(
+                            "campaign:child-stop",
+                            reason=reason,
+                        )
+                    except BaseException as error:
+                        self._failure = self._failure or error
+                return
+            action = next_action or (
+                "人工审计租约停线收据；仅可绑定同一失败源的显式 resume --rerun-failed"
+            )
+            try:
+                _write_campaign_lease_stop_once(
+                    self.campaign_dir,
+                    self._payload,
+                    reason=reason,
+                    next_action=action,
+                )
+                self._stop_recorded = True
+                if self._supervisor is not None:
+                    try:
+                        self._supervisor.event_fail(
+                            "campaign:stop-the-line",
+                            reason=reason,
+                        )
+                    except BaseException:
+                        # 主租约停线收据是权威事实；监督器附加事件失败时仍须
+                        # 保留主收据，后续审计会标记附加账本缺口。
+                        pass
+            finally:
+                self._payload["state"] = "stop_the_line"
+                self._payload["operation"] = _normalize_watchdog_operation(reason)
+                try:
+                    self._write_payload(self._payload)
+                except BaseException as error:
+                    self._failure = self._failure or error
+
+    def check(self, operation: str | None = None) -> float:
+        """检查 lease 与 attempt deadline；到期先写停线再抛出。"""
+
+        if self._failure is not None:
+            raise self._failure
+        if not self.acquired:
+            raise ConfigurationError("Campaign lease 尚未取得。")
+        if self._attached_parent and self._supervisor is not None:
+            try:
+                self._supervisor._ensure_monitor_alive()
+            except codex_upgrade_supervisor.SupervisorError as error:
+                self._failure = ConfigurationError(str(error))
+                raise self._failure from error
+        try:
+            remaining = self.deadline.check(operation or self.command)
+        except incremental_recovery.WallClockTimeoutError as error:
+            self._mark_stop_line("deadline_expired")
+            self._failure = error
+            raise
+        return remaining
+
+    def heartbeat(
+        self,
+        operation: str,
+        *,
+        force: bool = False,
+        allow_expired: bool = False,
+    ) -> None:
+        operation = _normalize_watchdog_operation(operation)
+        if not self.acquired:
+            return
+        if not allow_expired:
+            self.check(operation)
+        if self._attached_parent:
+            if self._supervisor is not None:
+                self._supervisor.heartbeat(operation, force=force)
+            self._last_heartbeat_monotonic = time.monotonic()
+            return
+        now_monotonic = time.monotonic()
+        interval = float(getattr(self.deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS))
+        if not force and now_monotonic - self._last_heartbeat_monotonic < interval:
+            return
+        with self._mutex:
+            if self._payload is None:
+                return
+            if not allow_expired and self.deadline.expired:
+                self._mark_stop_line("deadline_expired")
+                raise incremental_recovery.WallClockTimeoutError(
+                    operation,
+                    elapsed_seconds=self.deadline.elapsed_seconds,
+                    budget_seconds=self.deadline.budget_seconds,
+                )
+            self._payload["operation"] = operation
+            self._payload["last_heartbeat_at_utc"] = _utc_now()
+            self._write_payload(self._payload)
+            self._last_heartbeat_monotonic = now_monotonic
+            if self._supervisor is not None:
+                self._supervisor.heartbeat(operation, force=force)
+
+    def event_start(self, operation: str, *, job_id: str | None = None) -> None:
+        """记录一个统一命令／Job 动作的开始。"""
+
+        if self._supervisor is not None:
+            self._supervisor.event_start(operation, job_id=job_id)
+
+    def event_end(
+        self,
+        operation: str,
+        *,
+        job_id: str | None = None,
+        status: str = "passed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """记录一个动作的正常结束。"""
+
+        if self._supervisor is not None:
+            self._supervisor.event_end(
+                operation,
+                job_id=job_id,
+                status=status,
+                metadata=metadata,
+            )
+
+    def event_fail(
+        self,
+        operation: str,
+        *,
+        job_id: str | None = None,
+        reason: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """记录一个动作失败；失败原因只允许脱敏短文本。"""
+
+        if self._supervisor is not None:
+            self._supervisor.event_fail(
+                operation,
+                job_id=job_id,
+                reason=reason,
+                metadata=metadata,
+            )
+
+    def run_command(
+        self,
+        argv: Iterable[str],
+        *,
+        operation: str,
+        timeout_seconds: float,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        output_stream: Any | None = None,
+        heartbeat_callback: Any | None = None,
+        job_id: str | None = None,
+        merge_stderr: bool = True,
+    ) -> subprocess.CompletedProcess[Any]:
+        """通过独立监督器统一执行一个外部命令。"""
+
+        if self._supervisor is None:
+            raise ConfigurationError("Campaign lease 的独立监督器不可用。")
+        return self._supervisor.run_command(
+            list(argv),
+            operation=operation,
+            timeout_seconds=timeout_seconds,
+            cwd=cwd,
+            env=env,
+            capture_output=output_stream is None,
+            output_stream=output_stream,
+            job_id=job_id,
+            heartbeat_callback=heartbeat_callback,
+            merge_stderr=merge_stderr,
+        )
+
+    def bind_attempt(self, attempt_id: str) -> None:
+        """在原子 reservation 发布后把 attempt-id 绑定到当前租约。"""
+
+        if not isinstance(attempt_id, str) or not SAFE_ID_RE.fullmatch(attempt_id):
+            raise ConfigurationError("Campaign lease attempt-id 非法。")
+        self.check("campaign-lease:bind-attempt")
+        if self._attached_parent:
+            self.attempt_id = attempt_id
+            self._payload["attempt_id"] = attempt_id  # type: ignore[index]
+            self.heartbeat("attempt:reserved", force=True)
+            return
+        with self._mutex:
+            if self._payload is None:
+                raise ConfigurationError("Campaign lease 尚未取得。")
+            self._payload["attempt_id"] = attempt_id
+            self._payload["operation"] = "attempt:reserved"
+            self._payload["last_heartbeat_at_utc"] = _utc_now()
+            self._write_payload(self._payload)
+            self._last_heartbeat_monotonic = time.monotonic()
+            if self._supervisor is not None:
+                self._supervisor.heartbeat("attempt:reserved", force=True)
+
+    def _watchdog_loop(self) -> None:
+        interval = max(
+            0.05,
+            float(getattr(self.deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS)),
+        )
+        while not self._stop_event.wait(min(interval, max(0.05, self.deadline.remaining_seconds))):
+            try:
+                if self.deadline.expired:
+                    error = incremental_recovery.WallClockTimeoutError(
+                        "campaign-lease:deadline",
+                        elapsed_seconds=self.deadline.elapsed_seconds,
+                        budget_seconds=self.deadline.budget_seconds,
+                    )
+                    self._failure = error
+                    self._mark_stop_line("deadline_expired")
+                    return
+                self.heartbeat(self.command, force=True)
+            except BaseException as error:
+                self._failure = error
+                try:
+                    self._mark_stop_line("heartbeat_write_failed")
+                except BaseException:
+                    pass
+                return
+
+    def release(self, *, outcome: str = "released") -> None:
+        """正常结束时释放 lease；停线状态本身不可被 released 覆盖。"""
+
+        global _ACTIVE_CAMPAIGN_LEASE
+        self._stop_event.set()
+        if self._attached_parent:
+            with self._mutex:
+                if self._supervisor is not None:
+                    self._supervisor.stop(reason="child-release", status="stopped")
+                if _ACTIVE_CAMPAIGN_LEASE is self:
+                    _ACTIVE_CAMPAIGN_LEASE = self._previous_global
+                self._supervisor = None
+                self._payload = None
+                self._attached_parent = False
+                self._descriptor = None
+            return
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=1.0)
+        with self._mutex:
+            # 独立监督器可能在 owner 线程尚未醒来时先判定 heartbeat/deadline
+            # 终态。先读取它的只读状态并同步 Campaign 停线事实，再决定是否
+            # 将租约标成 released，避免 watchdog-aborted 被“正常释放”掩盖。
+            if self._supervisor is not None and self._payload is not None:
+                if (
+                    self._supervisor.process is not None
+                    and self._supervisor.process.poll() is not None
+                ):
+                    try:
+                        self._supervisor._mark_monitor_exit()
+                    except BaseException as error:
+                        self._failure = self._failure or error
+                try:
+                    supervisor_state = self._supervisor.status().get("state")
+                except BaseException as error:
+                    supervisor_state = "audit-incomplete"
+                    self._failure = self._failure or error
+                if supervisor_state in {"watchdog-aborted", "audit-incomplete"}:
+                    try:
+                        self._mark_stop_line(
+                            f"supervisor_{str(supervisor_state).replace('-', '_')}"
+                        )
+                    except BaseException as error:
+                        self._failure = self._failure or error
+            if self._payload is not None and self._payload.get("state") == "active":
+                try:
+                    self._payload["state"] = "released"
+                    self._payload["operation"] = _normalize_watchdog_operation(
+                        f"lease:{outcome}"
+                    )
+                    self._payload["last_heartbeat_at_utc"] = _utc_now()
+                    self._write_payload(self._payload)
+                except BaseException as error:
+                    self._failure = self._failure or error
+            if self._supervisor is not None:
+                try:
+                    supervisor_status = (
+                        "stopped"
+                        if self._payload is None
+                        or self._payload.get("state") != "stop_the_line"
+                        else "failed"
+                    )
+                    self._supervisor.stop(
+                        reason=(
+                            "normal-completion"
+                            if supervisor_status == "stopped"
+                            else "campaign-stop-the-line"
+                        ),
+                        status=supervisor_status,
+                    )
+                except BaseException as error:
+                    self._failure = self._failure or error
+                finally:
+                    self._supervisor = None
+            if _ACTIVE_CAMPAIGN_LEASE is self:
+                _ACTIVE_CAMPAIGN_LEASE = self._previous_global
+            descriptor = self._descriptor
+            self._descriptor = None
+            if descriptor is not None:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
+
+    def __exit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> bool:
+        # 任意异常都表示本次可变命令没有形成可验证的正常终态。不能把
+        # ConfigurationError／I/O 错误当作“正常释放”，否则下一条命令会
+        # 看见一个没有停线原因的旧租约并可能误接管。
+        if exc is not None:
+            try:
+                reason = (
+                    "owner_interrupted"
+                    if isinstance(exc, (KeyboardInterrupt, SystemExit))
+                    else "owner_exception"
+                )
+                self._mark_stop_line(reason)
+            except BaseException:
+                pass
+        self.release(outcome="exception" if exc is not None else "released")
+        return False
+
+
+# 保留一个带下划线的别名，便于旧测试和内部调用按工具命名习惯引用。
+_CampaignLease = CampaignLease
+
+
+def _lease_identity_matches(
+    lease: CampaignLease,
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+) -> bool:
+    """判断当前进程中的活动租约是否正好覆盖目标命令。"""
+
+    try:
+        same_root = lease.campaign_dir.resolve(strict=True) == campaign_dir.resolve(
+            strict=True
+        )
+    except OSError:
+        same_root = False
+    return (
+        same_root
+        and lease.phase == phase
+        and lease.candidate_id == candidate_id
+    )
+
+
+@contextmanager
+def _campaign_operation_lease(
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    command: str,
+    deadline: incremental_recovery.WallClockDeadline,
+    allow_stale_recovery: bool = False,
+    campaign_id: str | None = None,
+) -> Iterable[CampaignLease | None]:
+    """为一个可变 CLI 操作取得 lease；嵌套调用复用同一 owner。"""
+
+    active = _ACTIVE_CAMPAIGN_LEASE
+    if active is not None:
+        if not _lease_identity_matches(
+            active,
+            campaign_dir,
+            phase=phase,
+            candidate_id=candidate_id,
+        ):
+            raise ConfigurationError(
+                "当前进程已经持有另一 Campaign／phase 的 lease，禁止嵌套可变操作。"
+            )
+        active.check(command)
+        yield active
+        active.check(f"{command}:complete")
+        return
+    with CampaignLease(
+        campaign_dir,
+        phase=phase,
+        candidate_id=candidate_id,
+        deadline=deadline,
+        command=command,
+        allow_stale_recovery=allow_stale_recovery,
+        campaign_id=campaign_id,
+    ) as lease:
+        yield lease
+        lease.check(f"{command}:complete")
+
+
+def _mutable_command_coordinates(
+    arguments: argparse.Namespace,
+) -> tuple[str, str, str | None, bool] | None:
+    """返回 ``(command, phase, candidate_id, allow_stale_recovery)``。"""
+
+    command = str(getattr(arguments, "command", ""))
+    if command in {"status", "plan", "terminal-transition-preflight", ""}:
+        return None
+    if command in {"capture-official"}:
+        return command, "official", None, False
+    if command in {"capture-candidate", "all"}:
+        return command, "candidate", str(arguments.candidate_id), False
+    if command in {"evaluation-transition", "control-epoch"}:
+        phase = str(arguments.phase)
+        return command, phase, (
+            str(arguments.candidate_id) if phase == "candidate" else None
+        ), command == "control-epoch"
+    if command in {"compare", "accept"}:
+        return command, "candidate", str(arguments.candidate_id), False
+    if command in {"canonical-import", "canonical-advance"}:
+        return command, "candidate", str(arguments.candidate_id), True
+    if command == "deep-verify":
+        candidate_id = getattr(arguments, "candidate_id", None)
+        return command, "candidate" if candidate_id else "official", candidate_id, False
+    if command == "resume":
+        candidate_id = getattr(arguments, "candidate_id", None)
+        # resume 自身先由 status 解析当前阶段；显式 candidate-id 优先。
+        if candidate_id:
+            phase = "candidate"
+        else:
+            state = campaign_status(arguments.campaign_dir).get("status")
+            phase = (
+                "candidate"
+                if state in {
+                    "candidate_selection_required",
+                    "candidate_capture_failed",
+                    "candidate_capture_interrupted",
+                    "candidate_awaiting_client_checkpoint",
+                    "candidate_client_checkpoint_created",
+                    "candidate_awaiting_seal_approval",
+                    "candidate_sealed",
+                    "compared",
+                    "ready",
+                    "profile_approved",
+                }
+                else "official"
+            )
+        return command, phase, candidate_id, bool(getattr(arguments, "rerun_failed", False))
+    if command in {"classify", "prepare-profile", "stage-profile", "successor"}:
+        return command, "official", None, False
+    raise ConfigurationError(f"不受支持的命令：{command}")
+
+
+@contextmanager
+def _main_command_lease(
+    arguments: argparse.Namespace,
+) -> Iterable[CampaignLease | None]:
+    """主 CLI 的统一 lease 入口；status／plan 保持纯只读或建新目录。"""
+
+    coordinates = _mutable_command_coordinates(arguments)
+    if coordinates is None:
+        yield None
+        return
+    command, phase, candidate_id, allow_stale_recovery = coordinates
+    campaign_dir = arguments.campaign_dir
+    # 非法输入（例如单元测试中被 mock 的不存在 Campaign）交给原函数做
+    # 正式路径校验；合法的 Formal 目录必须经过 lease，不能用此分支绕过。
+    if not isinstance(campaign_dir, Path) or not campaign_dir.is_dir():
+        yield None
+        return
+    campaign_id: str | None = None
+    if command in {"canonical-import", "canonical-advance"}:
+        manifest = _read_json(campaign_dir / "campaign.json", "Campaign 清单")
+        raw_campaign_id = manifest.get("campaign_id")
+        if (
+            manifest.get("campaign_mode") != "formal"
+            or not isinstance(raw_campaign_id, str)
+            or not SAFE_ID_RE.fullmatch(raw_campaign_id)
+        ):
+            raise ConfigurationError("canonical 命令的 Campaign 身份非法。")
+        campaign_id = raw_campaign_id
+    deadline = _attempt_deadline(arguments, phase)
+    with _campaign_operation_lease(
+        campaign_dir,
+        phase=phase,
+        candidate_id=candidate_id,
+        command=command,
+        deadline=deadline,
+        allow_stale_recovery=allow_stale_recovery,
+        campaign_id=campaign_id,
+    ) as lease:
+        yield lease
+
+
+def _bind_active_lease_attempt(
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_id: str | None,
+) -> None:
+    """把已解析的目标 attempt 绑定到当前命令 lease（若有）。"""
+
+    if not attempt_id:
+        return
+    active = _ACTIVE_CAMPAIGN_LEASE
+    if active is None:
+        return
+    if not _lease_identity_matches(
+        active,
+        campaign_dir,
+        phase=phase,
+        candidate_id=candidate_id,
+    ):
+        raise ConfigurationError("目标 attempt 与当前 Campaign lease 身份不一致。")
+    active.bind_attempt(str(attempt_id))
 
 
 def _attempt_deadline(
@@ -2762,6 +4619,15 @@ def _write_attempt_heartbeat(
     if not allow_expired:
         deadline.check(operation)
     operation = _normalize_watchdog_operation(operation)
+    # attempt heartbeat 与 Campaign 持久 lease 使用同一操作标签。lease 失败必须
+    # 立即向上抛出，不能让子进程在失去 owner 后继续占用出口或写入证据。
+    active_lease = _ACTIVE_CAMPAIGN_LEASE
+    if active_lease is not None:
+        active_lease.heartbeat(
+            operation,
+            force=force,
+            allow_expired=allow_expired,
+        )
     if last_completed_job_id is not None and not SAFE_ID_RE.fullmatch(
         str(last_completed_job_id)
     ):
@@ -2871,7 +4737,11 @@ def _latest_failed_attempt_for_identity(
     candidate_id: str | None,
     identity: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]] | None:
-    """返回最近且身份完全相同的失败 attempt，供 transition 只读承接。"""
+    """返回最近且身份完全相同的失败 attempt，供 transition 只读承接。
+
+    兼容旧工具把“仅可选 Job 失败”误写为 ``awaiting_receipts`` 的历史
+    attempt；具体的 Kilo／seal 空边界仍由恢复 scope 做完整校验。
+    """
 
     for attempt_root, _ in _ordered_capture_attempts(
         campaign_dir, phase, candidate_id
@@ -2885,7 +4755,19 @@ def _latest_failed_attempt_for_identity(
             candidate_id,
             attempt_root.name,
         )
-        if payload.get("status") != "failed":
+        source_status = payload.get("status")
+        raw_results = payload.get("results")
+        legacy_optional_failures = (
+            source_status == "awaiting_receipts"
+            and isinstance(raw_results, list)
+            and any(
+                isinstance(result, Mapping)
+                and result.get("status") == "failed"
+                and result.get("required") is False
+                for result in raw_results
+            )
+        )
+        if source_status != "failed" and not legacy_optional_failures:
             continue
         if _fingerprint(payload.get("identity")) != _fingerprint(identity):
             raise ConfigurationError(
@@ -2894,6 +4776,1120 @@ def _latest_failed_attempt_for_identity(
             )
         return attempt_root, payload
     return None
+
+
+def _classification_candidate_reuse_requested(
+    arguments: argparse.Namespace,
+) -> bool:
+    """校验分类纠正 Candidate 复用参数是否形成完整显式请求。"""
+
+    source_fields = {
+        "--candidate-reuse-source-campaign-dir": getattr(
+            arguments, "candidate_reuse_source_campaign_dir", None
+        ),
+        "--candidate-reuse-source-candidate-id": getattr(
+            arguments, "candidate_reuse_source_candidate_id", None
+        ),
+        "--candidate-reuse-source-attempt-id": getattr(
+            arguments, "candidate_reuse_source_attempt_id", None
+        ),
+    }
+    approval = getattr(arguments, "approve_candidate_reuse_sha256", None)
+    requested = any(value is not None for value in source_fields.values()) or bool(
+        approval
+    )
+    if not requested:
+        return False
+    missing = sorted(name for name, value in source_fields.items() if value is None)
+    if missing:
+        raise ConfigurationError(
+            "分类 Candidate 复用缺少显式来源参数：" + "、".join(missing)
+        )
+    if not getattr(arguments, "rerun_failed", False):
+        raise ConfigurationError("分类 Candidate 复用必须显式使用 --rerun-failed。")
+    if not (
+        getattr(arguments, "preview_recovery", False)
+        or isinstance(approval, str)
+    ):
+        raise ConfigurationError(
+            "分类 Candidate 复用必须先 --preview-recovery，批准时提供摘要。"
+        )
+    if approval is not None and not SHA256_RE.fullmatch(str(approval)):
+        raise ConfigurationError("--approve-candidate-reuse-sha256 格式非法。")
+    return True
+
+
+def _classification_candidate_reuse_source(
+    arguments: argparse.Namespace,
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    classification: Mapping[str, Any],
+    *,
+    candidate_id: str,
+) -> dict[str, Any] | None:
+    """只读解析分类事实纠正后继的唯一直接前序 Candidate attempt。"""
+
+    if not _classification_candidate_reuse_requested(arguments):
+        return None
+    predecessor = manifest.get("predecessor")
+    if (
+        manifest.get("campaign_mode") != "formal"
+        or predecessor is None
+        or not isinstance(predecessor, Mapping)
+        or predecessor.get("reason") != "classification_fact_correction"
+        or classification.get("status") != "complete"
+        or classification.get("predecessor_import") is not None
+    ):
+        raise ConfigurationError(
+            "分类 Candidate 复用只允许已批准的 classification_fact_correction 后继。"
+        )
+    source_dir_value = getattr(
+        arguments, "candidate_reuse_source_campaign_dir", None
+    )
+    if not isinstance(source_dir_value, Path) or not source_dir_value.is_absolute():
+        raise ConfigurationError("分类 Candidate 复用来源 Campaign 必须是绝对路径。")
+    if source_dir_value.is_symlink() or not source_dir_value.is_dir():
+        raise ConfigurationError("分类 Candidate 复用来源 Campaign 不存在或不可信。")
+    source_dir = source_dir_value.resolve(strict=True)
+    if str(source_dir) != str(source_dir_value):
+        raise ConfigurationError("分类 Candidate 复用来源 Campaign 必须是规范绝对路径。")
+    if source_dir == campaign_dir.resolve(strict=True) or str(source_dir) != str(
+        predecessor.get("campaign_dir", "")
+    ):
+        raise ConfigurationError("分类 Candidate 复用来源不是当前 Campaign 的直接前序。")
+    source_manifest = load_campaign_manifest(
+        source_dir,
+        _control_epoch_bootstrap=True,
+    )
+    source_manifest_path = source_dir / "campaign.json"
+    if (
+        predecessor.get("campaign_id") != source_manifest.get("campaign_id")
+        or predecessor.get("campaign_manifest_sha256")
+        != file_sha256(source_manifest_path)
+    ):
+        raise ConfigurationError("分类 Candidate 复用的直接前序绑定发生漂移。")
+
+    source_candidate_id = str(
+        getattr(arguments, "candidate_reuse_source_candidate_id", "")
+    )
+    source_attempt_id = str(
+        getattr(arguments, "candidate_reuse_source_attempt_id", "")
+    )
+    if not SAFE_ID_RE.fullmatch(source_candidate_id) or not SAFE_ID_RE.fullmatch(
+        source_attempt_id
+    ):
+        raise ConfigurationError("分类 Candidate 复用的前序 Candidate／attempt 非法。")
+    source_candidate_root = source_dir / "candidates" / source_candidate_id
+    if (source_candidate_root / "result.json").exists() or (
+        source_candidate_root / "result.json"
+    ).is_symlink():
+        raise ConfigurationError("分类 Candidate 复用来源已经封存，不是未封存 attempt。")
+    source_root, source_attempt = _load_capture_attempt(
+        source_dir,
+        "candidate",
+        source_candidate_id,
+        source_attempt_id,
+        _historical_manifest_controls=True,
+    )
+    if source_attempt.get("status") != "awaiting_receipts":
+        raise ConfigurationError("分类 Candidate 复用来源必须是 awaiting_receipts。")
+
+    # 只枚举小型 attempt 收据，证明直接前序没有第二个待封存 Candidate；
+    # 不读取任何原始抓包证据，也不遍历 evidence root。
+    awaiting: list[tuple[str, str]] = []
+    candidates_root = source_dir / "candidates"
+    if candidates_root.is_symlink() or not candidates_root.is_dir():
+        raise ConfigurationError("分类 Candidate 复用来源缺少可信 candidates 目录。")
+    for candidate_root in sorted(candidates_root.iterdir()):
+        if not candidate_root.is_dir() or candidate_root.is_symlink():
+            continue
+        if (candidate_root / "result.json").is_file():
+            continue
+        attempts_root = candidate_root / "attempts"
+        if not attempts_root.is_dir() or attempts_root.is_symlink():
+            continue
+        for attempt_root in sorted(attempts_root.iterdir()):
+            if not attempt_root.is_dir() or attempt_root.is_symlink():
+                continue
+            attempt_path = attempt_root / "attempt.json"
+            if not attempt_path.is_file() or attempt_path.is_symlink():
+                raise ConfigurationError("分类 Candidate 复用来源存在未完成预约。")
+            _, payload = _load_capture_attempt(
+                source_dir,
+                "candidate",
+                candidate_root.name,
+                attempt_root.name,
+                _historical_manifest_controls=True,
+            )
+            if payload.get("status") == "awaiting_receipts":
+                awaiting.append((candidate_root.name, attempt_root.name))
+    if awaiting != [(source_candidate_id, source_attempt_id)]:
+        raise ConfigurationError("分类 Candidate 复用来源不是唯一待封存 attempt。")
+
+    source_reservation = _load_capture_reservation(
+        source_dir,
+        source_root,
+        phase="candidate",
+        candidate_id=source_candidate_id,
+        _historical_manifest_controls=True,
+    )
+    planned_ids = [
+        str(item.get("id"))
+        for item in source_reservation.get("planned_jobs", [])
+        if isinstance(item, Mapping)
+    ]
+    results = source_attempt.get("results")
+    if not isinstance(results, list):
+        raise ConfigurationError("分类 Candidate 复用来源缺少 Job 结果。")
+    result_ids = [
+        str(item.get("id")) for item in results if isinstance(item, Mapping)
+    ]
+    expected_ids = sorted(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS)
+    if (
+        len(planned_ids) != len(expected_ids)
+        or sorted(planned_ids) != expected_ids
+        or len(result_ids) != len(expected_ids)
+        or sorted(result_ids) != expected_ids
+        or len(set(result_ids)) != len(result_ids)
+        or any(
+            not isinstance(item, Mapping) or item.get("status") != "complete"
+            for item in results
+        )
+    ):
+        raise ConfigurationError("分类 Candidate 复用来源不是九项全部 complete。")
+    for item in results:
+        assert isinstance(item, Mapping)
+        roots = item.get("evidence_roots")
+        if (
+            not isinstance(roots, list)
+            or not roots
+            or any(
+                not isinstance(root, str)
+                or not Path(root).is_absolute()
+                or ".." in Path(root).parts
+                for root in roots
+            )
+        ):
+            raise ConfigurationError("分类 Candidate 复用来源证据根坐标非法。")
+
+    current_candidates_root = campaign_dir / "candidates"
+    if current_candidates_root.exists() or current_candidates_root.is_symlink():
+        if current_candidates_root.is_symlink() or not current_candidates_root.is_dir():
+            raise ConfigurationError("当前 Campaign candidates 路径不可信。")
+        if any(current_candidates_root.iterdir()):
+            raise ConfigurationError("当前 Campaign 已有 Candidate／attempt，禁止复用。")
+    _, current_result = _stage_path(
+        campaign_dir,
+        "capture-candidate",
+        candidate_id,
+    )
+    if current_result.exists() or current_result.is_symlink():
+        raise ConfigurationError("当前 Campaign 已有 Candidate 阶段结果，禁止复用。")
+    identity = source_attempt.get("identity")
+    if not isinstance(identity, dict):
+        raise ConfigurationError("分类 Candidate 复用来源缺少候选运行身份。")
+    return {
+        "source_campaign_dir": source_dir,
+        "source_manifest": source_manifest,
+        "source_candidate_id": source_candidate_id,
+        "source_attempt_id": source_attempt_id,
+        "source_root": source_root,
+        "source_attempt": source_attempt,
+        "identity": dict(identity),
+    }
+
+
+def _validate_classification_candidate_reuse_preview(
+    preview: Mapping[str, Any],
+) -> dict[str, Any]:
+    """重放零执行 Candidate 复用预览的字段、集合与自摘要。"""
+
+    required = {
+        "schema_version",
+        "status",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "candidate_id",
+        "source_campaign",
+        "source_candidate_id",
+        "source_attempt",
+        "identity_sha256",
+        "current_tool_files_sha256",
+        "current_tool_production_sha256",
+        "planned_job_ids",
+        "execute_job_ids",
+        "reused_job_ids",
+        "job_contract_sha256",
+        "source_results_sha256",
+        "result_bindings",
+        "evidence_roots",
+        "evidence_roots_sha256",
+        "reservation_exists",
+        "live_request_count",
+        "scanned_bytes",
+        "preview_sha256",
+    }
+    unsigned = dict(preview)
+    preview_sha256 = unsigned.pop("preview_sha256", None)
+    source_campaign = preview.get("source_campaign")
+    source_attempt = preview.get("source_attempt")
+    result_bindings = preview.get("result_bindings")
+    evidence_roots = preview.get("evidence_roots")
+    planned = preview.get("planned_job_ids")
+    reused = preview.get("reused_job_ids")
+    if (
+        set(preview) != required
+        or preview.get("schema_version")
+        != CLASSIFICATION_CANDIDATE_REUSE_PREVIEW_SCHEMA
+        or preview.get("status") != "approval_required"
+        or not SAFE_ID_RE.fullmatch(str(preview.get("campaign_id", "")))
+        or not SHA256_RE.fullmatch(
+            str(preview.get("campaign_manifest_sha256", ""))
+        )
+        or not SAFE_ID_RE.fullmatch(str(preview.get("candidate_id", "")))
+        or not SAFE_ID_RE.fullmatch(
+            str(preview.get("source_candidate_id", ""))
+        )
+        or not isinstance(source_campaign, Mapping)
+        or set(source_campaign)
+        != {"campaign_dir", "campaign_id", "campaign_manifest_sha256"}
+        or not Path(str(source_campaign.get("campaign_dir", ""))).is_absolute()
+        or not SAFE_ID_RE.fullmatch(str(source_campaign.get("campaign_id", "")))
+        or not SHA256_RE.fullmatch(
+            str(source_campaign.get("campaign_manifest_sha256", ""))
+        )
+        or not isinstance(source_attempt, Mapping)
+        or set(source_attempt)
+        != {"path", "sha256", "bytes", "attempt_id", "attempt_digest", "status"}
+        or Path(str(source_attempt.get("path", ""))).is_absolute()
+        or not SHA256_RE.fullmatch(str(source_attempt.get("sha256", "")))
+        or not isinstance(source_attempt.get("bytes"), int)
+        or isinstance(source_attempt.get("bytes"), bool)
+        or int(source_attempt.get("bytes", 0)) <= 0
+        or not SAFE_ID_RE.fullmatch(str(source_attempt.get("attempt_id", "")))
+        or not SHA256_RE.fullmatch(str(source_attempt.get("attempt_digest", "")))
+        or source_attempt.get("status") != "awaiting_receipts"
+        or any(
+            not SHA256_RE.fullmatch(str(preview.get(field, "")))
+            for field in (
+                "identity_sha256",
+                "current_tool_files_sha256",
+                "current_tool_production_sha256",
+                "job_contract_sha256",
+                "source_results_sha256",
+                "evidence_roots_sha256",
+            )
+        )
+        or planned != sorted(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS)
+        or preview.get("execute_job_ids") != []
+        or reused != sorted(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS)
+        or not isinstance(result_bindings, list)
+        or len(result_bindings) != len(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS)
+        or sorted(
+            str(item.get("id"))
+            for item in result_bindings
+            if isinstance(item, Mapping)
+        )
+        != sorted(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS)
+        or not isinstance(evidence_roots, list)
+        or evidence_roots != sorted(set(evidence_roots))
+        or any(
+            not isinstance(root, str)
+            or not Path(root).is_absolute()
+            or ".." in Path(root).parts
+            for root in evidence_roots
+        )
+        or preview.get("evidence_roots_sha256")
+        != _fingerprint({"evidence_roots": evidence_roots})
+        or preview.get("reservation_exists") is not False
+        or preview.get("live_request_count") != 0
+        or preview.get("scanned_bytes") != 0
+        or not SHA256_RE.fullmatch(str(preview_sha256))
+        or _fingerprint(unsigned) != preview_sha256
+    ):
+        raise ConfigurationError("分类 Candidate 复用预览字段、边界或摘要非法。")
+    for binding in result_bindings:
+        if (
+            not isinstance(binding, Mapping)
+            or set(binding) != {"id", "result_sha256", "evidence_roots"}
+            or not SHA256_RE.fullmatch(str(binding.get("result_sha256", "")))
+            or not isinstance(binding.get("evidence_roots"), list)
+            or binding.get("evidence_roots")
+            != sorted(set(binding.get("evidence_roots", [])))
+        ):
+            raise ConfigurationError("分类 Candidate 复用结果绑定非法。")
+    return dict(preview)
+
+
+def _classification_candidate_reuse_source_tool_identity(
+    source_attempt: Mapping[str, Any],
+    source_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """还原来源 attempt 实际使用的逐文件工具身份。
+
+    新 attempt 已冻结完整组件文件清单，它比 Campaign 创建时的全局
+    快照更准确地表达结果产出身份。只有旧 attempt 没有该字段时，
+    才回退到来源 Campaign manifest；字段存在但损坏时必须失败关闭。
+    """
+
+    components = source_attempt.get("tool_components")
+    if components is None:
+        fallback = source_manifest.get("tool_identity")
+        if not isinstance(fallback, Mapping):
+            raise ConfigurationError("分类 Candidate 复用的来源工具身份缺失。")
+        # 回退路径仍必须能解析为合法的逐文件清单。
+        _tool_entry_digest_map(fallback)
+        return dict(fallback)
+    if not isinstance(components, Mapping):
+        raise ConfigurationError("分类 Candidate 复用的来源 attempt 工具组件非法。")
+    try:
+        component_identity = {"components": dict(components)}
+        bundle = _tool_component_bundle(component_identity)
+        entries_by_path = _tool_entry_digest_map(component_identity)
+    except (ConfigurationError, incremental_recovery.IncrementalRecoveryError) as error:
+        raise ConfigurationError(
+            "分类 Candidate 复用的来源 attempt 工具组件无法验证。"
+        ) from error
+    if not entries_by_path:
+        raise ConfigurationError("分类 Candidate 复用的来源 attempt 工具清单为空。")
+    entries = [
+        {"path": path, "sha256": digest}
+        for path, digest in entries_by_path.items()
+    ]
+    return {
+        "entry_count": len(entries),
+        "files_sha256": _fingerprint({"entries": entries}),
+        "entries": entries,
+        "components": bundle["components"],
+        **_tool_identity_sides(entries),
+    }
+
+
+def _build_classification_candidate_reuse_preview(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    candidate_id: str,
+    identity: Mapping[str, Any],
+    planned_jobs: list[Job],
+    current_tool: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """验证九项执行合同并生成完全零写、零扫描的批准预览。"""
+
+    source_attempt = context["source_attempt"]
+    source_manifest = context["source_manifest"]
+    if _fingerprint(dict(identity)) != _fingerprint(context["identity"]):
+        raise ConfigurationError("分类 Candidate 复用的候选运行身份发生漂移。")
+    if {job.job_id for job in planned_jobs} != CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS:
+        raise ConfigurationError("分类 Candidate 复用的当前计划不是固定九项闭集。")
+    source_tool = _classification_candidate_reuse_source_tool_identity(
+        source_attempt,
+        source_manifest,
+    )
+    for label, frozen_tool in (
+        ("来源 attempt", source_tool),
+        ("当前 Campaign", manifest.get("tool_identity")),
+    ):
+        if not isinstance(frozen_tool, Mapping):
+            raise ConfigurationError(f"分类 Candidate 复用的{label}工具身份缺失。")
+        drift = _tool_identity_drift(frozen_tool, current_tool)
+        unexpected = sorted(
+            set(drift.get("production", [])) - set(_PHASE_EVALUATION_HYBRID_FILES)
+        )
+        if unexpected:
+            raise ConfigurationError(
+                "分类 Candidate 复用检测到产出工具漂移：" + "、".join(unexpected)
+            )
+    reused_results = _prior_complete_results(
+        campaign_dir,
+        _capture_attempt_relative("candidate", candidate_id),
+        planned_jobs,
+        phase="candidate",
+        candidate_id=candidate_id,
+        identity=dict(identity),
+        tool_identity=current_tool,
+        affected_job_ids=(),
+        expected_reuse_job_ids=CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS,
+        source_attempt_id=str(context["source_attempt_id"]),
+        source_campaign_dir=Path(context["source_campaign_dir"]),
+        source_candidate_id=str(context["source_candidate_id"]),
+        allowed_high_risk_path_changes=(),
+        allowed_source_statuses=("awaiting_receipts",),
+        allow_unbound_cross_campaign_preview=True,
+        source_tool_identity=source_tool,
+    )
+    source_results = sorted(
+        (dict(item) for item in source_attempt["results"]),
+        key=lambda item: str(item.get("id", "")),
+    )
+    current_jobs = {job.job_id: job for job in planned_jobs}
+    contract_rows = [
+        {
+            "id": str(item["id"]),
+            "source_execution_sha256": str(item["execution_sha256"]),
+            "target_execution_sha256": _job_execution_sha256(
+                current_jobs[str(item["id"])]
+            ),
+        }
+        for item in source_results
+    ]
+    result_bindings = [
+        {
+            "id": str(item["id"]),
+            "result_sha256": _fingerprint(item),
+            "evidence_roots": sorted(set(str(root) for root in item["evidence_roots"])),
+        }
+        for item in source_results
+    ]
+    evidence_roots = sorted(
+        {
+            root
+            for item in result_bindings
+            for root in item["evidence_roots"]
+        }
+    )
+    source_dir = Path(context["source_campaign_dir"])
+    source_root = Path(context["source_root"])
+    source_attempt_path = source_root / "attempt.json"
+    preview: dict[str, Any] = {
+        "schema_version": CLASSIFICATION_CANDIDATE_REUSE_PREVIEW_SCHEMA,
+        "status": "approval_required",
+        "campaign_id": str(manifest["campaign_id"]),
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "candidate_id": candidate_id,
+        "source_campaign": {
+            "campaign_dir": str(source_dir),
+            "campaign_id": str(source_manifest["campaign_id"]),
+            "campaign_manifest_sha256": file_sha256(source_dir / "campaign.json"),
+        },
+        "source_candidate_id": str(context["source_candidate_id"]),
+        "source_attempt": {
+            "path": source_attempt_path.relative_to(source_dir).as_posix(),
+            "sha256": file_sha256(source_attempt_path),
+            "bytes": source_attempt_path.stat().st_size,
+            "attempt_id": str(source_attempt["attempt_id"]),
+            "attempt_digest": str(source_attempt["attempt_digest"]),
+            "status": "awaiting_receipts",
+        },
+        "identity_sha256": _fingerprint(dict(identity)),
+        "current_tool_files_sha256": str(current_tool["files_sha256"]),
+        "current_tool_production_sha256": _tool_identity_side_digest_excluding(
+            current_tool,
+            "production",
+            _PHASE_EVALUATION_HYBRID_FILES,
+        ),
+        "planned_job_ids": sorted(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS),
+        "execute_job_ids": [],
+        "reused_job_ids": sorted(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS),
+        "job_contract_sha256": _fingerprint({"jobs": contract_rows}),
+        "source_results_sha256": _fingerprint({"results": source_results}),
+        "result_bindings": result_bindings,
+        "evidence_roots": evidence_roots,
+        "evidence_roots_sha256": _fingerprint(
+            {"evidence_roots": evidence_roots}
+        ),
+        "reservation_exists": False,
+        "live_request_count": 0,
+        "scanned_bytes": 0,
+    }
+    preview["preview_sha256"] = _fingerprint(preview)
+    return _validate_classification_candidate_reuse_preview(preview), reused_results
+
+
+def _validate_classification_candidate_reuse_transition_payload(
+    transition: Mapping[str, Any],
+    *,
+    expected_preview: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """重放已批准 transition；可选要求其预览逐字段等于现场重算值。"""
+
+    required = {
+        "schema_version",
+        "status",
+        "approved_at_utc",
+        "preview",
+        "transition_digest",
+    }
+    unsigned = dict(transition)
+    digest = unsigned.pop("transition_digest", None)
+    preview = transition.get("preview")
+    if (
+        set(transition) != required
+        or transition.get("schema_version")
+        != CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_SCHEMA
+        or transition.get("status") != "approved"
+        or not _is_rfc3339_timestamp(transition.get("approved_at_utc"))
+        or not isinstance(preview, Mapping)
+        or not SHA256_RE.fullmatch(str(digest))
+        or _fingerprint(unsigned) != digest
+    ):
+        raise ConfigurationError("分类 Candidate 复用 transition 身份或摘要漂移。")
+    validated_preview = _validate_classification_candidate_reuse_preview(preview)
+    if expected_preview is not None and validated_preview != dict(expected_preview):
+        raise ConfigurationError("分类 Candidate 复用 transition 未绑定当前预览。")
+    return dict(transition)
+
+
+def _approve_classification_candidate_reuse_transition(
+    campaign_dir: Path,
+    preview: Mapping[str, Any],
+    approval_sha256: Any,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """按批准摘要只追加 transition，并返回 attempt 与结果用的两种绑定。"""
+
+    validated_preview = _validate_classification_candidate_reuse_preview(preview)
+    if approval_sha256 != validated_preview["preview_sha256"]:
+        raise ConfigurationError("分类 Candidate 复用批准摘要与当前预览不一致。")
+    path = campaign_dir / CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_FILENAME
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ConfigurationError("分类 Candidate 复用 transition 路径不可信。")
+    if path.is_file():
+        transition = _read_json(path, "分类 Candidate 复用 transition")
+    else:
+        transition = {
+            "schema_version": CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_SCHEMA,
+            "status": "approved",
+            "approved_at_utc": _utc_now(),
+            "preview": validated_preview,
+        }
+        transition["transition_digest"] = _fingerprint(transition)
+        _secure_write_json_once(path, transition)
+    transition = _validate_classification_candidate_reuse_transition_payload(
+        transition,
+        expected_preview=validated_preview,
+    )
+    relative = path.relative_to(campaign_dir).as_posix()
+    return (
+        transition,
+        {"path": relative, "sha256": file_sha256(path)},
+        {
+            "path": relative,
+            "sha256": file_sha256(path),
+            "bytes": path.stat().st_size,
+        },
+    )
+
+
+def _load_classification_candidate_reuse_transition(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    *,
+    candidate_id: str,
+    identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """从当前 Campaign 重放 transition 及其直接前序小型收据链。"""
+
+    _require_file_binding(binding, "attempt 分类 Candidate 复用 transition")
+    if binding.get("path") != CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_FILENAME:
+        raise ConfigurationError("attempt 分类 Candidate 复用 transition 路径非法。")
+    path = _campaign_file(campaign_dir, str(binding["path"]))
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or file_sha256(path) != binding.get("sha256")
+    ):
+        raise ConfigurationError("attempt 分类 Candidate 复用 transition 丢失或漂移。")
+    transition = _validate_classification_candidate_reuse_transition_payload(
+        _read_json(path, "attempt 分类 Candidate 复用 transition")
+    )
+    preview = transition["preview"]
+    predecessor = manifest.get("predecessor")
+    source_campaign = preview["source_campaign"]
+    if (
+        preview.get("campaign_id") != manifest.get("campaign_id")
+        or preview.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or preview.get("candidate_id") != candidate_id
+        or preview.get("identity_sha256") != _fingerprint(dict(identity))
+        or not isinstance(predecessor, Mapping)
+        or predecessor.get("reason") != "classification_fact_correction"
+        or source_campaign
+        != {
+            "campaign_dir": predecessor.get("campaign_dir"),
+            "campaign_id": predecessor.get("campaign_id"),
+            "campaign_manifest_sha256": predecessor.get(
+                "campaign_manifest_sha256"
+            ),
+        }
+    ):
+        raise ConfigurationError("attempt 分类 Candidate 复用 transition 身份不一致。")
+    source_dir = Path(str(source_campaign["campaign_dir"]))
+    if (
+        not source_dir.is_absolute()
+        or source_dir.is_symlink()
+        or not source_dir.is_dir()
+        or file_sha256(source_dir / "campaign.json")
+        != source_campaign["campaign_manifest_sha256"]
+    ):
+        raise ConfigurationError("attempt 分类 Candidate 复用的直接前序漂移。")
+    source_attempt_binding = preview["source_attempt"]
+    source_attempt_path = _campaign_file(
+        source_dir,
+        str(source_attempt_binding["path"]),
+    )
+    if (
+        source_attempt_path.is_symlink()
+        or not source_attempt_path.is_file()
+        or file_sha256(source_attempt_path) != source_attempt_binding["sha256"]
+        or source_attempt_path.stat().st_size != source_attempt_binding["bytes"]
+    ):
+        raise ConfigurationError("attempt 分类 Candidate 复用来源 attempt 漂移。")
+    _, source_attempt = _load_capture_attempt(
+        source_dir,
+        "candidate",
+        str(preview["source_candidate_id"]),
+        str(source_attempt_binding["attempt_id"]),
+        _historical_manifest_controls=True,
+    )
+    source_results = sorted(
+        (dict(item) for item in source_attempt.get("results", [])),
+        key=lambda item: str(item.get("id", "")),
+    )
+    result_bindings = [
+        {
+            "id": str(item.get("id", "")),
+            "result_sha256": _fingerprint(item),
+            "evidence_roots": sorted(
+                set(str(root) for root in item.get("evidence_roots", []))
+            ),
+        }
+        for item in source_results
+    ]
+    if (
+        source_attempt.get("attempt_digest")
+        != source_attempt_binding["attempt_digest"]
+        or source_attempt.get("status") != "awaiting_receipts"
+        or source_attempt.get("identity") != dict(identity)
+        or preview.get("source_results_sha256")
+        != _fingerprint({"results": source_results})
+        or preview.get("result_bindings") != result_bindings
+    ):
+        raise ConfigurationError("attempt 分类 Candidate 复用来源结果或身份漂移。")
+    return transition
+
+
+def _classification_candidate_reuse_attempt_source(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    attempt: Mapping[str, Any],
+) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:
+    """重放 metadata-only attempt 的来源 Campaign、attempt 与批准 transition。"""
+
+    binding = attempt.get("classification_candidate_reuse_transition")
+    identity = attempt.get("identity")
+    candidate_id = attempt.get("candidate_id")
+    if (
+        not isinstance(binding, Mapping)
+        or not isinstance(identity, Mapping)
+        or not isinstance(candidate_id, str)
+    ):
+        raise ConfigurationError("metadata-only attempt 缺少来源 transition 或身份。")
+    transition = _load_classification_candidate_reuse_transition(
+        campaign_dir,
+        manifest,
+        binding,
+        candidate_id=candidate_id,
+        identity=identity,
+    )
+    preview = transition["preview"]
+    source_dir = Path(str(preview["source_campaign"]["campaign_dir"]))
+    source_root, source_attempt = _load_capture_attempt(
+        source_dir,
+        "candidate",
+        str(preview["source_candidate_id"]),
+        str(preview["source_attempt"]["attempt_id"]),
+        _historical_manifest_controls=True,
+    )
+    return source_dir, source_root, source_attempt, transition
+
+
+def _is_classification_candidate_metadata_only_attempt(
+    attempt: Mapping[str, Any],
+) -> bool:
+    """判断 attempt 是否为分类事实纠正的零执行 metadata-only 例外。"""
+
+    return isinstance(
+        attempt.get("classification_candidate_reuse_transition"), Mapping
+    )
+
+
+def _runtime_successor_recovery_source(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    classification: Mapping[str, Any],
+    *,
+    candidate_id: str,
+    identity: Mapping[str, Any],
+    planned_jobs: Iterable[Job],
+) -> dict[str, Any] | None:
+    """解析增量后继绑定的前序失败 attempt，并冻结最小执行闭集。
+
+    前序失败项必须重跑；目标场景明确改变的五项即使此前成功也必须重跑；
+    其余成功项才允许复用。所有来源均由当前 Campaign 的
+    ``predecessor-import.json`` 间接绑定，禁止扫描目录猜测 sibling 或回退
+    为当前九项全量执行。
+    """
+
+    import_binding = classification.get("predecessor_import")
+    if import_binding is None:
+        return None
+    _require_file_binding(import_binding, "v9 前序导入收据")
+    if import_binding.get("path") != "predecessor-import.json":
+        raise ConfigurationError("v9 前序导入收据路径非法。")
+    import_path = _campaign_file(campaign_dir, "predecessor-import.json")
+    if (
+        import_path.is_symlink()
+        or not import_path.is_file()
+        or file_sha256(import_path) != import_binding.get("sha256")
+    ):
+        raise ConfigurationError("v9 前序导入收据丢失或摘要漂移。")
+    receipt = _read_json(import_path, "v9 前序导入收据")
+    receipt_schema = receipt.get("schema_version")
+    if receipt_schema not in {
+        PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+        PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+        PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+    }:
+        return None
+    if receipt.get("reason") not in CANDIDATE_INCREMENTAL_SUCCESSOR_REASONS:
+        raise ConfigurationError("Candidate 增量后继的前序导入原因非法。")
+
+    predecessor = manifest.get("predecessor")
+    control_replacement = receipt.get("control_replacement")
+    abandoned = (
+        control_replacement.get("source_attempt")
+        if receipt_schema == PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA
+        and isinstance(control_replacement, Mapping)
+        else receipt.get("abandoned_candidate_attempt")
+    )
+    transition = receipt.get("target_scenario_transition")
+    if (
+        not isinstance(predecessor, Mapping)
+        or predecessor.get("reason")
+        not in CANDIDATE_INCREMENTAL_SUCCESSOR_REASONS
+        or not isinstance(abandoned, Mapping)
+    ):
+        raise ConfigurationError("Candidate 增量后继缺少前序失败 attempt。")
+    if receipt_schema == PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA:
+        if not isinstance(transition, Mapping):
+            raise ConfigurationError("v9 后继缺少前序失败 attempt 或场景过渡。")
+    elif transition is not None:
+        raise ConfigurationError("非场景纠正后继不得携带 target 场景过渡。")
+    source_campaign = (
+        control_replacement.get("source_campaign")
+        if receipt_schema == PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA
+        and isinstance(control_replacement, Mapping)
+        else predecessor
+    )
+    predecessor_dir = Path(
+        str(
+            source_campaign.get("campaign_dir", "")
+            if isinstance(source_campaign, Mapping)
+            else ""
+        )
+    )
+    if (
+        not predecessor_dir.is_absolute()
+        or predecessor_dir.is_symlink()
+        or not predecessor_dir.is_dir()
+    ):
+        raise ConfigurationError("v9 前序 Campaign 路径不可信。")
+    predecessor_dir = predecessor_dir.resolve(strict=True)
+    predecessor_manifest = load_campaign_manifest(predecessor_dir)
+    if receipt_schema == PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA and (
+        not isinstance(source_campaign, Mapping)
+        or source_campaign.get("campaign_id")
+        != predecessor_manifest.get("campaign_id")
+        or source_campaign.get("campaign_manifest_sha256")
+        != file_sha256(predecessor_dir / "campaign.json")
+    ):
+        raise ConfigurationError("Candidate 增量后继的源 Campaign 绑定漂移。")
+    predecessor_candidate_id = str(abandoned.get("candidate_id", ""))
+    predecessor_attempt_id = str(abandoned.get("attempt_id", ""))
+    if (
+        not SAFE_ID_RE.fullmatch(predecessor_candidate_id)
+        or not SAFE_ID_RE.fullmatch(predecessor_attempt_id)
+    ):
+        raise ConfigurationError("v9 前序 Candidate／attempt 身份非法。")
+    source_root, source_attempt = _load_capture_attempt(
+        predecessor_dir,
+        "candidate",
+        predecessor_candidate_id,
+        predecessor_attempt_id,
+    )
+    source_root = source_root.resolve(strict=True)
+    source_attempt_path = source_root / "attempt.json"
+    expected_abandoned = {
+        "candidate_id": source_attempt["candidate_id"],
+        "attempt_id": source_attempt["attempt_id"],
+        "path": source_attempt_path.relative_to(predecessor_dir).as_posix(),
+        "sha256": file_sha256(source_attempt_path),
+        "attempt_digest": source_attempt["attempt_digest"],
+        "identity_sha256": _fingerprint(source_attempt["identity"]),
+        "status": source_attempt["status"],
+    }
+    if dict(abandoned) != expected_abandoned:
+        raise ConfigurationError("v9 前序失败 attempt 绑定漂移。")
+    source_status = str(source_attempt.get("status", ""))
+    allow_awaiting_failures = (
+        receipt_schema
+        in {
+            PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
+            PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        }
+        and source_status == "awaiting_receipts"
+    )
+    if (
+        source_status not in ({"failed", "awaiting_receipts"} if allow_awaiting_failures else {"failed"})
+        or _fingerprint(source_attempt.get("identity")) != _fingerprint(identity)
+    ):
+        raise ConfigurationError("v9 前序失败 attempt 与当前候选身份不一致。")
+
+    source_scope = _phase_evaluation_recovery_scope(
+        predecessor_dir,
+        predecessor_manifest,
+        phase="candidate",
+        candidate_id=predecessor_candidate_id,
+        attempt_root=source_root,
+        attempt=source_attempt,
+        allow_empty=True,
+        allow_awaiting_failures=allow_awaiting_failures,
+    )
+    planned_ids = {job.job_id for job in planned_jobs}
+    source_planned_ids = set(source_scope.get("planned_job_ids", []))
+    source_tool = predecessor_manifest.get("tool_identity")
+    successor_tool = manifest.get("tool_identity")
+    if not isinstance(source_tool, Mapping) or not isinstance(
+        successor_tool, Mapping
+    ):
+        raise ConfigurationError("v9 后继缺少源／目标工具身份。")
+    tool_drift = _tool_identity_drift(source_tool, successor_tool)
+    production_paths = set(tool_drift.get("production", []))
+    evaluation_paths = set(tool_drift.get("evaluation", []))
+    replacement_epoch_source: Mapping[str, Any] | None = None
+    validated_current_production_sha256: str | None = None
+    if receipt_schema == PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA:
+        effective_epoch = _load_control_epoch_receipt(campaign_dir, manifest)
+        replacement_epoch_source = (
+            effective_epoch.get("source")
+            if isinstance(effective_epoch, Mapping)
+            else None
+        )
+        epoch_planned = (
+            set(replacement_epoch_source.get("planned_job_ids", []))
+            if isinstance(replacement_epoch_source, Mapping)
+            else set()
+        )
+        epoch_execute = (
+            set(replacement_epoch_source.get("execute_job_ids", []))
+            if isinstance(replacement_epoch_source, Mapping)
+            else set()
+        )
+        epoch_failed = (
+            set(replacement_epoch_source.get("failed_job_ids", []))
+            if isinstance(replacement_epoch_source, Mapping)
+            else set()
+        )
+        epoch_pending = (
+            set(replacement_epoch_source.get("pending_job_ids", []))
+            if isinstance(replacement_epoch_source, Mapping)
+            else set()
+        )
+        if (
+            not isinstance(replacement_epoch_source, Mapping)
+            or replacement_epoch_source.get("candidate_id")
+            != predecessor_candidate_id
+            or replacement_epoch_source.get("attempt_id")
+            != predecessor_attempt_id
+            or replacement_epoch_source.get("attempt_digest")
+            != source_attempt.get("attempt_digest")
+            or epoch_planned != source_planned_ids
+            or epoch_execute != epoch_failed | epoch_pending
+        ):
+            raise ConfigurationError("control epoch 冻结恢复闭集与源 attempt 漂移。")
+        epoch_invariants = (
+            effective_epoch.get("invariants")
+            if isinstance(effective_epoch, Mapping)
+            else None
+        )
+        validated_current_production_sha256 = (
+            str(epoch_invariants.get("tool_production_sha256", ""))
+            if isinstance(epoch_invariants, Mapping)
+            else None
+        )
+        if not SHA256_RE.fullmatch(
+            str(validated_current_production_sha256 or "")
+        ):
+            raise ConfigurationError("control epoch 缺少已校验的产出侧身份。")
+        high_risk_paths = set(
+            str(path)
+            for path in replacement_epoch_source.get("production_paths", [])
+        )
+    else:
+        high_risk_paths = production_paths - set(_PHASE_EVALUATION_HYBRID_FILES)
+    unknown_paths = high_risk_paths - set(
+        RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS
+    )
+    if unknown_paths:
+        raise ConfigurationError(
+            "v9 后继含未登记的产出侧工具变化："
+            + "、".join(sorted(unknown_paths))
+        )
+    tool_affected_ids = {
+        job_id
+        for path in high_risk_paths
+        for job_id in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS[path]
+    }
+    if replacement_epoch_source is not None:
+        changed_ids = set(replacement_epoch_source["execute_job_ids"])
+        if tool_affected_ids != changed_ids:
+            raise ConfigurationError("control epoch 产出文件与冻结执行闭集不一致。")
+    else:
+        changed_ids = (
+            set(transition.get("changed_job_ids", []))
+            if isinstance(transition, Mapping)
+            else set(tool_affected_ids)
+        )
+    if (
+        not planned_ids
+        or source_planned_ids != planned_ids
+        or not changed_ids
+        or not changed_ids.issubset(planned_ids)
+    ):
+        raise ConfigurationError("v9 后继的 Job 计划或变化闭集不一致。")
+    source_completed = set(source_scope.get("completed_job_ids", []))
+    source_failed = set(source_scope.get("failed_job_ids", []))
+    source_pending = set(source_scope.get("pending_job_ids", []))
+    completed_ids = source_completed - changed_ids
+    failed_ids = set(source_failed)
+    pending_ids = (source_pending | (source_completed & changed_ids)) - failed_ids
+    execute_ids = failed_ids | pending_ids | changed_ids
+    if (
+        completed_ids & execute_ids
+        or completed_ids | execute_ids != planned_ids
+        or failed_ids | pending_ids != execute_ids
+    ):
+        raise ConfigurationError("v9 后继的失败／变化 Job 并集不闭合。")
+
+    if not high_risk_paths and not isinstance(transition, Mapping):
+        raise ConfigurationError("产出工具纠正后继没有可验证的变化文件。")
+    if not tool_affected_ids.issubset(execute_ids):
+        raise ConfigurationError(
+            "v9 后继的产出侧工具变化触及复用 Job；不得放宽粗粒度组件摘要。"
+        )
+    allowed_high_risk_components = {
+        _tool_component_for_path(path) for path in high_risk_paths
+    }
+    if not allowed_high_risk_components.issubset(
+        {"producer", "relay", "runtime", "shared", "scenario"}
+    ):
+        raise ConfigurationError("v9 后继的高风险工具组件分类非法。")
+
+    return {
+        "source_campaign_dir": predecessor_dir,
+        "source_candidate_id": predecessor_candidate_id,
+        "source_root": source_root,
+        "source_attempt": source_attempt,
+        "source_receipt": {
+            "path": "predecessor-import.json",
+            "sha256": file_sha256(import_path),
+            "bytes": import_path.stat().st_size,
+        },
+        "allowed_high_risk_component_changes": sorted(
+            allowed_high_risk_components
+        ),
+        "allowed_high_risk_path_changes": sorted(high_risk_paths),
+        "validated_current_production_sha256": (
+            validated_current_production_sha256
+        ),
+        "source_tool_affected_job_ids": sorted(tool_affected_ids),
+        "allowed_source_statuses": sorted(
+            {"failed", "awaiting_receipts"}
+            if allow_awaiting_failures
+            else {"failed"}
+        ),
+        "changed_control_paths": sorted(
+            path
+            for path in evaluation_paths
+            if path not in _ENVIRONMENT_PLANE_TOOL_FILES
+        ),
+        "changed_environment_paths": sorted(
+            evaluation_paths.intersection(_ENVIRONMENT_PLANE_TOOL_FILES)
+        ),
+        "scope": {
+            "schema_version": "codex-upgrade-runtime-successor-scope/v1",
+            "source_attempt_id": predecessor_attempt_id,
+            "source_attempt_digest": source_attempt["attempt_digest"],
+            "planned_job_ids": sorted(planned_ids),
+            "completed_job_ids": sorted(completed_ids),
+            "failed_job_ids": sorted(failed_ids),
+            "pending_job_ids": sorted(pending_ids),
+            "execute_job_ids": sorted(execute_ids),
+            "changed_job_ids": sorted(changed_ids),
+            "environment_boundary_sha256": source_scope[
+                "environment_boundary_sha256"
+            ],
+        },
+        "current_candidate_id": candidate_id,
+    }
+
+
+def _control_epoch_source_campaign_dir(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+) -> Path:
+    """返回 control epoch 真正绑定源 attempt 的 Campaign。
+
+    普通后继的源 attempt 位于直接前序；control-replacement 的直接前序只是
+    已耗尽的 control-refresh，真正失败 attempt 由导入收据中的
+    ``control_replacement.source_campaign`` 冻结。两者不能混用。
+    """
+
+    predecessor = manifest.get("predecessor")
+    if not isinstance(predecessor, Mapping):
+        raise ConfigurationError("control epoch 缺少前序 Campaign 绑定。")
+    source_campaign: Mapping[str, Any] = predecessor
+    if predecessor.get("reason") == "candidate_recovery_control_replacement":
+        import_path = _campaign_file(campaign_dir, "predecessor-import.json")
+        if import_path.is_symlink() or not import_path.is_file():
+            raise ConfigurationError("control replacement 导入收据不存在或不可信。")
+        receipt = _read_json(import_path, "control replacement 前序导入收据")
+        replacement = receipt.get("control_replacement")
+        bound_source = (
+            replacement.get("source_campaign")
+            if isinstance(replacement, Mapping)
+            else None
+        )
+        if (
+            receipt.get("schema_version")
+            != PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA
+            or receipt.get("reason")
+            != "candidate_recovery_control_replacement"
+            or not isinstance(bound_source, Mapping)
+        ):
+            raise ConfigurationError("control replacement 缺少源 Campaign 绑定。")
+        source_campaign = bound_source
+
+    source_dir = Path(str(source_campaign.get("campaign_dir", "")))
+    if (
+        not source_dir.is_absolute()
+        or str(source_dir.resolve()) != str(source_dir)
+        or source_dir.resolve() == campaign_dir.resolve()
+    ):
+        raise ConfigurationError("control epoch 源 Campaign 路径不可信。")
+    _validate_existing_campaign_path(source_dir)
+    source_manifest_path = source_dir / "campaign.json"
+    source_manifest = _read_json(source_manifest_path, "control epoch 源 Campaign")
+    if (
+        source_campaign.get("campaign_id") != source_manifest.get("campaign_id")
+        or source_campaign.get("campaign_manifest_sha256")
+        != file_sha256(source_manifest_path)
+    ):
+        raise ConfigurationError("control epoch 源 Campaign 摘要漂移。")
+    return source_dir.resolve(strict=True)
 
 
 def _cheap_capture_tool_impact(
@@ -2924,12 +5920,76 @@ def _cheap_capture_tool_impact(
             "affected_job_ids": sorted(job.job_id for job in planned),
         }
     changed = sorted(str(item) for item in drift.get("changed_components", []))
+    affected, changed_production_paths, unmapped = _exact_tool_path_impact(
+        planned,
+        expected,
+        tool_identity,
+    )
     return {
-        "kind": "component_drift" if changed else "unchanged",
+        "kind": (
+            "unmapped_production_paths"
+            if unmapped
+            else "component_drift"
+            if changed
+            else "unchanged"
+        ),
         "changed_components": changed,
         "changed_paths": drift.get("changed_paths", {}),
-        "affected_job_ids": _affected_job_ids(planned, changed),
+        "changed_production_paths": changed_production_paths,
+        "unmapped_production_paths": unmapped,
+        "affected_job_ids": affected,
     }
+
+
+def _capture_invalidation_summary(
+    *,
+    invalidated_job_ids: Iterable[str],
+    reused_receipt_ids: Iterable[str],
+    changed_control_paths: Iterable[str] = (),
+    changed_environment_paths: Iterable[str] = (),
+) -> dict[str, list[str]]:
+    """按控制／环境／数据三层输出恢复失效集合。
+
+    该摘要只使用小型身份和冻结 recovery scope，不读取证据，也不创建
+    reservation。调用方必须显式传入已经闭合的 Job 集，禁止在此重新推导。
+    """
+
+    invalidated_jobs = sorted({str(item) for item in invalidated_job_ids})
+    reused = sorted({str(item) for item in reused_receipt_ids})
+    if set(invalidated_jobs).intersection(reused):
+        raise ConfigurationError("失效 Job 与复用收据集合重叠。")
+    environment_paths = sorted(
+        {str(item) for item in changed_environment_paths}
+    )
+    return {
+        "invalidated_control_ids": sorted(
+            {str(item) for item in changed_control_paths}
+        ),
+        "invalidated_p0_ids": (
+            ["arm64-environment"] if environment_paths else []
+        ),
+        "invalidated_job_ids": invalidated_jobs,
+        "reused_receipt_ids": reused,
+    }
+
+
+def _preflight_plan_invalidation_summary(
+    manifest: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    """汇总新 preflight 的失效项，并承认已重放的绑定 P0。"""
+
+    return _capture_invalidation_summary(
+        invalidated_job_ids=(
+            str(item.get("id"))
+            for item in manifest.get("jobs", [])
+            if isinstance(item, Mapping) and item.get("id")
+        ),
+        # plan 已完整重放调用方显式绑定的 P0 收据；仅因创建新的
+        # preflight 目录不能把它伪报成环境面失效。Job 是否复用
+        # 仍由随后带前序收据的增量演练逐项证明。
+        reused_receipt_ids=("arm64-environment",),
+        changed_environment_paths=(),
+    )
 
 
 def _write_incremental_noop_receipt(
@@ -3462,6 +6522,22 @@ def _validate_capture_job_results(
         raise ConfigurationError(f"{phase} 缺少必需抓包任务收据：{sorted(missing)}")
 
 
+def _failed_job_ids(results: Any) -> list[str]:
+    """返回已封存结果中的失败 Job；结构异常交由正式校验器处理。"""
+
+    if not isinstance(results, list):
+        return []
+    return sorted(
+        {
+            str(result.get("id"))
+            for result in results
+            if isinstance(result, Mapping)
+            and isinstance(result.get("id"), str)
+            and result.get("status") == "failed"
+        }
+    )
+
+
 def _validate_incremental_job_result(
     result: Mapping[str, Any],
     *,
@@ -3504,6 +6580,20 @@ def _validate_incremental_job_result(
             )
         ):
             raise ConfigurationError(f"{label} 增量身份非法。")
+    dependency_files = result.get("tool_dependency_files")
+    if dependency_files is not None and (
+        not isinstance(dependency_files, Mapping)
+        or any(
+            not isinstance(path, str)
+            or not path
+            or PurePosixPath(path).is_absolute()
+            or str(PurePosixPath(path)) != path
+            or any(part in {"", ".", ".."} for part in PurePosixPath(path).parts)
+            or not SHA256_RE.fullmatch(str(digest))
+            for path, digest in dependency_files.items()
+        )
+    ):
+        raise ConfigurationError(f"{label} 逐文件工具依赖非法。")
     disposition = result.get("disposition")
     if disposition is not None and disposition not in {"executed", "reused"}:
         raise ConfigurationError(f"{label} disposition 非法。")
@@ -4161,7 +7251,7 @@ def _build_parser() -> argparse.ArgumentParser:
             type=int,
             default=None,
             help=(
-                f"一次 capture attempt 的单调墙钟预算（默认 {DEFAULT_ATTEMPT_WALL_SECONDS} 秒，"
+                f"一次受管命令的单调墙钟预算（默认 {DEFAULT_ATTEMPT_WALL_SECONDS} 秒，"
                 f"上限 {MAX_ATTEMPT_WALL_SECONDS} 秒）。"
             ),
         )
@@ -4344,6 +7434,63 @@ def _build_parser() -> argparse.ArgumentParser:
     add_watchdog_options(official)
     official.add_argument("--acknowledge-live-requests", action="store_true")
 
+    canonical_import = subparsers.add_parser(
+        "canonical-import",
+        help="把历史恢复链一次性导入唯一 canonical checkpoint",
+    )
+    add_candidate_reference(canonical_import)
+    canonical_import.add_argument("--attempt-id", required=True)
+    canonical_import.add_argument("--kilo-facts", type=Path, required=True)
+    canonical_import.add_argument(
+        "--active-profile",
+        type=Path,
+        required=True,
+        help="当前 production_active 的不可变原始画像。",
+    )
+    canonical_import.add_argument(
+        "--profile-patch-manifest",
+        type=Path,
+        required=True,
+        help="只包含 affected rules 路径的画像补丁清单。",
+    )
+    canonical_import.add_argument(
+        "--profile-activation-fact", type=Path, required=True
+    )
+    canonical_import.add_argument(
+        "--supervisor-run-dir",
+        type=Path,
+        required=True,
+        help="当前独立父监督器 run 目录；canonical checkpoint 继承其原始 deadline。",
+    )
+    canonical_import.add_argument(
+        "--phase",
+        choices=sorted(incremental_recovery.CANONICAL_PHASES),
+        default="VC-5",
+    )
+    canonical_import.add_argument(
+        "--approve-import-sha256",
+        help="复核零扫描、零请求导入预览后回传的摘要。",
+    )
+    add_watchdog_options(canonical_import)
+
+    canonical_advance = subparsers.add_parser(
+        "canonical-advance",
+        help="按零历史扫描边界推进 seal、compare 或 accept",
+    )
+    add_candidate_reference(canonical_advance)
+    canonical_advance.add_argument("--attempt-id", required=True)
+    canonical_advance.add_argument(
+        "--canonical-step",
+        choices=("seal", "compare", "accept", *sorted(CANONICAL_PRODUCTION_STEPS)),
+        required=True,
+    )
+    canonical_advance.add_argument(
+        "--step-receipt",
+        type=Path,
+        help="VC-6 必需：Campaign 内已生成并可独立重放的激活或删除收据。",
+    )
+    add_watchdog_options(canonical_advance)
+
     successor = subparsers.add_parser(
         "successor",
         help="创建同版本后继 Campaign，并按受管原因只读承接官方事实",
@@ -4352,7 +7499,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--predecessor-campaign-dir",
         type=Path,
         required=True,
-        help="已封存官方阶段和批准分类的只读前序 Campaign 目录。",
+        help="已封存官方阶段的只读前序 Campaign 目录；普通后继还要求批准分类。",
     )
     add_campaign_reference(successor)
     successor.add_argument("--campaign-id", required=True)
@@ -4367,8 +7514,8 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=sorted(SUCCESSOR_REASONS),
         required=True,
         help=(
-            "触发同版本后继 Campaign 的受管原因；分类事实纠正只承接官方阶段，"
-            "不会复制旧批准五件套。"
+            "触发同版本后继 Campaign 的受管原因；分类事实纠正和已封存阶段控制恢复"
+            "只承接官方阶段，不会复制旧批准五件套。"
         ),
     )
     successor.add_argument(
@@ -4395,6 +7542,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     successor.add_argument(
+        "--target-scenario-manifest",
+        type=Path,
+        help=(
+            "可选：运行时身份纠正后继使用的当前目标场景；只允许为固定五个 "
+            "Candidate Job 新增 CODEX_BIN，官方执行合同必须逐字等价。"
+        ),
+    )
+    successor.add_argument(
         "--job-rehearsal-root",
         type=Path,
         help=(
@@ -4411,9 +7566,41 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     successor.add_argument(
+        "--active-timing-ledger-dir",
+        type=Path,
+        help=(
+            "仅用于已封存阶段控制恢复：封存 transition 所绑定同一 active "
+            "UpgradeTimingLedger 的当前目录。"
+        ),
+    )
+    successor.add_argument(
+        "--active-timing-receipt",
+        type=Path,
+        help=(
+            "仅用于已封存阶段控制恢复：同一 Ledger 当前 VC-2 checkpoint。"
+        ),
+    )
+    successor.add_argument(
+        "--active-arm64-environment-root",
+        type=Path,
+        help=(
+            "仅用于已封存阶段控制恢复：封存 transition 原 ARM64 P0 收据根。"
+        ),
+    )
+    successor.add_argument(
+        "--active-arm64-environment-receipt",
+        type=Path,
+        help=(
+            "仅用于已封存阶段控制恢复：封存 transition 原 ARM64 P0 收据。"
+        ),
+    )
+    successor.add_argument(
         "--recovery-timing-ledger-dir",
         type=Path,
-        help="旧 Ledger 停线后，恢复 P0 使用的新 UpgradeTimingLedger。",
+        help=(
+            "旧 Ledger 停线后恢复 P0 使用的新 UpgradeTimingLedger；"
+            "也用于 sealed_stage_control_recovery 的 stopped 分支。"
+        ),
     )
     successor.add_argument(
         "--recovery-timing-receipt",
@@ -4433,13 +7620,140 @@ def _build_parser() -> argparse.ArgumentParser:
     successor.add_argument(
         "--predecessor-stop-ledger-dir",
         type=Path,
-        help="前序 Formal 所绑定且已经停线的 Ledger。",
+        help=(
+            "前序 Formal 或封存 transition 所绑定且已经停线的 Ledger。"
+        ),
     )
     successor.add_argument(
         "--predecessor-stop-receipt",
         type=Path,
         help="前序 Ledger 的 stop_the_line checkpoint。",
     )
+    successor.add_argument(
+        "--predecessor-recovery-transition",
+        type=Path,
+        help=(
+            "仅用于 candidate_recovery_control_refresh：源 Candidate attempt 内"
+            "已批准且绑定本次过期恢复 Ledger 的 evaluation-transition 文件。"
+        ),
+    )
+    successor.add_argument(
+        "--predecessor-control-epoch",
+        type=Path,
+        help="仅用于零执行控制替代：已耗尽前序 Campaign 的最后一份有效 control epoch。",
+    )
+    successor.add_argument(
+        "--predecessor-control-runtime-repair",
+        type=Path,
+        help="仅用于零执行控制替代：最后一份 epoch 的运行授权修复收据（如有）。",
+    )
+    successor.add_argument(
+        "--predecessor-unpublished-ledger-dir",
+        type=Path,
+        help="仅用于零执行控制替代：从未发布的试建 Ledger 目录。",
+    )
+    successor.add_argument(
+        "--predecessor-unpublished-stop-receipt",
+        type=Path,
+        help="仅用于零执行控制替代：试建 Ledger 的当前 stop_the_line checkpoint。",
+    )
+    successor.add_argument(
+        "--predecessor-supervisor-run-dir",
+        type=Path,
+        help="仅用于零执行控制替代：已结束且审计完整的父监督器 run 目录。",
+    )
+    add_watchdog_options(successor)
+
+    control_epoch = subparsers.add_parser(
+        "control-epoch",
+        help="为受限恢复场景追加原 Campaign 控制纪元",
+    )
+    add_campaign_reference(control_epoch)
+    control_epoch.add_argument(
+        "--phase",
+        choices=("official", "candidate"),
+        default="candidate",
+        help=(
+            "默认 candidate；祖先已用过 sealed-stage recovery 且当前仍为 "
+            "official_sealed 时使用 official。"
+        ),
+    )
+    control_epoch.add_argument("--candidate-id")
+    control_epoch.add_argument("--attempt-id")
+    control_epoch.add_argument(
+        "--predecessor-stop-ledger-dir",
+        type=Path,
+        required=True,
+        help="当前 Campaign 已停线的旧 Ledger。",
+    )
+    control_epoch.add_argument(
+        "--predecessor-stop-receipt",
+        type=Path,
+        required=True,
+        help="旧 Ledger 的当前 stop_the_line checkpoint。",
+    )
+    control_epoch.add_argument(
+        "--recovery-timing-ledger-dir",
+        type=Path,
+        required=True,
+        help="不得把总截止时间后移的新 active Ledger。",
+    )
+    control_epoch.add_argument(
+        "--recovery-timing-receipt",
+        type=Path,
+        required=True,
+        help="新 Ledger 已推进到源 Candidate 阶段的当前 checkpoint。",
+    )
+    control_epoch.add_argument(
+        "--recovery-arm64-environment-root",
+        type=Path,
+        required=True,
+        help="与新 Ledger 同主体的 ARM64 P0 证据根。",
+    )
+    control_epoch.add_argument(
+        "--recovery-arm64-environment-receipt",
+        type=Path,
+        required=True,
+        help="与新 Ledger 同主体的 ARM64 P0 收据。",
+    )
+    control_epoch.add_argument(
+        "--job-rehearsal-root",
+        type=Path,
+        required=True,
+        help="当前合同的 incremental-noop 演练证据根。",
+    )
+    control_epoch.add_argument(
+        "--job-rehearsal-receipt",
+        type=Path,
+        required=True,
+        help="当前合同的 incremental-noop 演练收据。",
+    )
+    control_epoch.add_argument(
+        "--repair-runtime-authorization",
+        action="store_true",
+        help=(
+            "仅用于 epoch 已发布但首次恢复预览发现运行授权未消费 epoch 的"
+            "一次性零执行修复；official 模式还可在分类前 VC-2 到期时绑定"
+            "新 Ledger/P0/no-op；均不创建第二份 epoch 或 transition。"
+        ),
+    )
+    control_epoch.add_argument(
+        "--final-execution-epoch",
+        action="store_true",
+        help=(
+            "仅用于 replacement 已有 repair-02 且仍为全零边界时，追加第二个"
+            "也是最后一个 execution epoch。"
+        ),
+    )
+    control_epoch.add_argument(
+        "--predecessor-supervisor-run-dir",
+        type=Path,
+        help=(
+            "最终 execution epoch 必需：已正常结束且 audit_incomplete=false 的"
+            "父监督器 run 目录。"
+        ),
+    )
+    add_watchdog_options(control_epoch)
 
     classify = subparsers.add_parser(
         "classify", help="生成差异草案或封存已审核的目标规则迁移"
@@ -4451,6 +7765,7 @@ def _build_parser() -> argparse.ArgumentParser:
     classify.add_argument("--profile-manifest", type=Path)
     classify.add_argument("--assertion-profile-manifest", type=Path)
     classify.add_argument("--approve-manifest-sha256")
+    add_watchdog_options(classify)
 
     prepare_profile = subparsers.add_parser(
         "prepare-profile",
@@ -4460,6 +7775,7 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare_profile.add_argument("--snapshot", type=Path, required=True)
     prepare_profile.add_argument("--profile-id", required=True)
     prepare_profile.add_argument("--output", type=Path, required=True)
+    add_watchdog_options(prepare_profile)
 
     stage_profile = subparsers.add_parser(
         "stage-profile",
@@ -4472,6 +7788,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="不存在的候选目录绝对路径；不会修改仓库或生产 selector。",
     )
+    add_watchdog_options(stage_profile)
 
     candidate = subparsers.add_parser(
         "capture-candidate", help="运行或封存一个 Sub2API 候选"
@@ -4503,6 +7820,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     compare = subparsers.add_parser("compare", help="仅使用封存证据离线比较")
     add_candidate_reference(compare)
+    add_watchdog_options(compare)
 
     accept = subparsers.add_parser("accept", help="执行逐规则正式验收门禁")
     add_candidate_reference(accept)
@@ -4519,6 +7837,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="由独立 finalizer 生成并可重放的 candidate_external 收据",
     )
+    add_watchdog_options(accept)
 
     all_command = subparsers.add_parser(
         "all", help="兼容入口：对已批准画像只启动一次候选 run"
@@ -4552,6 +7871,11 @@ def _build_parser() -> argparse.ArgumentParser:
     evaluation_transition.add_argument("--candidate-id")
     evaluation_transition.add_argument("--attempt-id", required=True)
     evaluation_transition.add_argument("--approve-transition-sha256")
+    evaluation_transition.add_argument(
+        "--terminal-transition-preflight-receipt",
+        type=Path,
+        help="第 4 个终端 transition 必须绑定的隔离全链预检收据。",
+    )
     evaluation_transition.add_argument(
         "--predecessor-stop-ledger-dir",
         type=Path,
@@ -4600,6 +7924,39 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="使用当前工具完成的完整 Job 离线演练收据。",
     )
+    add_watchdog_options(evaluation_transition)
+
+    terminal_transition_preflight = subparsers.add_parser(
+        "terminal-transition-preflight",
+        help="验证隔离副本全链并签发第 4 槽一次性预检收据",
+    )
+    add_campaign_reference(terminal_transition_preflight)
+    terminal_transition_preflight.add_argument(
+        "--phase",
+        choices=("official", "candidate"),
+        required=True,
+    )
+    terminal_transition_preflight.add_argument("--candidate-id")
+    terminal_transition_preflight.add_argument("--attempt-id", required=True)
+    terminal_transition_preflight.add_argument(
+        "--successor-attempt-id",
+        required=True,
+    )
+    terminal_transition_preflight.add_argument(
+        "--isolated-campaign-dir",
+        type=Path,
+        required=True,
+    )
+    terminal_transition_preflight.add_argument(
+        "--supervisor-run-dir",
+        type=Path,
+        required=True,
+    )
+    terminal_transition_preflight.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+    )
 
     deep_verify = subparsers.add_parser(
         "deep-verify",
@@ -4611,6 +7968,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--attempt-id",
         help="工具发生阶段限定漂移时，绑定已批准 transition 的 attempt。",
     )
+    add_watchdog_options(deep_verify)
 
     status = subparsers.add_parser("status", help="显示 Campaign 状态和下一命令")
     add_campaign_reference(status)
@@ -4634,6 +7992,28 @@ def _build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--external-gate-root", type=Path)
     resume.add_argument("--external-gate-receipt", type=Path)
     resume.add_argument("--rerun-failed", action="store_true")
+    resume.add_argument(
+        "--preview-recovery",
+        action="store_true",
+        help="只读输出失败补跑闭集；不预约、不探针、不发送请求。",
+    )
+    resume.add_argument(
+        "--candidate-reuse-source-campaign-dir",
+        type=Path,
+        help="分类事实纠正后继要只读承接的直接前序 Campaign。",
+    )
+    resume.add_argument(
+        "--candidate-reuse-source-candidate-id",
+        help="分类事实纠正后继要只读承接的前序 Candidate。",
+    )
+    resume.add_argument(
+        "--candidate-reuse-source-attempt-id",
+        help="分类事实纠正后继要只读承接的前序 Candidate attempt。",
+    )
+    resume.add_argument(
+        "--approve-candidate-reuse-sha256",
+        help="批准零执行 Candidate 复用预览的 SHA-256。",
+    )
     add_watchdog_options(resume)
     resume.add_argument("--acknowledge-live-requests", action="store_true")
     return parser
@@ -4702,6 +8082,21 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
             "preflight_only 不得消费完整 Job 演练收据；先创建 preflight，"
             "完成 ARM64 演练后再创建 Formal。"
         )
+    if (
+        arguments.campaign_mode == "formal"
+        and arguments.campaign_purpose == "production_replacement"
+    ):
+        compose_dir = str(
+            getattr(arguments, "live_attestation_compose_dir", "") or ""
+        ).strip()
+        compose_files = str(
+            getattr(arguments, "live_attestation_compose_files", "") or ""
+        ).strip()
+        if not compose_dir or not compose_files:
+            raise ConfigurationError(
+                "formal production_replacement 必须在建 Campaign 前冻结 "
+                "Live attestation compose 目录和文件。"
+            )
     if not getattr(arguments, "redis_container", None):
         arguments.redis_container = "sub2apiplus-redis"
     for field, value in (
@@ -4848,7 +8243,13 @@ def _safe_plan(
                 "phase": job.phase,
                 "description": job.description,
                 "steps": [
-                    {"argv": step["argv"], "timeout": step.get("timeout")}
+                    # 环境变量属于 Job 执行合同，必须和 argv、超时一起冻结；
+                    # 丢弃它会让 preflight 产出的 Campaign 无法被严格演练器重放。
+                    {
+                        "argv": step["argv"],
+                        "environment": dict(step.get("environment", {})),
+                        "timeout": step.get("timeout"),
+                    }
                     for step in job.steps
                 ],
                 "evidence_roots": list(job.evidence_roots),
@@ -5183,8 +8584,85 @@ def _verify_codex_package(
 _WATCHDOG_ONLY_TOOL_FILES = frozenset(
     {
         "codex_upgrade_arm64_environment_receipt.py",
+        "codex_upgrade_arm64_environment_receipt.schema.json",
         "codex_upgrade_environment_probe.py",
         "codex_upgrade_timing_ledger.py",
+        "codex_upgrade_supervisor.py",
+        "codex_upgrade_supervisor_state.schema.json",
+        "codex_upgrade_supervisor_event.schema.json",
+        "codex_upgrade_supervisor_heartbeat.schema.json",
+        "codex_upgrade_supervisor_watchdog_heartbeat.schema.json",
+        "codex_upgrade_supervisor_minute.schema.json",
+        "codex_upgrade_supervisor_stop.schema.json",
+        "codex_upgrade_supervisor_campaign_activity.schema.json",
+        "codex_upgrade_supervisor_campaign_finish.schema.json",
+    }
+)
+_ENVIRONMENT_PLANE_TOOL_FILES = frozenset(
+    {
+        "codex_upgrade_arm64_environment_receipt.py",
+        "codex_upgrade_arm64_environment_receipt.schema.json",
+        "codex_upgrade_environment_probe.py",
+    }
+)
+_CONTROL_PLANE_TOOL_FILES = frozenset(
+    {
+        # canonical campaign-run 清单和旧入口边界只约束调度／写入边界，
+        # 不生成官方请求或候选证据字节。
+        "codex_upgrade_campaign_run.schema.json",
+        "codex_upgrade_campaign_lease.schema.json",
+        "codex_upgrade_campaign_lease_stop.schema.json",
+        "codex_upgrade_control_epoch.schema.json",
+        "codex_upgrade_control_epoch_runtime_repair.schema.json",
+        "codex_upgrade_classification_candidate_reuse_transition.schema.json",
+        "codex_upgrade_predecessor_control_replacement_import.schema.json",
+        "codex_upgrade_capture_attempt.schema.json",
+        "codex_upgrade_capture_reservation.schema.json",
+        "codex_upgrade_incremental_noop.schema.json",
+        "codex_upgrade_supervisor.py",
+        "codex_upgrade_supervisor_state.schema.json",
+        "codex_upgrade_supervisor_event.schema.json",
+        "codex_upgrade_supervisor_heartbeat.schema.json",
+        "codex_upgrade_supervisor_watchdog_heartbeat.schema.json",
+        "codex_upgrade_supervisor_minute.schema.json",
+        "codex_upgrade_supervisor_stop.schema.json",
+        "codex_upgrade_supervisor_campaign_activity.schema.json",
+        "codex_upgrade_supervisor_campaign_finish.schema.json",
+        "codex_upgrade_timing_ledger.py",
+        "codex_upgrade_legacy_boundary.py",
+    }
+)
+
+# 这些文件在旧 control epoch 建立时尚未完整登记，历史摘要曾把其中的
+# gate／activation 文件暂时算入 production。它们实际只读取已封存事实或
+# 约束正式调度，不能改变请求字节；当前白名单将其归入评估侧，旧 epoch
+# 的产出摘要由 _control_epoch_production_invariant_digest 保持兼容。
+_CANONICAL_EVALUATION_ONLY_FILES = frozenset(
+    {
+        "codex_upgrade_campaign_run.schema.json",
+        "codex_upgrade_gate_receipt.py",
+        "codex_upgrade_legacy_boundary.py",
+        "production_activation_receipt.py",
+        "production_activation_receipt.schema.json",
+        "profile_rule_patches_0_151_0.json",
+    }
+)
+# 这些文件同时参与编排和评估。它们的变化必须由阶段限定 transition 明确批准，
+# 但不能因为编排器自身变化就把不依赖它的历史官方字节判定为产出侧失效。
+# 全局工具摘要仍保留该文件，因此未批准的变化会在 plan identity 门禁处停线；
+# 结果复用校验只在显式 transition 已承接的路径上忽略这组混合文件。
+_PHASE_EVALUATION_HYBRID_FILES = frozenset(
+    {
+        "codex_upgrade.py",
+        # 这些版本化断言画像只参与分类／候选断言，不参与 Candidate 请求
+        # 字节生产。它们仍需由分类纠正 successor 或阶段 transition 明确
+        # 承接，不能被普通工具漂移静默放行。
+        "candidate_rule_expectations_0_149_1.json",
+        "candidate_rule_expectations_0_151_0.json",
+        # 这份历史基线场景只因当前文档章节摘要更新而变化。它仍需由
+        # transition 精确批准，但不参与 0.151 Candidate 请求字节生产；
+        # 当前 preflight/no-op 会另行证明完整 Job 合同逐字等价。
+        "codex_upgrade_scenarios_0_149_1.json",
     }
 )
 _EVALUATION_SIDE_FILES = frozenset(
@@ -5201,21 +8679,51 @@ _EVALUATION_SIDE_FILES = frozenset(
         "build_rule_assertion_results.py",
         # 对候选抓包执行逐规则断言；只读抓包。
         "candidate_rule_assertion.py",
+        # 把既有 go test 日志和 relay 转换成结构化候选事实；不发送请求。
+        "candidate_test_trace.py",
+        "candidate_test_fact_map_0_151_0.json",
         # ARM64 完整 Job 预检、环境快照和增量恢复只读取工具树与运行事实，
         # 不产生官方请求字节；watchdog 接线修复应保持在评估侧。
         "codex_upgrade_arm64_environment_receipt.py",
         "codex_upgrade_environment_probe.py",
         "codex_upgrade_job_rehearsal_receipt.py",
         "incremental_recovery.py",
+        # 版本化证据标签只决定已封存根的离线编目方式，不参与请求字节生产。
+        # 所有当前受管版本都显式登记，防止旧 Campaign 将它们归入 shared
+        # 后把纯标签补漏误判为全部 Job 失效。
+        "codex_upgrade_evidence_labels_0_145_0.json",
+        "codex_upgrade_evidence_labels_0_149_1.json",
+        "codex_upgrade_evidence_labels_0_151_0.json",
         # 计时台账只记录阶段事实，不改变请求或证据字节。
         "codex_upgrade_timing_ledger.py",
+        "codex_upgrade_supervisor.py",
+        "codex_upgrade_supervisor_state.schema.json",
+        "codex_upgrade_supervisor_event.schema.json",
+        "codex_upgrade_supervisor_heartbeat.schema.json",
+        "codex_upgrade_supervisor_watchdog_heartbeat.schema.json",
+        "codex_upgrade_supervisor_minute.schema.json",
+        "codex_upgrade_supervisor_stop.schema.json",
+        "codex_upgrade_supervisor_campaign_activity.schema.json",
+        "codex_upgrade_supervisor_campaign_finish.schema.json",
         # 采集后校验中继样本完整性；只读样本。
         "check_sample_integrity.py",
         # 增量计划、attempt 和 Campaign 的 Schema 只收紧事实校验。
         "codex_upgrade_campaign.schema.json",
+        "codex_upgrade_campaign_run.schema.json",
+        # Campaign 持久租约及停线收据只约束恢复控制状态，不产生或改变官方证据。
+        "codex_upgrade_campaign_lease.schema.json",
+        "codex_upgrade_campaign_lease_stop.schema.json",
+        "codex_upgrade_control_epoch.schema.json",
+        "codex_upgrade_control_epoch_runtime_repair.schema.json",
+        "codex_upgrade_classification_candidate_reuse_transition.schema.json",
+        "codex_upgrade_predecessor_control_replacement_import.schema.json",
         "codex_upgrade_capture_attempt.schema.json",
+        "codex_upgrade_capture_reservation.schema.json",
         "codex_upgrade_incremental_noop.schema.json",
+        "codex_upgrade_gate_receipt.py",
+        "codex_upgrade_legacy_boundary.py",
         "codex_upgrade_job_rehearsal_receipt.schema.json",
+        "codex_upgrade_predecessor_import.schema.json",
         # capture manifest 的校验 schema；只约束校验严格度，不产生内容。
         "candidate_capture_manifest.schema.json",
         # 对已完成 attempt 做单次 hash／secret scan，并生成只读 manifest；不发送请求。
@@ -5226,7 +8734,23 @@ _EVALUATION_SIDE_FILES = frozenset(
         # seal 预览与阶段收据 schema 只约束评估结果，不参与采集 Job。
         "codex_upgrade_seal_preview.schema.json",
         "codex_upgrade_stage_result.schema.json",
+        "production_activation_receipt.py",
+        "production_activation_receipt.schema.json",
+        "profile_rule_patches_0_151_0.json",
     }
+)
+
+# 评估侧文件的历史归类必须在所有组件比较和结果承接路径中使用同一份白名单。
+# 旧 Campaign 可能把这些文件暂时记在 ``shared``；如果只有 watchdog 文件被
+# 规范化，任何一次 finalizer／schema 修复仍会伪装成产出侧漂移并扩大重跑闭集。
+_EVALUATION_COMPONENT_FILES = frozenset(
+    set(_EVALUATION_SIDE_FILES) | set(_WATCHDOG_ONLY_TOOL_FILES)
+)
+_LOW_RISK_TOOL_COMPONENTS = frozenset(
+    {"orchestrator", "evaluator", "control", "environment"}
+)
+_SEALED_STAGE_RECOVERY_ALLOWED_FILES = frozenset(
+    set(_EVALUATION_COMPONENT_FILES) | set(_PHASE_EVALUATION_HYBRID_FILES)
 )
 
 
@@ -5281,6 +8805,43 @@ def _tool_identity_side_digest(identity: Mapping[str, Any], side: str) -> str:
     return str(sides[f"{side}_sha256"])
 
 
+def _tool_identity_side_digest_excluding(
+    identity: Mapping[str, Any],
+    side: str,
+    excluded_paths: Iterable[str],
+) -> str:
+    """计算排除显式混合文件后的影响侧摘要。
+
+    该摘要只用于历史 Job 结果的局部复用校验，不写入 Campaign、transition 或
+    任何正式收据。调用方仍必须先通过 ``_verify_plan_identity``，由批准的阶段
+    transition 证明混合文件变化属于受控评估修复；其它产出侧文件仍逐字比较。
+    """
+
+    if side not in {"production", "evaluation"}:
+        raise ConfigurationError("工具影响面必须是 production 或 evaluation。")
+    entries = identity.get("entries")
+    if not isinstance(entries, list):
+        components = identity.get("components")
+        if not isinstance(components, Mapping):
+            raise ConfigurationError("工具身份缺少文件清单。")
+        entries = [
+            entry
+            for value in components.values()
+            if isinstance(value, Mapping)
+            for entry in value.get("entries", [])
+            if isinstance(entry, Mapping)
+        ]
+    excluded = {str(path) for path in excluded_paths}
+    filtered = [
+        dict(entry)
+        for entry in entries
+        if isinstance(entry, Mapping)
+        and str(entry.get("path", "")) not in excluded
+    ]
+    sides = _tool_identity_sides(filtered)
+    return str(sides[f"{side}_sha256"])
+
+
 # 组件边界是恢复选择的唯一输入。路径没有登记到更细的组件时落到 shared，
 # 这样新增工具不会因为遗漏登记而被静默复用。这里不把 codex_upgrade.py
 # 计入抓包 Job 的 producer 依赖：它负责编排和验收，修复编排缺陷时可以只
@@ -5293,12 +8854,15 @@ _TOOL_COMPONENT_NAMES = frozenset(
         "scenario",
         "runtime",
         "orchestrator",
+        "control",
+        "environment",
         "shared",
     }
 )
 _PRODUCER_TOOL_FILES = frozenset(
     {
         "capture.py",
+        "run_codex_scenario_target.py",
         "pcap_clienthello.py",
         "scrub_raw_bytes.py",
         "extract_capture_records.py",
@@ -5314,6 +8878,7 @@ _RELAY_TOOL_FILES = frozenset(
         "run_candidate_aux_capture.sh",
         "run_sub2api_direct_matrix.sh",
         "run_sub2api_openai_mitm_matrix.sh",
+        "mitm_scenario_checkpoint.py",
         "run_h1_wire_probe.sh",
         "run_images_wire_probe.sh",
         "run_official_codex_compact_capture.sh",
@@ -5335,6 +8900,10 @@ _SCENARIO_TOOL_FILES = frozenset(
 def _tool_component_for_path(path: str) -> str:
     """返回工具路径的最小影响组件。"""
 
+    if path in _ENVIRONMENT_PLANE_TOOL_FILES:
+        return "environment"
+    if path in _CONTROL_PLANE_TOOL_FILES:
+        return "control"
     if (
         path in _EVALUATION_SIDE_FILES
         or path.endswith(".schema.json")
@@ -5569,14 +9138,14 @@ def _tool_component_bundle(identity: Mapping[str, Any]) -> dict[str, Any]:
     return _tool_component_identities([dict(item) for item in entries])
 
 
-def _canonicalize_watchdog_component_bundle(
+def _canonicalize_tool_component_bundle(
     bundle: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """把历史上误归入 shared 的 watchdog 文件迁移到 evaluator 再比较。
+    """按统一白名单把历史误归入 shared 的评估文件迁移到 evaluator 再比较。
 
-    0.149.1 及更早 Campaign 没有这个边界，直接比较原始组件摘要会把“组件
-    归类修正”误判成 shared 产出侧变化，进而使全部 Job 失效。这里仅规范化
-    比较视图，保留原始身份和漂移台账，不静默吞掉 watchdog 文件的真实改动。
+    0.149.1 及更早 Campaign 没有稳定的评估侧边界，直接比较原始组件摘要会把
+    “组件归类修正”误判成 shared 产出侧变化，进而使无关 Job 失效。这里仅规范化
+    比较视图，保留原始身份和漂移台账，不静默吞掉评估文件的真实内容改动。
     """
 
     components = bundle.get("components")
@@ -5601,8 +9170,8 @@ def _canonicalize_watchdog_component_bundle(
             if path in assignments:
                 raise ConfigurationError(f"工具组件文件重复：{path}")
             assignments[path] = (
-                "evaluator"
-                if path in _WATCHDOG_ONLY_TOOL_FILES
+                _tool_component_for_path(path)
+                if path in _EVALUATION_COMPONENT_FILES
                 else component
             )
             entries.append(entry)
@@ -5629,6 +9198,14 @@ def _canonicalize_watchdog_component_bundle(
         )
     canonical["component_count"] = len(canonical["components"])
     return canonical
+
+
+def _canonicalize_watchdog_component_bundle(
+    bundle: Mapping[str, Any],
+) -> dict[str, Any]:
+    """兼容旧调用名；实际按全部已登记评估文件规范化。"""
+
+    return _canonicalize_tool_component_bundle(bundle)
 
 
 def _tool_component_drift(
@@ -5667,6 +9244,54 @@ def _affected_job_ids(
     return sorted(affected)
 
 
+def _exact_tool_path_impact(
+    jobs: Iterable[Job],
+    expected_tool: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> tuple[list[str], list[str], list[str]]:
+    """按逐文件传递依赖计算 Job 失效集合；未知产出文件保持停线。"""
+
+    planned = list(jobs)
+    drift = _tool_identity_drift(current_tool, expected_tool)
+    changed_paths = sorted(
+        set(drift.get("production", [])) - set(_PHASE_EVALUATION_HYBRID_FILES)
+    )
+    impact_map = _tool_path_job_map(planned, expected_tool, current_tool)
+    affected: set[str] = set()
+    unmapped: list[str] = []
+    for path in changed_paths:
+        mapped = impact_map.get(path)
+        if mapped is None:
+            unmapped.append(path)
+            continue
+        affected.update(mapped)
+    return sorted(affected), changed_paths, sorted(unmapped)
+
+
+def _tool_path_job_map(
+    jobs: Iterable[Job],
+    expected_tool: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> dict[str, set[str]]:
+    """建立工具路径到计划 Job 的精确反向依赖表。"""
+
+    planned = list(jobs)
+    planned_ids = {job.job_id for job in planned}
+    impact_map: dict[str, set[str]] = {}
+    for job in planned:
+        current_files = set(_job_tool_dependency_files(job, current_tool))
+        expected_files = set(_job_tool_dependency_files(job, expected_tool))
+        for path in current_files | expected_files:
+            impact_map.setdefault(path, set()).add(job.job_id)
+    for path, job_ids in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS.items():
+        impact_map.setdefault(path, set()).update(
+            job_id
+            for job_id in job_ids
+            if job_id in planned_ids
+        )
+    return impact_map
+
+
 def _build_incremental_tool_transition(
     expected_tool: Mapping[str, Any],
     current_tool: Mapping[str, Any],
@@ -5678,8 +9303,8 @@ def _build_incremental_tool_transition(
     """为低风险工具修复生成 attempt 绑定的组件过渡事实。"""
 
     changed = sorted(str(item) for item in impact.get("changed_components", []))
-    if not changed or not set(changed).issubset({"orchestrator", "evaluator"}):
-        raise ConfigurationError("只有编排／评估组件可以原地建立增量过渡。")
+    if not changed or not set(changed).issubset(_LOW_RISK_TOOL_COMPONENTS):
+        raise ConfigurationError("只有控制／环境／评估组件可以原地建立增量过渡。")
     core = {
         "schema_version": INCREMENTAL_TOOL_TRANSITION_SCHEMA,
         "phase": phase,
@@ -5733,7 +9358,7 @@ def _validate_incremental_tool_transition(
         or not isinstance(changed, list)
         or not all(isinstance(item, str) and item for item in changed)
         or changed != sorted(set(changed))
-        or not set(changed).issubset({"orchestrator", "evaluator"})
+        or not set(changed).issubset(_LOW_RISK_TOOL_COMPONENTS)
         or transition.get("raw_evidence_scanned_bytes") != 0
         or transition.get("from_component_identity_sha256")
         != _fingerprint(_tool_component_bundle(expected_tool))
@@ -5779,8 +9404,8 @@ def _job_context(arguments: argparse.Namespace) -> dict[str, str]:
         "relay_codex_bin": arguments.relay_codex_bin,
         "codex_account_id": str(arguments.codex_account_id),
         "api_key_id": str(arguments.api_key_id),
-        # A11 的 Live attestation 只读进程环境，采集侧需按本轮四元组重建候选服务；
-        # 缺省为空表示不注入，届时 A11 会以断言失败暴露而不是静默跳过。
+        # A11 的 Live attestation 只读进程环境，采集侧需按本轮四元组重建候选服务。
+        # Formal production_replacement 在参数校验阶段已禁止缺省为空。
         "live_attestation_compose_dir": str(
             getattr(arguments, "live_attestation_compose_dir", "") or ""
         ),
@@ -5831,8 +9456,8 @@ def _validate_jobs(jobs: list[Job], rules: tuple[str, ...]) -> None:
 def _validate_capture_runtime_ids(jobs: Iterable[Job]) -> None:
     """在创建 attempt 前复算 direct／mitm 最终运行 ID 的长度边界。
 
-    场景清单中的 ``RUN_ID_PREFIX`` 不是最终值；mitm 矩阵还会追加主体和
-    16 字符 UTC 窗口。只检查 Campaign 或 candidate ID 会把超长坐标拖到
+    场景清单中的 ``RUN_ID_PREFIX`` 不是最终值；mitm 矩阵还会追加主体、
+    场景、单场景 attempt 和 16 字符 UTC 窗口。只检查 Campaign 或 candidate ID 会把超长坐标拖到
     真实任务启动后才暴露，既浪费时间又留下必败 attempt，因此这里按脚本
     的确定性拼接规则提前失败关闭。
     """
@@ -5854,9 +9479,14 @@ def _validate_capture_runtime_ids(jobs: Iterable[Job]) -> None:
             run_id_prefix = environment.get("RUN_ID_PREFIX")
             if run_id_prefix:
                 subjects = str(environment.get("SUBJECTS", "")).split()
+                scenarios = str(environment.get("SCENARIOS", "")).split()
                 if not subjects:
                     raise ConfigurationError(
                         f"{job.job_id} 使用 RUN_ID_PREFIX 时必须冻结 SUBJECTS。"
+                    )
+                if not scenarios:
+                    raise ConfigurationError(
+                        f"{job.job_id} 使用 RUN_ID_PREFIX 时必须冻结 SCENARIOS。"
                     )
                 window_id = str(
                     environment.get("WINDOW_ID", "")
@@ -5864,14 +9494,15 @@ def _validate_capture_runtime_ids(jobs: Iterable[Job]) -> None:
                 )
                 prefix = str(run_id_prefix)
                 projected.append(
-                    ("RUN_ID_PREFIX/setup", f"{prefix}-setup-{window_id}")
+                    ("RUN_ID_PREFIX/setup", f"{prefix}.setup-a9-{window_id}")
                 )
                 projected.extend(
                     (
-                        f"RUN_ID_PREFIX/{subject}",
-                        f"{prefix}-{subject}-{window_id}",
+                        f"RUN_ID_PREFIX/{subject}/{scenario}",
+                        f"{prefix}-{subject}-{scenario}-a9-{window_id}",
                     )
                     for subject in subjects
+                    for scenario in scenarios
                 )
 
             for coordinate, value in projected:
@@ -6046,6 +9677,11 @@ def _job_rehearsal_contract_from_manifest(
     *,
     target_scenario_override: Mapping[str, Any] | None = None,
     tool_files_sha256_override: str | None = None,
+    recovery_rehearsal_receipt: Mapping[str, Any] | None = None,
+    control_receipts_override: Mapping[str, Any] | None = None,
+    _allow_historical_tool_identity: bool = False,
+    _require_incremental_noop_preflight_active: bool = True,
+    _allow_stopped_metadata_only: bool = False,
 ) -> dict[str, Any]:
     """从已封存 Formal Campaign 复算完整 Job 演练合同。"""
 
@@ -6078,7 +9714,7 @@ def _job_rehearsal_contract_from_manifest(
     ):
         raise ConfigurationError("Campaign 缺少 Job 演练所需身份。")
     def build(target_scenario: Mapping[str, Any]) -> dict[str, Any]:
-        return codex_upgrade_job_rehearsal_receipt.build_execution_contract(
+        current_contract = codex_upgrade_job_rehearsal_receipt.build_execution_contract(
             target_version=str(manifest.get("target_version", "")),
             target_sha256=str(manifest.get("target_sha256", "")),
             target_package_sha256=str(package.get("asset_sha256", "")),
@@ -6095,12 +9731,40 @@ def _job_rehearsal_contract_from_manifest(
             target_scenario=target_scenario,
             extra_jobs=extra_jobs,
         )
+        if not _allow_historical_tool_identity or not isinstance(
+            recovery_rehearsal_receipt, Mapping
+        ):
+            return current_contract
+        historical_contract = recovery_rehearsal_receipt.get(
+            "execution_contract"
+        )
+        if not isinstance(historical_contract, Mapping):
+            return current_contract
+        historical_contract = dict(historical_contract)
+        codex_upgrade_job_rehearsal_receipt.validate_execution_contract(
+            historical_contract
+        )
+        changed = {
+            key
+            for key in set(current_contract) | set(historical_contract)
+            if current_contract.get(key) != historical_contract.get(key)
+        }
+        if changed == {"evidence_label_declaration_sha256"}:
+            # 历史 control epoch 已先重放并绑定这份演练收据。证据标签属于
+            # evaluator 身份；只允许承接其旧摘要，Job、场景、环境、工具和
+            # 其他合同字段任一变化仍由后续逐字合同校验失败关闭。
+            return historical_contract
+        return current_contract
 
     try:
         if target_scenario_override is not None:
             return build(target_scenario_override)
         frozen_contract = build(frozen_target_scenario)
-        controls = manifest.get("control_receipts")
+        controls = (
+            control_receipts_override
+            if control_receipts_override is not None
+            else manifest.get("control_receipts")
+        )
         rehearsal = (
             controls.get("job_rehearsal")
             if isinstance(controls, Mapping)
@@ -6111,6 +9775,127 @@ def _job_rehearsal_contract_from_manifest(
             if isinstance(rehearsal, Mapping)
             else None
         )
+        predecessor = manifest.get("predecessor")
+        classification_noop_successor = bool(
+            isinstance(predecessor, Mapping)
+            and predecessor.get("reason") == "classification_fact_correction"
+        )
+        control_refresh = bool(
+            isinstance(predecessor, Mapping)
+            and predecessor.get("reason")
+            in {
+                "candidate_recovery_control_refresh",
+                "candidate_recovery_control_replacement",
+            }
+        )
+        if control_refresh:
+            if not isinstance(recovery_rehearsal_receipt, Mapping):
+                raise ConfigurationError(
+                    "控制刷新必须从绑定的 preflight/no-op 收据复算当前执行合同。"
+                )
+            control_manifest: Mapping[str, Any] = manifest
+            if control_receipts_override is not None:
+                current_tool = _tool_identity(include_git=False)
+                effective_tool: Mapping[str, Any] = current_tool
+                if (
+                    tool_files_sha256_override is None
+                    or current_tool.get("files_sha256")
+                    != tool_files_sha256_override
+                ):
+                    if not _allow_historical_tool_identity:
+                        raise ConfigurationError(
+                            "control epoch 当前工具身份与有效控制收据不一致。"
+                        )
+                    preflight = recovery_rehearsal_receipt.get(
+                        "preflight_campaign"
+                    )
+                    preflight_dir = (
+                        Path(str(preflight.get("path", "")))
+                        if isinstance(preflight, Mapping)
+                        else Path("")
+                    )
+                    historical_manifest = load_campaign_manifest(preflight_dir)
+                    historical_tool = historical_manifest.get("tool_identity")
+                    if (
+                        not isinstance(historical_tool, Mapping)
+                        or historical_tool.get("files_sha256")
+                        != tool_files_sha256_override
+                    ):
+                        raise ConfigurationError(
+                            "control epoch 历史 preflight 工具身份与 base epoch 不一致。"
+                        )
+                    effective_tool = historical_tool
+                proxy = json.loads(json.dumps(manifest, ensure_ascii=False))
+                proxy["control_receipts"] = json.loads(
+                    json.dumps(control_receipts_override, ensure_ascii=False)
+                )
+                proxy["tool_identity"] = json.loads(
+                    json.dumps(effective_tool, ensure_ascii=False)
+                )
+                control_manifest = proxy
+            preflight_dir, preflight_manifest = (
+                _recovery_rehearsal_preflight_from_receipt(
+                    recovery_rehearsal_receipt,
+                    control_manifest,
+                )
+            )
+            current_scenario = _recovery_rehearsal_target_scenario_override(
+                campaign_dir,
+                manifest,
+                preflight_dir,
+                preflight_manifest,
+            )
+            current_contract = build(
+                current_scenario
+                if current_scenario is not None
+                else frozen_target_scenario
+            )
+            if bound_contract_sha256 != (
+                codex_upgrade_job_rehearsal_receipt.execution_contract_sha256(
+                    current_contract
+                )
+            ):
+                raise ConfigurationError(
+                    "控制刷新绑定的 preflight/no-op 执行合同摘要不一致。"
+                )
+            return current_contract
+        if classification_noop_successor:
+            noop_kwargs: dict[str, Any] = {
+                # 当前 effective control override 已在外层验证 active；这里
+                # 读取的是祖先分类纠正 no-op，只能按历史 checkpoint 重放。
+                "require_active": (
+                    _require_incremental_noop_preflight_active
+                    and control_receipts_override is None
+                ),
+            }
+            if _allow_stopped_metadata_only:
+                noop_kwargs["allow_stopped_metadata_only"] = True
+            noop_preflight = _successor_incremental_noop_preflight(
+                manifest,
+                **noop_kwargs,
+            )
+            if noop_preflight is not None:
+                preflight_dir, preflight_manifest = noop_preflight
+                current_scenario = _recovery_rehearsal_target_scenario_override(
+                    campaign_dir,
+                    manifest,
+                    preflight_dir,
+                    preflight_manifest,
+                )
+                current_contract = build(
+                    current_scenario
+                    if current_scenario is not None
+                    else frozen_target_scenario
+                )
+                if bound_contract_sha256 != (
+                    codex_upgrade_job_rehearsal_receipt.execution_contract_sha256(
+                        current_contract
+                    )
+                ):
+                    raise ConfigurationError(
+                        "分类纠正后继绑定的 no-op 执行合同摘要不一致。"
+                    )
+                return current_contract
         if (
             bound_contract_sha256
             == codex_upgrade_job_rehearsal_receipt.execution_contract_sha256(
@@ -6135,6 +9920,9 @@ def _job_rehearsal_contract_from_manifest(
                         campaign_dir,
                         dict(manifest),
                         {"scenario_manifest": approved_reference},
+                        allow_historical_approved_source_spec=(
+                            _allow_historical_tool_identity
+                        ),
                     )
                 )
                 if historical_binding is not None:
@@ -6161,6 +9949,8 @@ def _job_rehearsal_control_from_receipt(
     rehearsal_root: Path,
     rehearsal_path: Path,
     expected_contract: Mapping[str, Any],
+    *,
+    allow_incremental_noop: bool = False,
 ) -> dict[str, Any]:
     """重放完整 Job 演练并生成可写入 Campaign 的不可变绑定。"""
 
@@ -6173,8 +9963,10 @@ def _job_rehearsal_control_from_receipt(
         rehearsal = codex_upgrade_job_rehearsal_receipt.replay(
             rehearsal_root, rehearsal_relative
         )
-        codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
-            rehearsal, dict(expected_contract)
+        pass_receipt = _assert_job_rehearsal_compatible(
+            rehearsal,
+            expected_contract,
+            allow_incremental_noop=allow_incremental_noop,
         )
     except (
         OSError,
@@ -6196,10 +9988,45 @@ def _job_rehearsal_control_from_receipt(
         "preflight_campaign_id": preflight["campaign_id"],
         "preflight_campaign_manifest_sha256": preflight["manifest_sha256"],
         "execution_contract_sha256": rehearsal["execution_contract_sha256"],
-        "runtime_identity_sha256": rehearsal["runtime_identity_sha256"],
+        # incremental-noop 只证明当前恢复合同无需执行；运行时通过事实必须
+        # 继续来自其已重放的原始 passed 收据。
+        "runtime_identity_sha256": pass_receipt["runtime_identity_sha256"],
         "job_count": rehearsal["job_count"],
         "job_set_sha256": rehearsal["job_set_sha256"],
     }
+
+
+def _assert_job_rehearsal_compatible(
+    receipt: Mapping[str, Any],
+    expected_contract: Mapping[str, Any],
+    *,
+    allow_incremental_noop: bool,
+) -> dict[str, Any]:
+    """按普通 Formal 或受管恢复语义返回承载运行时事实的通过收据。"""
+
+    if allow_incremental_noop:
+        return codex_upgrade_job_rehearsal_receipt.assert_recovery_compatible(
+            receipt,
+            dict(expected_contract),
+        )
+    codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
+        receipt,
+        dict(expected_contract),
+    )
+    return dict(receipt)
+
+
+def _manifest_allows_incremental_noop_rehearsal(
+    manifest: Mapping[str, Any],
+) -> bool:
+    """只有工具生成的 Formal successor 可以承接恢复 no-op。"""
+
+    predecessor = manifest.get("predecessor")
+    return bool(
+        manifest.get("campaign_mode") == "formal"
+        and isinstance(predecessor, Mapping)
+        and predecessor.get("reason") in SUCCESSOR_REASONS
+    )
 
 
 def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -6303,15 +10130,203 @@ def _plan_control_receipts(arguments: argparse.Namespace) -> dict[str, Any]:
     return controls
 
 
+def _metadata_only_stopped_timing_allowed(
+    frozen_summary: Mapping[str, Any] | None,
+    current_summary: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> bool:
+    """只允许承接 VC-0 之后唯一 permanent-stop 且 live=0 的控制链。"""
+
+    if not isinstance(frozen_summary, Mapping):
+        return False
+    if (
+        frozen_summary.get("status") != "active"
+        or frozen_summary.get("active_phase") != "VC-0"
+        or frozen_summary.get("total_live_request_count") != 0
+        or current_summary.get("status") != "stopped"
+        or current_summary.get("active_phase") != "VC-0"
+        or current_summary.get("total_live_request_count") != 0
+        or current_summary.get("head_sequence")
+        != frozen_summary.get("head_sequence", 0) + 1
+        or not str(current_summary.get("next_action", "")).startswith(
+            METADATA_ONLY_STOP_NEXT_ACTION_PREFIX
+        )
+    ):
+        return False
+    expected = {
+        "baseline_version": str(manifest["baseline_version"]),
+        "target_version": str(manifest["target_version"]),
+        "campaign_purpose": str(manifest["campaign_purpose"]),
+    }
+    return all(current_summary.get(key) == value for key, value in expected.items())
+
+
+def _metadata_only_historical_epoch_fallback_allowed(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    epoch: Mapping[str, Any],
+) -> bool:
+    """判断历史 control epoch 是否仅因预算到期而可回退到冻结控制。
+
+    该回退只服务于零执行的 metadata-only seal。它不承接任何失败重试、
+    live 请求或非零边界，也不改变 epoch 文件本身；后续仍由原始 Campaign
+    冻结的 VC-0 permanent-stop 控制收据完成完整校验。
+    """
+
+    if epoch.get("boundary") != _control_epoch_zero_boundary():
+        return False
+    controls = epoch.get("successor_controls")
+    timing = controls.get("upgrade_timing") if isinstance(controls, Mapping) else None
+    if not isinstance(timing, Mapping):
+        return False
+    invariants = epoch.get("invariants")
+    required_phase = (
+        invariants.get("required_active_phase")
+        if isinstance(invariants, Mapping)
+        else None
+    )
+    if not isinstance(required_phase, str) or not required_phase:
+        return False
+    try:
+        ledger_root, _checkpoint = _sealed_stage_timing_checkpoint(
+            timing,
+            label="metadata-only 历史 control epoch",
+        )
+        current = codex_upgrade_timing_ledger.inspect_ledger(ledger_root)
+    except (
+        ConfigurationError,
+        OSError,
+        ValueError,
+        codex_upgrade_timing_ledger.TimingLedgerError,
+    ):
+        return False
+    if (
+        current.get("status") != "stop_required"
+        or current.get("active_phase") != required_phase
+        or current.get("total_live_request_count") != 0
+        or current.get("same_root_cause_failures") not in ({}, None)
+    ):
+        return False
+
+    frozen_controls = manifest.get("control_receipts")
+    frozen_timing = (
+        frozen_controls.get("upgrade_timing")
+        if isinstance(frozen_controls, Mapping)
+        else None
+    )
+    if not isinstance(frozen_timing, Mapping):
+        return False
+    try:
+        frozen_root, frozen_checkpoint = _sealed_stage_timing_checkpoint(
+            frozen_timing,
+            label="metadata-only Campaign 冻结控制",
+        )
+        frozen_summary = frozen_checkpoint.get("summary")
+        frozen_current = codex_upgrade_timing_ledger.inspect_ledger(frozen_root)
+    except (
+        ConfigurationError,
+        OSError,
+        ValueError,
+        codex_upgrade_timing_ledger.TimingLedgerError,
+    ):
+        return False
+    return _metadata_only_stopped_timing_allowed(
+        frozen_summary,
+        frozen_current,
+        manifest,
+    )
+
+
 def _verify_control_receipts(
     campaign_dir: Path,
     manifest: Mapping[str, Any],
     *,
     require_active: bool,
+    allow_stopped_metadata_only: bool = False,
+    _control_override: Mapping[str, Any] | None = None,
+    _tool_files_sha256_override: str | None = None,
+    _historical_manifest_controls: bool = False,
 ) -> None:
-    """重放 Campaign 冻结控制收据；执行前额外检查实时墙钟。"""
+    """重放 Campaign 当前有效控制收据；执行前额外检查实时墙钟。"""
 
-    controls = manifest.get("control_receipts")
+    controls: Any = _control_override
+    tool_files_sha256_override = _tool_files_sha256_override
+    historical_control_tool = _historical_manifest_controls
+    using_frozen_manifest_controls = False
+    metadata_only_fallback_confirmed = False
+    if controls is None:
+        epoch = _load_control_epoch_receipt(
+            campaign_dir,
+            manifest,
+            _allow_unrepaired_tool_drift=_historical_manifest_controls,
+            _historical_ledger_heads=_historical_manifest_controls,
+        )
+        if epoch is not None:
+            controls = epoch["successor_controls"]
+            tool_files_sha256_override = str(
+                epoch["invariants"]["tool_files_sha256"]
+            )
+            current_tool = _tool_identity(include_git=False)
+            if current_tool.get("files_sha256") != tool_files_sha256_override:
+                allowed_epoch_paths = _control_epoch_failed_scope_production_paths(
+                    manifest,
+                    current_tool,
+                    epoch["source"],
+                )
+                if allowed_epoch_paths:
+                    # 当前 data-plane 修复仍须由阶段 transition 批准；这里只把
+                    # 既有 no-op 按其冻结工具身份重放，不能拿新摘要伪造旧控制。
+                    historical_control_tool = True
+            runtime_repair = epoch.get("runtime_repair")
+            if isinstance(runtime_repair, Mapping):
+                repair_path = _campaign_file(
+                    campaign_dir,
+                    str(runtime_repair.get("path", "")),
+                )
+                repair_payload = _read_json(
+                    repair_path,
+                    "control epoch 最新运行授权修复收据",
+                )
+                repair_invariants = repair_payload.get("invariants")
+                repair_tool_sha256 = (
+                    repair_invariants.get("tool_files_sha256")
+                    if isinstance(repair_invariants, Mapping)
+                    else None
+                )
+                if not SHA256_RE.fullmatch(str(repair_tool_sha256)):
+                    raise ConfigurationError(
+                        "control epoch 最新运行授权修复缺少控制工具身份。"
+                    )
+                # repair-02 之后只允许编排／评估侧变化。epoch 的
+                # invariants 继续代表当前执行工具，而旧 no-op 必须按
+                # 最新 repair 真实冻结的工具身份只读复核。
+                if repair_tool_sha256 != tool_files_sha256_override:
+                    tool_files_sha256_override = str(repair_tool_sha256)
+                    historical_control_tool = True
+            if (
+                allow_stopped_metadata_only
+                and _metadata_only_historical_epoch_fallback_allowed(
+                    campaign_dir,
+                    manifest,
+                    epoch,
+                )
+            ):
+                # 当前历史 control epoch 已在零执行边界因预算到期停线。
+                # 只读承接 Campaign 冻结控制，禁止把 stop_required Ledger
+                # 当作 active 使用，也禁止创建新的 epoch／successor。
+                frozen_controls = manifest.get("control_receipts")
+                if not isinstance(frozen_controls, dict):
+                    raise ConfigurationError("Campaign 缺少冻结控制收据。")
+                controls = json.loads(
+                    json.dumps(frozen_controls, ensure_ascii=False)
+                )
+                tool_files_sha256_override = None
+                historical_control_tool = True
+                using_frozen_manifest_controls = True
+                metadata_only_fallback_confirmed = True
+        else:
+            controls = manifest.get("control_receipts")
+            using_frozen_manifest_controls = True
     expected_controls = {
         "upgrade_timing",
         "arm64_environment",
@@ -6367,13 +10382,37 @@ def _verify_control_receipts(
         ):
             raise ConfigurationError("UpgradeTimingLedger checkpoint 身份漂移。")
         if require_active:
-            codex_upgrade_timing_ledger.assert_usable(
-                timing_root,
-                timing_relative,
-                baseline_version=str(manifest["baseline_version"]),
-                target_version=str(manifest["target_version"]),
-                campaign_purpose=str(manifest["campaign_purpose"]),
-            )
+            if allow_stopped_metadata_only:
+                current_summary = codex_upgrade_timing_ledger.inspect_ledger(
+                    timing_root
+                )
+                safe_stopped_boundary = _metadata_only_stopped_timing_allowed(
+                    timing_checkpoint.get("summary"),
+                    current_summary,
+                    manifest,
+                )
+                if safe_stopped_boundary:
+                    pass
+                else:
+                    if current_summary.get("status") == "stopped":
+                        raise ConfigurationError(
+                            "metadata-only seal 只允许承接 VC-0 唯一 permanent-stop 且 live=0 的 Ledger。"
+                        )
+                    codex_upgrade_timing_ledger.assert_usable(
+                        timing_root,
+                        timing_relative,
+                        baseline_version=str(manifest["baseline_version"]),
+                        target_version=str(manifest["target_version"]),
+                        campaign_purpose=str(manifest["campaign_purpose"]),
+                    )
+            else:
+                codex_upgrade_timing_ledger.assert_usable(
+                    timing_root,
+                    timing_relative,
+                    baseline_version=str(manifest["baseline_version"]),
+                    target_version=str(manifest["target_version"]),
+                    campaign_purpose=str(manifest["campaign_purpose"]),
+                )
     except (
         KeyError,
         OSError,
@@ -6443,10 +10482,33 @@ def _verify_control_receipts(
                 rehearsal_root, rehearsal_relative
             )
             expected_contract = _job_rehearsal_contract_from_manifest(
-                campaign_dir, manifest
+                campaign_dir,
+                manifest,
+                recovery_rehearsal_receipt=receipt,
+                tool_files_sha256_override=tool_files_sha256_override,
+                _allow_historical_tool_identity=historical_control_tool,
+                # control-epoch 发布前还没有新 epoch。此时旧控制必须按
+                # Campaign 冻结的历史工具身份只读重放；发布后的正常加载
+                # 若直接使用 campaign.json 的冻结控制，也必须走原生清单
+                # 路径；只有 epoch/runtime-repair 的控制才属于 override。
+                control_receipts_override=(
+                    None if using_frozen_manifest_controls else controls
+                ),
+                # 只读加载历史 Campaign 时，no-op 的 preflight 只重放
+                # 不可变 checkpoint；真正执行阶段仍要求其当前 active。
+                _require_incremental_noop_preflight_active=(
+                    require_active and not metadata_only_fallback_confirmed
+                ),
+                # 只有本层已经确认了 VC-0 唯一 permanent-stop、live=0 的
+                # metadata-only fallback，才允许 no-op 内层承接 stopped Ledger。
+                _allow_stopped_metadata_only=metadata_only_fallback_confirmed,
             )
-            codex_upgrade_job_rehearsal_receipt.assert_formal_compatible(
-                receipt, expected_contract
+            pass_receipt = _assert_job_rehearsal_compatible(
+                receipt,
+                expected_contract,
+                allow_incremental_noop=(
+                    _manifest_allows_incremental_noop_rehearsal(manifest)
+                ),
             )
             preflight = receipt["preflight_campaign"]
             if (
@@ -6456,7 +10518,7 @@ def _verify_control_receipts(
                 != rehearsal.get("preflight_campaign_manifest_sha256")
                 or receipt.get("execution_contract_sha256")
                 != rehearsal.get("execution_contract_sha256")
-                or receipt.get("runtime_identity_sha256")
+                or pass_receipt.get("runtime_identity_sha256")
                 != rehearsal.get("runtime_identity_sha256")
                 or receipt.get("job_count") != rehearsal.get("job_count")
                 or receipt.get("job_set_sha256")
@@ -6698,6 +10760,8 @@ def _successor_uses_reclassified_historical_plan_binding(
     staging_dir: Path,
     manifest: dict[str, Any],
     classification_bindings: dict[str, dict[str, str]],
+    *,
+    allow_historical_approved_source_spec: bool = False,
 ) -> HistoricalSourceSpecBinding | None:
     """判定已完成分类纠正的后继是否仍需重放历史 Formal 摘要。
 
@@ -6705,6 +10769,8 @@ def _successor_uses_reclassified_historical_plan_binding(
     清单。因此后续运行时坐标后继可能同时看到：历史 Formal 清单仍绑定旧章节
     摘要，而批准场景已经绑定当前章节摘要。只有批准场景可按当前源码重验、
     且两份清单的官方执行合同完全一致时，才允许计划重建读取历史摘要。
+    控制刷新后继禁止改变场景，因此继续冻结历史批准摘要；当前受管摘要由
+    已绑定的 preflight/no-op 演练单独证明，不能反向击穿历史批准事实。
     """
 
     scenario_reference = manifest.get("inputs", {}).get(
@@ -6755,12 +10821,24 @@ def _successor_uses_reclassified_historical_plan_binding(
     approved = _read_json(approved_path, "后继批准场景清单")
     _validate_scenario_manifest_shape(approved)
     approved_source = approved.get("source_spec")
+    control_refresh = (
+        isinstance(manifest.get("predecessor"), Mapping)
+        and manifest["predecessor"].get("reason")
+        in {
+            "candidate_recovery_control_refresh",
+            "candidate_recovery_control_replacement",
+        }
+    )
     if (
         approved.get("codex_version") != manifest.get("target_version")
         or not isinstance(approved_source, dict)
         or approved_source.get("path") != source_path_text
         or approved_source.get("fragment") != fragment
-        or approved_source.get("sha256") != current_sha256
+        or (
+            not control_refresh
+            and not allow_historical_approved_source_spec
+            and approved_source.get("sha256") != current_sha256
+        )
     ):
         raise ConfigurationError(
             "历史 Formal 摘要对应的批准场景未绑定当前规格摘要。"
@@ -6825,6 +10903,8 @@ def _successor_abandoned_attempt(
     predecessor_dir: Path,
     candidate_id: str | None,
     attempt_id: str | None,
+    *,
+    _historical_manifest_controls: bool = False,
 ) -> dict[str, Any] | None:
     """可选绑定前序中因不可变时间窗口而放弃的 candidate attempt。"""
 
@@ -6841,6 +10921,7 @@ def _successor_abandoned_attempt(
         "candidate",
         candidate_id,
         attempt_id,
+        _historical_manifest_controls=_historical_manifest_controls,
     )
     attempt_path = attempt_root / "attempt.json"
     return {
@@ -6852,6 +10933,137 @@ def _successor_abandoned_attempt(
         "identity_sha256": _fingerprint(attempt["identity"]),
         "status": attempt["status"],
     }
+
+
+def _validate_failed_job_tool_recovery_source(
+    predecessor_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+    successor_manifest: Mapping[str, Any],
+    *,
+    candidate_id: str,
+    attempt_id: str,
+    reason: str,
+) -> None:
+    """确认产出工具修复只影响前序 Candidate 的失败 Job 闭集。"""
+
+    attempt_root, attempt = _load_capture_attempt(
+        predecessor_dir,
+        "candidate",
+        candidate_id,
+        attempt_id,
+    )
+    scope = _phase_evaluation_recovery_scope(
+        predecessor_dir,
+        predecessor_manifest,
+        phase="candidate",
+        candidate_id=candidate_id,
+        attempt_root=attempt_root,
+        attempt=attempt,
+        allow_empty=False,
+        allow_awaiting_failures=True,
+    )
+    failed_ids = set(scope.get("failed_job_ids", []))
+    execute_ids = set(scope.get("execute_job_ids", []))
+    if reason == "candidate_recovery_control_refresh":
+        if attempt.get("status") != "failed" or not failed_ids:
+            raise ConfigurationError(
+                "控制刷新只接受已批准 transition 所属的 failed Candidate attempt。"
+            )
+    elif attempt.get("status") != "awaiting_receipts" or not failed_ids:
+        raise ConfigurationError(
+            "失败 Job 工具恢复只接受含可选失败项的 awaiting_receipts Candidate attempt。"
+        )
+    source_tool = predecessor_manifest.get("tool_identity")
+    successor_tool = successor_manifest.get("tool_identity")
+    if not isinstance(source_tool, Mapping) or not isinstance(
+        successor_tool, Mapping
+    ):
+        raise ConfigurationError("失败 Job 工具恢复缺少源／目标工具身份。")
+    drift = _tool_identity_drift(source_tool, successor_tool)
+    high_risk_paths = set(drift.get("production", [])) - set(
+        _PHASE_EVALUATION_HYBRID_FILES
+    )
+    target_scenario_path = (
+        "codex_upgrade_scenarios_"
+        f"{str(successor_manifest.get('target_version', '')).replace('.', '_')}.json"
+    )
+    if (
+        target_scenario_path in high_risk_paths
+        and _target_scenario_source_spec_only_drift(
+            predecessor_dir,
+            predecessor_manifest,
+        )
+    ):
+        high_risk_paths.remove(target_scenario_path)
+    unknown_paths = high_risk_paths - set(
+        RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS
+    )
+    if unknown_paths:
+        raise ConfigurationError(
+            "失败 Job 工具恢复含未登记的产出侧工具变化："
+            + "、".join(sorted(unknown_paths))
+        )
+    affected_ids = {
+        job_id
+        for path in high_risk_paths
+        for job_id in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS[path]
+    }
+    if not high_risk_paths:
+        raise ConfigurationError("失败 Job 工具恢复没有可验证的产出侧工具变化。")
+    if not affected_ids or not affected_ids.issubset(failed_ids):
+        raise ConfigurationError(
+            "失败 Job 工具恢复的产出侧变化触及复用 Job，禁止扩大重跑闭集。"
+        )
+    if not failed_ids.issubset(execute_ids):
+        raise ConfigurationError("失败 Job 工具恢复遗漏前序失败项。")
+
+
+def _target_scenario_source_spec_only_drift(
+    predecessor_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+) -> bool:
+    """仅识别目标场景中单独的规范章节摘要更新。"""
+
+    try:
+        target_version = str(predecessor_manifest.get("target_version", ""))
+        if not VERSION_RE.fullmatch(target_version):
+            return False
+        inputs = predecessor_manifest.get("inputs")
+        reference = (
+            inputs.get("target_discovery_scenarios")
+            if isinstance(inputs, Mapping)
+            else None
+        )
+        if not isinstance(reference, Mapping):
+            return False
+        _require_file_binding(reference, "前序目标场景")
+        frozen_path = _campaign_file(predecessor_dir, str(reference["path"]))
+        current_path = Path(__file__).resolve().with_name(
+            f"codex_upgrade_scenarios_{target_version.replace('.', '_')}.json"
+        )
+        if (
+            frozen_path.is_symlink()
+            or not frozen_path.is_file()
+            or file_sha256(frozen_path) != reference["sha256"]
+            or current_path.is_symlink()
+            or not current_path.is_file()
+        ):
+            return False
+        frozen = _read_json(frozen_path, "前序目标场景")
+        current = _read_json(current_path, "当前目标场景")
+        _validate_scenario_manifest_shape(frozen)
+        _validate_scenario_manifest_shape(current)
+        frozen_source = frozen.get("source_spec")
+        current_source = current.get("source_spec")
+        if not isinstance(frozen_source, dict) or not isinstance(current_source, dict):
+            return False
+        normalized = json.loads(json.dumps(frozen, ensure_ascii=False))
+        normalized["source_spec"]["sha256"] = current_source.get("sha256")
+        return normalized == current and frozen_source.get("sha256") != current_source.get(
+            "sha256"
+        )
+    except (ConfigurationError, OSError, ValueError, TypeError):
+        return False
 
 
 def _successor_runtime_configuration(
@@ -6938,6 +11150,339 @@ def _successor_runtime_configuration(
     return successor
 
 
+def _runtime_codex_binary_bindings(
+    scenario: Mapping[str, Any],
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """移除唯一允许变化的 Candidate 二进制绑定并返回其 Job 集。"""
+
+    normalized = json.loads(json.dumps(scenario, ensure_ascii=False))
+    jobs = normalized.get("capture_jobs")
+    if not isinstance(jobs, list):
+        raise ConfigurationError("运行时纠正目标场景缺少 capture_jobs。")
+    present: set[str] = set()
+    indexed = {
+        str(job.get("id")): job
+        for job in jobs
+        if isinstance(job, dict) and isinstance(job.get("id"), str)
+    }
+    if not RUNTIME_CODEX_BINARY_JOB_IDS.issubset(indexed):
+        raise ConfigurationError("运行时纠正目标场景缺少固定客户端 Job。")
+    for job_id in RUNTIME_CODEX_BINARY_JOB_IDS:
+        job = indexed[job_id]
+        steps = job.get("steps")
+        if not isinstance(steps, list) or len(steps) != 1:
+            raise ConfigurationError(
+                f"运行时纠正目标场景的 {job_id} 必须只有一个步骤。"
+            )
+        step = steps[0]
+        environment = step.get("environment") if isinstance(step, dict) else None
+        if not isinstance(environment, dict):
+            raise ConfigurationError(
+                f"运行时纠正目标场景的 {job_id} 缺少 environment。"
+            )
+        if "CODEX_BIN" not in environment:
+            continue
+        if environment.get("CODEX_BIN") != "{capture_codex_bin}":
+            raise ConfigurationError(
+                f"运行时纠正目标场景的 {job_id} CODEX_BIN 非法。"
+            )
+        present.add(job_id)
+        del environment["CODEX_BIN"]
+    return normalized, frozenset(present)
+
+
+def _validate_runtime_target_scenario_change(
+    predecessor: Mapping[str, Any],
+    successor: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """只允许为固定五个 Candidate Job 补入目标 Codex 绝对路径绑定。"""
+
+    _validate_scenario_manifest_shape(dict(predecessor))
+    _validate_scenario_manifest_shape(dict(successor))
+    if _fingerprint(_official_scenario_execution_contract(dict(predecessor))) != (
+        _fingerprint(_official_scenario_execution_contract(dict(successor)))
+    ):
+        raise ConfigurationError("运行时纠正不得改变任何官方 Job 执行合同。")
+    predecessor_normalized, predecessor_bindings = (
+        _runtime_codex_binary_bindings(predecessor)
+    )
+    successor_normalized, successor_bindings = _runtime_codex_binary_bindings(
+        successor
+    )
+    if predecessor_normalized != successor_normalized:
+        raise ConfigurationError(
+            "运行时纠正目标场景除固定 CODEX_BIN 外存在其他变化。"
+        )
+    if predecessor_bindings:
+        raise ConfigurationError(
+            "运行时纠正前序场景已经包含 CODEX_BIN，不能重复登记同一过渡。"
+        )
+    if successor_bindings != RUNTIME_CODEX_BINARY_JOB_IDS:
+        raise ConfigurationError(
+            "运行时纠正目标场景没有为全部固定客户端 Job 冻结 CODEX_BIN。"
+        )
+    changed = successor_bindings - predecessor_bindings
+    if changed != RUNTIME_CODEX_BINARY_JOB_IDS:
+        raise ConfigurationError("运行时纠正目标场景没有完整新增固定五个绑定。")
+    return tuple(sorted(changed))
+
+
+def _bound_runtime_scenario_transition_job_ids(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+) -> frozenset[str]:
+    """沿只读前序链找到并重放当前 Formal 场景的运行时过渡。"""
+
+    current_dir = campaign_dir.resolve(strict=True)
+    current_manifest = dict(manifest)
+    seen: set[Path] = set()
+    for _ in range(64):
+        if current_dir in seen:
+            raise ConfigurationError("Campaign 前序链形成循环。")
+        seen.add(current_dir)
+        predecessor = current_manifest.get("predecessor")
+        if not isinstance(predecessor, Mapping):
+            return frozenset()
+        predecessor_dir = Path(str(predecessor.get("campaign_dir", "")))
+        if (
+            not predecessor_dir.is_absolute()
+            or predecessor_dir.is_symlink()
+            or not predecessor_dir.is_dir()
+            or predecessor_dir.resolve(strict=True) in seen
+        ):
+            raise ConfigurationError("运行时场景过渡的前序路径不可信。")
+        predecessor_dir = predecessor_dir.resolve(strict=True)
+        predecessor_manifest = load_campaign_manifest(
+            predecessor_dir,
+            # 这里正在重放不可变前序链；每一级都是历史上下文，不能只把
+            # 直接控制替代前序切到历史模式后，又用当前源码校验更早祖先。
+            _control_epoch_bootstrap=True,
+        )
+        if (
+            predecessor.get("campaign_id")
+            != predecessor_manifest.get("campaign_id")
+            or predecessor.get("campaign_manifest_sha256")
+            != file_sha256(predecessor_dir / "campaign.json")
+        ):
+            raise ConfigurationError("运行时场景过渡的前序绑定漂移。")
+        current_reference = current_manifest.get("inputs", {}).get(
+            "target_discovery_scenarios"
+        )
+        predecessor_reference = predecessor_manifest.get("inputs", {}).get(
+            "target_discovery_scenarios"
+        )
+        _require_file_binding(current_reference, "当前 Formal target 场景")
+        _require_file_binding(predecessor_reference, "前序 Formal target 场景")
+        assert isinstance(current_reference, dict)
+        assert isinstance(predecessor_reference, dict)
+        if current_reference == predecessor_reference:
+            current_dir = predecessor_dir
+            current_manifest = predecessor_manifest
+            continue
+
+        receipt_path = current_dir / "predecessor-import.json"
+        receipt = _read_json(receipt_path, "运行时场景过渡收据")
+        unsigned_receipt = dict(receipt)
+        receipt_digest = unsigned_receipt.pop("receipt_digest", None)
+        transition = receipt.get("target_scenario_transition")
+        if (
+            receipt.get("schema_version")
+            != PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA
+            or receipt.get("reason") != "candidate_runtime_identity_correction"
+            or not SHA256_RE.fullmatch(str(receipt_digest))
+            or _fingerprint(unsigned_receipt) != receipt_digest
+            or not isinstance(transition, Mapping)
+            or transition.get("reason")
+            != "candidate_codex_binary_binding_correction"
+            or transition.get("predecessor") != predecessor_reference
+            or transition.get("successor") != current_reference
+        ):
+            return frozenset()
+        predecessor_scenario = _read_json(
+            _campaign_file(predecessor_dir, predecessor_reference["path"]),
+            "运行时过渡前序场景",
+        )
+        current_scenario = _read_json(
+            _campaign_file(current_dir, current_reference["path"]),
+            "运行时过渡当前场景",
+        )
+        changed_job_ids = _validate_runtime_target_scenario_change(
+            predecessor_scenario,
+            current_scenario,
+        )
+        if transition.get("changed_job_ids") != list(changed_job_ids):
+            raise ConfigurationError("运行时场景过渡 Job 闭集漂移。")
+        return frozenset(changed_job_ids)
+    raise ConfigurationError("Campaign 前序链超过 64 层，拒绝继续。")
+
+
+def _approved_scenario_with_formal_execution_contract(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    approved: Mapping[str, Any],
+    formal: Mapping[str, Any],
+) -> dict[str, Any]:
+    """保留批准评估语义，并承接已获 transition 授权的 Formal 执行字段。"""
+
+    _validate_scenario_manifest_shape(dict(approved))
+    _validate_scenario_manifest_shape(dict(formal))
+    approved_contract = _scenario_job_execution_contract(approved)
+    formal_contract = _scenario_job_execution_contract(formal)
+    if approved_contract == formal_contract:
+        return json.loads(json.dumps(approved, ensure_ascii=False))
+
+    changed_job_ids = _bound_runtime_scenario_transition_job_ids(
+        campaign_dir,
+        manifest,
+    )
+    if changed_job_ids != RUNTIME_CODEX_BINARY_JOB_IDS:
+        raise ConfigurationError(
+            "批准场景与 Formal Job 执行合同不一致，且无受控运行时过渡。"
+        )
+    approved_jobs = approved_contract["jobs"]
+    formal_jobs = formal_contract["jobs"]
+    approved_ids = [job.get("id") for job in approved_jobs]
+    formal_ids = [job.get("id") for job in formal_jobs]
+    if approved_ids != formal_ids or len(approved_ids) != len(set(approved_ids)):
+        raise ConfigurationError("批准场景与 Formal Job 身份或顺序不一致。")
+
+    for approved_job, formal_job in zip(approved_jobs, formal_jobs, strict=True):
+        job_id = str(formal_job.get("id", ""))
+        normalized_formal = json.loads(
+            json.dumps(formal_job, ensure_ascii=False)
+        )
+        if job_id in changed_job_ids:
+            approved_steps = approved_job.get("steps")
+            formal_steps = normalized_formal.get("steps")
+            if (
+                not isinstance(approved_steps, list)
+                or len(approved_steps) != 1
+                or not isinstance(formal_steps, list)
+                or len(formal_steps) != 1
+                or not isinstance(approved_steps[0].get("environment"), dict)
+                or not isinstance(formal_steps[0].get("environment"), dict)
+                or "CODEX_BIN" in approved_steps[0]["environment"]
+                or formal_steps[0]["environment"].pop("CODEX_BIN", None)
+                != "{capture_codex_bin}"
+            ):
+                raise ConfigurationError(
+                    f"{job_id} 未逐字承接受控 CODEX_BIN 运行时过渡。"
+                )
+        if normalized_formal != approved_job:
+            raise ConfigurationError(
+                f"{job_id} 存在未获 transition 批准的执行合同变化。"
+            )
+
+    effective = json.loads(json.dumps(approved, ensure_ascii=False))
+    effective_jobs = effective.get("capture_jobs")
+    formal_raw_jobs = formal.get("capture_jobs")
+    if not isinstance(effective_jobs, list) or not isinstance(formal_raw_jobs, list):
+        raise ConfigurationError("有效场景缺少 capture_jobs。")
+    for effective_job, formal_job in zip(
+        effective_jobs,
+        formal_raw_jobs,
+        strict=True,
+    ):
+        for field in SCENARIO_JOB_EXECUTION_FIELDS:
+            if field in formal_job:
+                effective_job[field] = json.loads(
+                    json.dumps(formal_job[field], ensure_ascii=False)
+                )
+            else:
+                effective_job.pop(field, None)
+    if (
+        _scenario_job_execution_contract(effective) != formal_contract
+        or _scenario_non_execution_contract(effective)
+        != _scenario_non_execution_contract(approved)
+    ):
+        raise ConfigurationError("批准语义与 Formal 执行合同合成失败。")
+    return effective
+
+
+def _successor_target_scenario_transition(
+    arguments: argparse.Namespace,
+    predecessor_dir: Path,
+    staging_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+    copied_files: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """把 Candidate-only 二进制绑定变化复制为后继的不可变输入。"""
+
+    source = getattr(arguments, "target_scenario_manifest", None)
+    if source is None:
+        return None
+    if arguments.reason != "candidate_runtime_identity_correction":
+        raise ConfigurationError(
+            "--target-scenario-manifest 只允许运行时身份纠正后继使用。"
+        )
+    resolved = source.resolve(strict=False)
+    if (
+        not source.is_absolute()
+        or resolved != source
+        or not SAFE_ABSOLUTE_PATH_RE.fullmatch(str(source))
+        or source.is_symlink()
+        or not source.is_file()
+    ):
+        raise ConfigurationError(
+            "--target-scenario-manifest 必须是可信的规范绝对文件。"
+        )
+    inputs = predecessor_manifest.get("inputs")
+    predecessor_reference = (
+        inputs.get("target_discovery_scenarios")
+        if isinstance(inputs, Mapping)
+        else None
+    )
+    _require_file_binding(
+        predecessor_reference,
+        "运行时纠正前序 target 场景",
+    )
+    assert isinstance(predecessor_reference, Mapping)
+    predecessor_path = _campaign_file(
+        predecessor_dir,
+        str(predecessor_reference["path"]),
+    )
+    if (
+        predecessor_path.is_symlink()
+        or not predecessor_path.is_file()
+        or file_sha256(predecessor_path) != predecessor_reference["sha256"]
+    ):
+        raise ConfigurationError("运行时纠正前序 target 场景摘要漂移。")
+    predecessor_scenario = _read_json(
+        predecessor_path,
+        "运行时纠正前序 target 场景",
+    )
+    successor_scenario = _read_json(source, "运行时纠正当前 target 场景")
+    if successor_scenario.get("codex_version") != predecessor_manifest.get(
+        "target_version"
+    ):
+        raise ConfigurationError("运行时纠正目标场景版本不一致。")
+    changed_job_ids = _validate_runtime_target_scenario_change(
+        predecessor_scenario,
+        successor_scenario,
+    )
+    target_relative = str(predecessor_reference["path"])
+    destination = _campaign_file(staging_dir, target_relative)
+    copied = _secure_copy_file_once(source, destination)
+    successor_reference = {
+        "path": target_relative,
+        "sha256": copied["sha256"],
+    }
+    copied_files[target_relative] = {
+        "kind": "runtime_target_scenario",
+        "source_path": target_relative,
+        "target_path": target_relative,
+        "sha256": copied["sha256"],
+        "bytes": copied["bytes"],
+    }
+    return {
+        "reason": "candidate_codex_binary_binding_correction",
+        "predecessor": dict(predecessor_reference),
+        "successor": successor_reference,
+        "changed_job_ids": list(changed_job_ids),
+    }
+
+
 def _successor_job_rehearsal_transition(
     arguments: argparse.Namespace,
     staging_dir: Path,
@@ -6976,6 +11521,11 @@ def _successor_job_rehearsal_transition(
                     )
                 ),
                 expected_contract,
+                allow_incremental_noop=(
+                    _manifest_allows_incremental_noop_rehearsal(
+                        successor_manifest
+                    )
+                ),
             )
         except ConfigurationError as error:
             raise ConfigurationError(
@@ -6993,6 +11543,12 @@ def _successor_job_rehearsal_transition(
         rehearsal_root,
         rehearsal_receipt,
         expected_contract,
+        allow_incremental_noop=(
+            getattr(arguments, "recovery_timing_ledger_dir", None) is not None
+            or _manifest_allows_incremental_noop_rehearsal(
+                successor_manifest
+            )
+        ),
     )
     if successor_control == predecessor_control:
         raise ConfigurationError("后继完整 Job 演练绑定没有发生变化。")
@@ -7004,8 +11560,2833 @@ def _successor_job_rehearsal_transition(
     }
 
 
+def _successor_stop_phase_allowed(
+    arguments: argparse.Namespace,
+    active_phase: object,
+) -> bool:
+    """只为绑定失败 attempt 的控制刷新开放历史 VC-0 停线。"""
+
+    if active_phase in codex_upgrade_timing_ledger.PHASE_ORDER[1:]:
+        return True
+    return bool(
+        active_phase == codex_upgrade_timing_ledger.PHASE_ORDER[0]
+        and arguments.reason == "candidate_recovery_control_refresh"
+        and arguments.predecessor_candidate_id
+        and arguments.predecessor_attempt_id
+    )
+
+
+def _validate_historical_recovery_scope(
+    recovery_scope: Any,
+    attempt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """按冻结事实校验历史失败闭集，不用当前评估器重新计算。"""
+
+    required = {
+        "schema_version",
+        "source_attempt_id",
+        "source_attempt_digest",
+        "run_nonce",
+        "planned_job_ids",
+        "completed_job_ids",
+        "failed_job_ids",
+        "pending_job_ids",
+        "execute_job_ids",
+        "checkpoint",
+        "environment_boundary_sha256",
+    }
+    if not isinstance(recovery_scope, Mapping) or set(recovery_scope) not in {
+        frozenset(required),
+        frozenset(required | {"source_mode"}),
+    }:
+        raise ConfigurationError("控制刷新源 transition 的冻结失败闭集结构非法。")
+    if (
+        recovery_scope.get("schema_version")
+        != "codex-upgrade-failed-attempt-scope/v1"
+        or attempt.get("status") != "failed"
+        or recovery_scope.get("source_attempt_id") != attempt.get("attempt_id")
+        or recovery_scope.get("source_attempt_digest")
+        != attempt.get("attempt_digest")
+        or recovery_scope.get("run_nonce") != attempt.get("run_nonce")
+        or not SHA256_RE.fullmatch(
+            str(recovery_scope.get("environment_boundary_sha256", ""))
+        )
+    ):
+        raise ConfigurationError("控制刷新源 transition 的冻结失败闭集身份非法。")
+
+    def scope_ids(name: str) -> list[str]:
+        values = recovery_scope.get(name)
+        if (
+            not isinstance(values, list)
+            or values != sorted(set(values))
+            or not all(
+                isinstance(value, str) and SAFE_ID_RE.fullmatch(value)
+                for value in values
+            )
+        ):
+            raise ConfigurationError(
+                f"控制刷新源 transition 的冻结 {name} 非法。"
+            )
+        return [str(value) for value in values]
+
+    planned = set(scope_ids("planned_job_ids"))
+    completed = set(scope_ids("completed_job_ids"))
+    failed = set(scope_ids("failed_job_ids"))
+    pending = set(scope_ids("pending_job_ids"))
+    execute = set(scope_ids("execute_job_ids"))
+    if (
+        not planned
+        or not execute
+        or completed & execute
+        or completed & pending
+        or failed & completed
+        or failed & pending
+        or failed | pending != execute
+        or completed | execute != planned
+    ):
+        raise ConfigurationError("控制刷新源 transition 的冻结 Job 集合关系非法。")
+
+    results = attempt.get("results")
+    if not isinstance(results, list):
+        raise ConfigurationError("控制刷新源 transition 的源 attempt 结果非法。")
+    result_status: dict[str, str] = {}
+    for result in results:
+        if (
+            not isinstance(result, Mapping)
+            or not isinstance(result.get("id"), str)
+            or result.get("id") not in planned
+            or result.get("id") in result_status
+            or result.get("status") not in {"complete", "failed"}
+        ):
+            raise ConfigurationError("控制刷新源 transition 的源 attempt 结果非法。")
+        result_status[str(result["id"])] = str(result["status"])
+    expected_completed = {
+        job_id for job_id, status in result_status.items() if status == "complete"
+    }
+    expected_failed = {
+        job_id for job_id, status in result_status.items() if status == "failed"
+    }
+    if (
+        completed != expected_completed
+        or failed != expected_failed
+        or pending != planned - set(result_status)
+    ):
+        raise ConfigurationError("控制刷新源 transition 的冻结 Job 集合已经漂移。")
+
+    checkpoint = recovery_scope.get("checkpoint")
+    attempt_checkpoint = attempt.get("job_checkpoint")
+    checkpoint_fields = ("path", "record_count", "last_sequence", "last_sha256")
+    if (
+        not isinstance(checkpoint, Mapping)
+        or set(checkpoint) != set(checkpoint_fields)
+        or not isinstance(attempt_checkpoint, Mapping)
+        or dict(checkpoint)
+        != {field: attempt_checkpoint.get(field) for field in checkpoint_fields}
+    ):
+        raise ConfigurationError("控制刷新源 transition 的冻结 checkpoint 漂移。")
+    source_mode = recovery_scope.get("source_mode")
+    if source_mode is not None and (
+        source_mode != "pre_job_failure"
+        or completed
+        or failed
+        or pending != planned
+    ):
+        raise ConfigurationError("控制刷新源 transition 的冻结 source_mode 非法。")
+    return dict(recovery_scope)
+
+
+def _candidate_control_refresh_source_transition(
+    predecessor_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+    *,
+    candidate_id: str,
+    attempt_id: str,
+    source: Path | Mapping[str, Any],
+    _historical_manifest_controls: bool = False,
+) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
+    """重放控制刷新所绑定的历史已批准 transition。
+
+    历史 transition 使用的是当时的工具摘要，不能用当前工具重新生成预览；
+    这里改为重放其不可变自摘要、预览投影、源 attempt 和失败闭集，并从中
+    取得真正过期的恢复控制链。Formal 原控制只作为上游锚点。
+    """
+
+    attempt_root, attempt = _load_capture_attempt(
+        predecessor_dir,
+        "candidate",
+        candidate_id,
+        attempt_id,
+        _historical_manifest_controls=_historical_manifest_controls,
+    )
+    if isinstance(source, Mapping):
+        _require_file_binding(source, "控制刷新源 transition")
+        source_path = _campaign_file(predecessor_dir, str(source["path"]))
+        if file_sha256(source_path) != source["sha256"]:
+            raise ConfigurationError("控制刷新源 transition 摘要漂移。")
+    else:
+        if not source.is_absolute():
+            raise ConfigurationError("控制刷新源 transition 必须使用绝对路径。")
+        source_path = source.resolve(strict=True)
+    if source_path.is_symlink() or not source_path.is_file():
+        raise ConfigurationError("控制刷新源 transition 路径不可信。")
+    try:
+        relative = source_path.relative_to(predecessor_dir.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ConfigurationError(
+            "控制刷新源 transition 必须位于前序 Campaign 内。"
+        ) from error
+    match = _PHASE_EVALUATION_TRANSITION_FILE_RE.fullmatch(source_path.name)
+    transition_index = int(match.group("index") or "1") if match else 0
+    expected_path = _evaluation_transition_path(attempt_root, transition_index)
+    if (
+        transition_index < 1
+        or transition_index > MAX_PHASE_EVALUATION_TRANSITIONS
+        or source_path.resolve(strict=True) != expected_path.resolve(strict=True)
+    ):
+        raise ConfigurationError(
+            "控制刷新源 transition 未绑定指定 Candidate／attempt 的合法槽位。"
+        )
+
+    transition = _read_json(source_path, "控制刷新源 transition")
+    unsigned = dict(transition)
+    transition_digest = unsigned.pop("transition_digest", None)
+    expected_fields = {
+        "schema_version",
+        "approved_at_utc",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "phase",
+        "candidate_id",
+        "attempt_id",
+        "attempt_digest",
+        "evidence_boundary_sha256",
+        "from_tool_files_sha256",
+        "to_tool_files_sha256",
+        "from_production_sha256",
+        "to_production_sha256",
+        "from_evaluation_sha256",
+        "to_evaluation_sha256",
+        "changed_files",
+        "allowed_operations",
+        "recovery_controls",
+        "recovery_scope",
+        "preview",
+        "review_sha256",
+        "raw_evidence_scanned_bytes",
+        "status",
+        "transition_digest",
+    }
+    if transition_index == TERMINAL_PHASE_EVALUATION_TRANSITION:
+        expected_fields.add("terminal_preflight")
+    if (
+        set(transition) != expected_fields
+        or transition.get("schema_version") != TOOL_EVALUATION_TRANSITION_SCHEMA
+        or transition.get("status") != "approved"
+        or not _is_rfc3339_timestamp(transition.get("approved_at_utc"))
+        or not SHA256_RE.fullmatch(str(transition_digest))
+        or _fingerprint(unsigned) != transition_digest
+        or transition.get("campaign_id") != predecessor_manifest.get("campaign_id")
+        or transition.get("campaign_manifest_sha256")
+        != file_sha256(predecessor_dir / "campaign.json")
+        or transition.get("phase") != "candidate"
+        or transition.get("candidate_id") != candidate_id
+        or transition.get("attempt_id") != attempt_id
+        or transition.get("attempt_digest") != attempt.get("attempt_digest")
+        or transition.get("allowed_operations") != ["capture-run"]
+        or transition.get("raw_evidence_scanned_bytes") != 0
+    ):
+        raise ConfigurationError("控制刷新源 transition 身份或自摘要非法。")
+
+    preview_binding = transition.get("preview")
+    _require_file_binding(preview_binding, "控制刷新源 transition 预览")
+    assert isinstance(preview_binding, Mapping)
+    preview_path = _campaign_file(
+        predecessor_dir,
+        str(preview_binding["path"]),
+    )
+    if (
+        preview_path != _evaluation_transition_preview_path(
+            attempt_root,
+            transition_index,
+        )
+        or preview_path.is_symlink()
+        or not preview_path.is_file()
+        or file_sha256(preview_path) != preview_binding["sha256"]
+    ):
+        raise ConfigurationError("控制刷新源 transition 预览绑定漂移。")
+    preview = _read_json(preview_path, "控制刷新源 transition 预览")
+    preview_core = {
+        key: value
+        for key, value in preview.items()
+        if key not in {"status", "review_sha256"}
+    }
+    transition_projection = {
+        key: value
+        for key, value in transition.items()
+        if key
+        not in {
+            "schema_version",
+            "approved_at_utc",
+            "preview",
+            "status",
+            "transition_digest",
+        }
+    }
+    preview_projection = {
+        key: value
+        for key, value in preview.items()
+        if key
+        not in {
+            "schema_version",
+            "campaign_mode",
+            "campaign_purpose",
+            "status",
+        }
+    }
+    if (
+        preview.get("schema_version")
+        != TOOL_EVALUATION_TRANSITION_PREVIEW_SCHEMA
+        or preview.get("status") != "approval_required"
+        or preview.get("review_sha256") != _fingerprint(preview_core)
+        or transition_projection != preview_projection
+    ):
+        raise ConfigurationError("控制刷新源 transition 与批准预览不一致。")
+
+    recovery_scope = transition.get("recovery_scope")
+    if _historical_manifest_controls:
+        # 历史控制链已经由 transition 自摘要、批准预览、源 attempt 摘要和
+        # 后续 control epoch 共同冻结。替代 transition 正是用来批准当前
+        # 评估规则变化的，不能先用当前规则重算旧闭集而形成自锁。
+        current_scope = _validate_historical_recovery_scope(
+            recovery_scope,
+            attempt,
+        )
+    else:
+        current_scope = _legacy_vc0_phase_recovery_scope(
+            predecessor_dir,
+            predecessor_manifest,
+            phase="candidate",
+            candidate_id=candidate_id,
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+        if current_scope is None or recovery_scope != current_scope:
+            raise ConfigurationError("控制刷新源 transition 的失败闭集已经漂移。")
+
+    recovery_controls = transition.get("recovery_controls")
+    expected_recovery_fields = {
+        "schema_version",
+        "predecessor",
+        "stop_checkpoint",
+        "recovery",
+        "current_tool_files_sha256",
+        "legacy_vc0_recovery",
+    }
+    frozen_controls = predecessor_manifest.get("control_receipts")
+    frozen_pair = (
+        {
+            "upgrade_timing": frozen_controls.get("upgrade_timing"),
+            "arm64_environment": frozen_controls.get("arm64_environment"),
+        }
+        if isinstance(frozen_controls, Mapping)
+        else None
+    )
+    source_recovery = (
+        recovery_controls.get("recovery")
+        if isinstance(recovery_controls, Mapping)
+        else None
+    )
+    legacy = (
+        recovery_controls.get("legacy_vc0_recovery")
+        if isinstance(recovery_controls, Mapping)
+        else None
+    )
+    if (
+        not isinstance(recovery_controls, Mapping)
+        or set(recovery_controls) != expected_recovery_fields
+        or recovery_controls.get("schema_version")
+        != TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA
+        or recovery_controls.get("predecessor") != frozen_pair
+        or recovery_controls.get("current_tool_files_sha256")
+        != transition.get("to_tool_files_sha256")
+        or not isinstance(source_recovery, dict)
+        or set(source_recovery)
+        != {"upgrade_timing", "arm64_environment", "job_rehearsal"}
+        or legacy
+        != {
+            "mode": "formal_candidate_attempt",
+            "source_attempt_id": attempt_id,
+            "source_attempt_digest": attempt.get("attempt_digest"),
+            "execute_job_ids": current_scope["execute_job_ids"],
+        }
+    ):
+        raise ConfigurationError("控制刷新源 transition 的恢复控制链非法。")
+
+    binding = {
+        "path": relative.as_posix(),
+        "sha256": file_sha256(source_path),
+    }
+    return transition, binding, source_recovery
+
+
+def _control_epoch_path(campaign_dir: Path, epoch_index: int = 1) -> Path:
+    """返回原 Campaign 中指定 control epoch 的固定路径。"""
+
+    if not 1 <= epoch_index <= CONTROL_EPOCH_MAX_COUNT:
+        raise ConfigurationError("control epoch 索引超出有界范围。")
+    return (
+        campaign_dir
+        / CONTROL_EPOCH_DIRECTORY
+        / f"control-epoch-{epoch_index:02d}.json"
+    )
+
+
+def _control_epoch_runtime_repair_path(campaign_dir: Path) -> Path:
+    """返回唯一 control epoch 运行授权修复收据路径。"""
+
+    return (
+        campaign_dir
+        / CONTROL_EPOCH_DIRECTORY
+        / CONTROL_EPOCH_RUNTIME_REPAIR_FILENAME
+    )
+
+
+def _control_epoch_runtime_repair_amendment_path(campaign_dir: Path) -> Path:
+    """返回首份失败修复的唯一替代收据路径。"""
+
+    return (
+        campaign_dir
+        / CONTROL_EPOCH_DIRECTORY
+        / CONTROL_EPOCH_RUNTIME_REPAIR_AMENDMENT_FILENAME
+    )
+
+
+def _control_epoch_files(campaign_dir: Path) -> list[Path]:
+    """严格列出最多两份连续 control epoch。"""
+
+    root = campaign_dir / CONTROL_EPOCH_DIRECTORY
+    if not root.exists():
+        return []
+    _reject_symlink_components(root, campaign_dir, "control epoch 目录")
+    if root.is_symlink() or not root.is_dir():
+        raise ConfigurationError("control epoch 目录不可信。")
+    paths = sorted(root.iterdir())
+    repair_names = {
+        CONTROL_EPOCH_RUNTIME_REPAIR_FILENAME,
+        CONTROL_EPOCH_RUNTIME_REPAIR_AMENDMENT_FILENAME,
+    }
+    if any(
+        path.is_symlink()
+        or not path.is_file()
+        or (
+            path.name not in repair_names
+            and CONTROL_EPOCH_FILENAME_RE.fullmatch(path.name) is None
+        )
+        for path in paths
+    ):
+        raise ConfigurationError("control epoch 目录含非法文件。")
+    epochs = [
+        path
+        for path in paths
+        if CONTROL_EPOCH_FILENAME_RE.fullmatch(path.name) is not None
+    ]
+    repairs = [
+        path
+        for path in paths
+        if path.name in repair_names
+    ]
+    expected_names = [f"control-epoch-{index:02d}.json" for index in range(1, len(epochs) + 1)]
+    if (
+        len(epochs) > CONTROL_EPOCH_MAX_COUNT
+        or [path.name for path in epochs] != expected_names
+        or len(repairs) > 2
+        or (repairs and (not epochs or epochs[0].name != CONTROL_EPOCH_FILENAME))
+        or (
+            any(
+                path.name == CONTROL_EPOCH_RUNTIME_REPAIR_AMENDMENT_FILENAME
+                for path in repairs
+            )
+            and not any(
+                path.name == CONTROL_EPOCH_RUNTIME_REPAIR_FILENAME
+                for path in repairs
+            )
+        )
+    ):
+        raise ConfigurationError("同一 Campaign 只允许最多两份连续 control epoch。")
+    return epochs
+
+
+def _official_sealed_control_epoch_source_context(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    _enforce_prepublication_boundary: bool = True,
+) -> dict[str, Any]:
+    """冻结或历史重放 sealed-stage 控制恢复的 official 源边界。"""
+
+    if manifest.get("campaign_mode") != "formal":
+        raise ConfigurationError("official control epoch 只允许 Formal Campaign。")
+    if _enforce_prepublication_boundary:
+        classification_root = campaign_dir / "classification"
+        classification_started = False
+        if classification_root.exists() or classification_root.is_symlink():
+            _reject_symlink_components(
+                classification_root,
+                campaign_dir,
+                "official control epoch 分类边界",
+            )
+            if classification_root.is_symlink() or not classification_root.is_dir():
+                raise ConfigurationError("official control epoch 分类目录不可信。")
+            allowed_file = Path("discovery/baseline-to-target-official.json")
+            allowed_file_present = False
+            for path in classification_root.rglob("*"):
+                if path.is_symlink():
+                    raise ConfigurationError("official control epoch 分类边界含符号链接。")
+                relative = path.relative_to(classification_root)
+                if path.is_dir() and relative == allowed_file.parent:
+                    continue
+                if path.is_file() and relative == allowed_file:
+                    allowed_file_present = True
+                    continue
+                classification_started = True
+                break
+            classification_started = classification_started or not allowed_file_present
+        if classification_started:
+            raise ConfigurationError(
+                "official control epoch 发布前不得存在分类草案或结果。"
+            )
+        if (campaign_dir / "candidates").exists():
+            raise ConfigurationError("official control epoch 发布前不得存在 Candidate。")
+    previous_recovery = _successor_reason_ancestor(
+        campaign_dir,
+        manifest,
+        "sealed_stage_control_recovery",
+    )
+    if previous_recovery is None:
+        raise ConfigurationError(
+            "祖先尚未使用 sealed_stage_control_recovery，应创建唯一 successor。"
+        )
+    official_path = campaign_dir / "official" / "result.json"
+    official = _load_stage_result(
+        campaign_dir,
+        "capture-official",
+        _ignore_checkpoint=True,
+        _skip_evidence_scan=True,
+        _historical_manifest_controls=True,
+        _verified_campaign_manifest=manifest,
+    )
+    if official.get("status") != "complete":
+        raise ConfigurationError("official control epoch 要求当前阶段已经完整封存。")
+    recovery_context = _sealed_stage_recovery_context(
+        campaign_dir,
+        manifest,
+        official,
+        require_active=False,
+    )
+    previous_controls = recovery_context.get("effective_controls")
+    if not isinstance(previous_controls, Mapping):
+        raise ConfigurationError(
+            "official control epoch 无法解析祖先 sealed-stage recovery 的有效控制。"
+        )
+    target_scenario = manifest.get("inputs", {}).get(
+        "target_discovery_scenarios"
+    )
+    _require_file_binding(target_scenario, "official control epoch target 场景")
+    assert isinstance(target_scenario, Mapping)
+    return {
+        "mode": "official_sealed",
+        "official_stage": {
+            "path": "official/result.json",
+            "sha256": file_sha256(official_path),
+            "package_digest": str(official.get("package_digest", "")),
+        },
+        "previous_sealed_stage_recovery": previous_recovery,
+        "previous_controls": json.loads(
+            json.dumps(previous_controls, ensure_ascii=False)
+        ),
+        "target_scenario": dict(target_scenario),
+    }
+
+
+def _is_official_sealed_control_epoch_source(source: Mapping[str, Any]) -> bool:
+    """判断 control epoch 是否为 official_sealed 原地控制恢复。"""
+
+    return source.get("mode") == "official_sealed"
+
+
+def _control_epoch_required_phase(source: Mapping[str, Any]) -> str:
+    """返回 control epoch 新旧 Ledger 必须位于的阶段。"""
+
+    return "VC-2" if _is_official_sealed_control_epoch_source(source) else "VC-4"
+
+
+def _control_epoch_previous_controls(
+    manifest: Mapping[str, Any],
+    source: Mapping[str, Any],
+    previous_epoch: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """解析 epoch 应续接的控制，official 模式不得退回清单初始控制。"""
+
+    controls = (
+        source.get("previous_controls")
+        if _is_official_sealed_control_epoch_source(source)
+        else (
+            previous_epoch.get("successor_controls")
+            if isinstance(previous_epoch, Mapping)
+            else manifest.get("control_receipts")
+        )
+    )
+    if not isinstance(controls, Mapping):
+        raise ConfigurationError("control epoch 缺少可续接的前序控制。")
+    return json.loads(json.dumps(controls, ensure_ascii=False))
+
+
+def _control_epoch_source_context(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    candidate_id: str | None = None,
+    attempt_id: str | None = None,
+    _enforce_prepublication_boundary: bool = True,
+) -> dict[str, Any]:
+    """只读重放控制刷新或控制替代后继所绑定的失败闭集。"""
+
+    predecessor = manifest.get("predecessor")
+    predecessor_reason = (
+        predecessor.get("reason") if isinstance(predecessor, Mapping) else None
+    )
+    if (
+        candidate_id is None
+        and attempt_id is None
+        and predecessor_reason
+        not in {
+            "candidate_recovery_control_refresh",
+            "candidate_recovery_control_replacement",
+        }
+    ):
+        return _official_sealed_control_epoch_source_context(
+            campaign_dir,
+            manifest,
+            _enforce_prepublication_boundary=_enforce_prepublication_boundary,
+        )
+    if (
+        manifest.get("campaign_mode") != "formal"
+        or not isinstance(predecessor, Mapping)
+        or predecessor_reason
+        not in {
+            "candidate_recovery_control_refresh",
+            "candidate_recovery_control_replacement",
+        }
+    ):
+        raise ConfigurationError(
+            "control epoch 只允许用于唯一控制刷新后继，或零执行控制替代后继。"
+        )
+    import_path = campaign_dir / "predecessor-import.json"
+    if import_path.is_symlink() or not import_path.is_file():
+        raise ConfigurationError("control epoch 缺少可信 predecessor-import.json。")
+    receipt = _read_json(import_path, "control epoch 前序导入收据")
+    unsigned = dict(receipt)
+    digest = unsigned.pop("receipt_digest", None)
+    if predecessor_reason == "candidate_recovery_control_replacement":
+        stored_replacement = receipt.get("control_replacement")
+        recovery_transition = receipt.get("recovery_control_transition")
+        job_transition = receipt.get("job_rehearsal_transition")
+        if (
+            receipt.get("schema_version")
+            != PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA
+            or receipt.get("reason")
+            != "candidate_recovery_control_replacement"
+            or receipt.get("successor_campaign_id") != manifest.get("campaign_id")
+            or receipt.get("successor_campaign_manifest_sha256")
+            != file_sha256(campaign_dir / "campaign.json")
+            or not SHA256_RE.fullmatch(str(digest))
+            or _fingerprint(unsigned) != digest
+            or not isinstance(stored_replacement, Mapping)
+            or not isinstance(recovery_transition, Mapping)
+            or not isinstance(job_transition, Mapping)
+        ):
+            raise ConfigurationError("控制替代 epoch 导入收据身份或摘要非法。")
+        epoch = stored_replacement.get("effective_epoch")
+        repair = stored_replacement.get("runtime_repair")
+        unpublished = stored_replacement.get("unpublished_stop_checkpoint")
+        audit = stored_replacement.get("supervisor_audit")
+        source_attempt = stored_replacement.get("source_attempt")
+        unpublished_receipt = (
+            unpublished.get("receipt") if isinstance(unpublished, Mapping) else None
+        )
+        if (
+            not isinstance(epoch, Mapping)
+            or not isinstance(unpublished, Mapping)
+            or not isinstance(unpublished_receipt, Mapping)
+            or not isinstance(audit, Mapping)
+            or not isinstance(source_attempt, Mapping)
+            or (repair is not None and not isinstance(repair, Mapping))
+        ):
+            raise ConfigurationError("控制替代 epoch 审计绑定不闭合。")
+        predecessor_dir = Path(str(predecessor.get("campaign_dir", "")))
+        if (
+            not predecessor_dir.is_absolute()
+            or predecessor_dir.is_symlink()
+            or not predecessor_dir.is_dir()
+        ):
+            raise ConfigurationError("控制替代 epoch 前序 Campaign 路径不可信。")
+        predecessor_dir = predecessor_dir.resolve(strict=True)
+        predecessor_manifest = _require_formal_campaign(
+            predecessor_dir,
+            load_campaign_manifest(
+                predecessor_dir,
+                _control_epoch_bootstrap=True,
+            ),
+        )
+        if (
+            predecessor_manifest.get("campaign_id")
+            != predecessor.get("campaign_id")
+            or file_sha256(predecessor_dir / "campaign.json")
+            != predecessor.get("campaign_manifest_sha256")
+        ):
+            raise ConfigurationError("控制替代 epoch 前序 Campaign 身份漂移。")
+        replay_arguments = argparse.Namespace(
+            reason="candidate_recovery_control_replacement",
+            predecessor_candidate_id=source_attempt.get("candidate_id"),
+            predecessor_attempt_id=source_attempt.get("attempt_id"),
+            predecessor_control_epoch=predecessor_dir / str(epoch.get("path", "")),
+            predecessor_control_runtime_repair=(
+                predecessor_dir / str(repair.get("path", ""))
+                if isinstance(repair, Mapping)
+                else None
+            ),
+            predecessor_unpublished_ledger_dir=Path(
+                str(unpublished.get("ledger_dir", ""))
+            ),
+            predecessor_unpublished_stop_receipt=(
+                Path(str(unpublished.get("ledger_dir", "")))
+                / str(unpublished_receipt.get("path", ""))
+            ),
+            predecessor_supervisor_run_dir=Path(str(audit.get("run_dir", ""))),
+        )
+        replayed = _control_replacement_context(
+            replay_arguments,
+            predecessor_dir,
+            predecessor_manifest,
+        )
+        source = replayed.get("source")
+        controls = manifest.get("control_receipts")
+        predecessor_controls = replayed.get("effective_controls")
+        if (
+            not _control_replacement_context_matches(stored_replacement, replayed)
+            or not isinstance(source, Mapping)
+            or not isinstance(controls, Mapping)
+            or not isinstance(predecessor_controls, Mapping)
+            or recovery_transition.get("predecessor")
+            != {
+                "upgrade_timing": predecessor_controls.get("upgrade_timing"),
+                "arm64_environment": predecessor_controls.get("arm64_environment"),
+            }
+            or recovery_transition.get("successor")
+            != {
+                "upgrade_timing": controls.get("upgrade_timing"),
+                "arm64_environment": controls.get("arm64_environment"),
+            }
+            or job_transition.get("predecessor")
+            != predecessor_controls.get("job_rehearsal")
+            or job_transition.get("successor") != controls.get("job_rehearsal")
+        ):
+            raise ConfigurationError("控制替代 epoch 控制链或失败闭集漂移。")
+        source_candidate_id = str(source.get("candidate_id", ""))
+        source_attempt_id = str(source.get("attempt_id", ""))
+        scenario = manifest.get("inputs", {}).get("target_discovery_scenarios")
+        _require_file_binding(scenario, "控制替代 epoch target 场景")
+        if (
+            not SAFE_ID_RE.fullmatch(source_candidate_id)
+            or not SAFE_ID_RE.fullmatch(source_attempt_id)
+            or source_attempt.get("candidate_id") != source_candidate_id
+            or source_attempt.get("attempt_id") != source_attempt_id
+            or (candidate_id is not None and candidate_id != source_candidate_id)
+            or (attempt_id is not None and attempt_id != source_attempt_id)
+            or source.get("target_scenario") != scenario
+        ):
+            raise ConfigurationError("控制替代 epoch 源 Candidate／attempt／场景漂移。")
+        return json.loads(json.dumps(source, ensure_ascii=False))
+
+    abandoned = receipt.get("abandoned_candidate_attempt")
+    control_transition = receipt.get("recovery_control_transition")
+    source_transition = (
+        control_transition.get("source_transition")
+        if isinstance(control_transition, Mapping)
+        else None
+    )
+    if (
+        receipt.get("schema_version") != PREDECESSOR_RECOVERY_IMPORT_SCHEMA
+        or receipt.get("reason") != "candidate_recovery_control_refresh"
+        or receipt.get("successor_campaign_id") != manifest.get("campaign_id")
+        or receipt.get("successor_campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or not SHA256_RE.fullmatch(str(digest))
+        or _fingerprint(unsigned) != digest
+        or not isinstance(abandoned, Mapping)
+        or not isinstance(control_transition, Mapping)
+        or not isinstance(source_transition, Mapping)
+    ):
+        raise ConfigurationError("control epoch 前序导入收据身份或摘要非法。")
+    source_candidate_id = str(abandoned.get("candidate_id", ""))
+    source_attempt_id = str(abandoned.get("attempt_id", ""))
+    if (
+        not SAFE_ID_RE.fullmatch(source_candidate_id)
+        or not SAFE_ID_RE.fullmatch(source_attempt_id)
+        or (candidate_id is not None and candidate_id != source_candidate_id)
+        or (attempt_id is not None and attempt_id != source_attempt_id)
+    ):
+        raise ConfigurationError("control epoch 源 Candidate／attempt 身份不一致。")
+    predecessor_dir = Path(str(predecessor.get("campaign_dir", "")))
+    if (
+        not predecessor_dir.is_absolute()
+        or predecessor_dir.is_symlink()
+        or not predecessor_dir.is_dir()
+    ):
+        raise ConfigurationError("control epoch 前序 Campaign 路径不可信。")
+    predecessor_dir = predecessor_dir.resolve(strict=True)
+    # control epoch 的源链属于历史控制重放；该上下文必须继续传给祖先，
+    # 否则祖先冻结的批准场景会被错误拿去对比当前文档摘要。
+    predecessor_manifest = load_campaign_manifest(
+        predecessor_dir,
+        _control_epoch_bootstrap=True,
+    )
+    if (
+        predecessor_manifest.get("campaign_id") != predecessor.get("campaign_id")
+        or file_sha256(predecessor_dir / "campaign.json")
+        != predecessor.get("campaign_manifest_sha256")
+    ):
+        raise ConfigurationError("control epoch 前序 Campaign 身份漂移。")
+    transition, expected_binding, _source_controls = (
+        _candidate_control_refresh_source_transition(
+            predecessor_dir,
+            predecessor_manifest,
+            candidate_id=source_candidate_id,
+            attempt_id=source_attempt_id,
+            source=source_transition,
+            _historical_manifest_controls=True,
+        )
+    )
+    if source_transition != expected_binding:
+        raise ConfigurationError("control epoch 源 transition 绑定漂移。")
+    attempt_root, attempt = _load_capture_attempt(
+        predecessor_dir,
+        "candidate",
+        source_candidate_id,
+        source_attempt_id,
+        _historical_manifest_controls=True,
+    )
+    attempt_path = attempt_root / "attempt.json"
+    expected_abandoned = {
+        "candidate_id": source_candidate_id,
+        "attempt_id": source_attempt_id,
+        "path": attempt_path.relative_to(predecessor_dir).as_posix(),
+        "sha256": file_sha256(attempt_path),
+        "attempt_digest": attempt["attempt_digest"],
+        "identity_sha256": _fingerprint(attempt["identity"]),
+        "status": attempt["status"],
+    }
+    scope = transition.get("recovery_scope")
+    if dict(abandoned) != expected_abandoned or not isinstance(scope, Mapping):
+        raise ConfigurationError("control epoch 源 attempt 或恢复闭集漂移。")
+    planned = scope.get("planned_job_ids")
+    executed = scope.get("execute_job_ids")
+    reused = scope.get("completed_job_ids")
+    failed = scope.get("failed_job_ids")
+    pending = scope.get("pending_job_ids")
+    arrays = (planned, executed, reused, failed, pending)
+    if any(
+        not isinstance(values, list)
+        or values != sorted(set(values))
+        or not all(isinstance(value, str) and SAFE_ID_RE.fullmatch(value) for value in values)
+        for values in arrays
+    ):
+        raise ConfigurationError("control epoch 源恢复闭集列表非法。")
+    planned_set = set(planned)
+    execute_set = set(executed)
+    reused_set = set(reused)
+    if (
+        not execute_set
+        or execute_set & reused_set
+        or execute_set | reused_set != planned_set
+        or set(failed) | set(pending) != execute_set
+    ):
+        raise ConfigurationError("control epoch 源失败／复用闭集不闭合。")
+    production_paths = [
+        str(row.get("path"))
+        for row in transition.get("changed_files", [])
+        if isinstance(row, Mapping)
+        and row.get("classification") == "failed_job_production"
+    ]
+    mapped_jobs = {
+        job_id
+        for path in production_paths
+        for job_id in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS.get(path, ())
+    }
+    if (
+        not production_paths
+        or any(path not in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS for path in production_paths)
+        or not mapped_jobs
+        or not mapped_jobs.issubset(execute_set)
+    ):
+        raise ConfigurationError("control epoch 工具产出侧映射越过失败闭集。")
+    controls = manifest.get("control_receipts")
+    import_job_transition = receipt.get("job_rehearsal_transition")
+    if (
+        not isinstance(controls, Mapping)
+        or set(controls) != {"upgrade_timing", "arm64_environment", "job_rehearsal"}
+        or control_transition.get("successor")
+        != {
+            "upgrade_timing": controls.get("upgrade_timing"),
+            "arm64_environment": controls.get("arm64_environment"),
+        }
+        or not isinstance(import_job_transition, Mapping)
+        or import_job_transition.get("successor") != controls.get("job_rehearsal")
+    ):
+        raise ConfigurationError("control epoch 当前 Campaign 控制链与导入收据不一致。")
+    scenario = manifest.get("inputs", {}).get("target_discovery_scenarios")
+    _require_file_binding(scenario, "control epoch target 场景")
+    assert isinstance(scenario, Mapping)
+    return {
+        "candidate_id": source_candidate_id,
+        "attempt_id": source_attempt_id,
+        "attempt_digest": str(attempt["attempt_digest"]),
+        "candidate_identity_sha256": str(abandoned["identity_sha256"]),
+        "source_transition": dict(expected_binding),
+        "recovery_scope_sha256": _fingerprint(dict(scope)),
+        "planned_job_ids": list(planned),
+        "execute_job_ids": list(executed),
+        "reused_job_ids": list(reused),
+        "failed_job_ids": list(failed),
+        "pending_job_ids": list(pending),
+        "production_paths": sorted(production_paths),
+        "target_scenario": dict(scenario),
+    }
+
+
+def _control_epoch_empty_boundary(campaign_dir: Path) -> dict[str, int]:
+    """在发布 epoch 前证明当前 Campaign 尚未产生任何执行事实。"""
+
+    reservation_count = 0
+    attempt_count = 0
+    checkpoint_count = 0
+    candidates = campaign_dir / "candidates"
+    if candidates.exists():
+        _reject_symlink_components(candidates, campaign_dir, "control epoch Candidate")
+        if candidates.is_symlink() or not candidates.is_dir():
+            raise ConfigurationError("control epoch Candidate 目录不可信。")
+        for path in candidates.rglob("*"):
+            if path.is_symlink():
+                raise ConfigurationError("control epoch Candidate 树含符号链接。")
+            if not path.is_file():
+                continue
+            if path.name == "reservation.json":
+                reservation_count += 1
+            elif path.name == "attempt.json":
+                attempt_count += 1
+            elif "checkpoints" in path.parts:
+                checkpoint_count += 1
+    boundary = {
+        "reservation_count": reservation_count,
+        "attempt_count": attempt_count,
+        "checkpoint_count": checkpoint_count,
+        "live_request_count": 0,
+        "scanned_bytes": 0,
+    }
+    if any(boundary.values()):
+        raise ConfigurationError(
+            "control epoch 发布前 reservation／attempt／checkpoint／live／扫描必须全为 0。"
+        )
+    return boundary
+
+
+def _control_epoch_stop_checkpoint(
+    manifest: Mapping[str, Any],
+    ledger_root: Path,
+    receipt_path: Path,
+    *,
+    expected_timing: Mapping[str, Any] | None = None,
+    required_phase: str | None = None,
+    _historical_ledger_heads: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """重放旧 Ledger 停线 checkpoint，并生成不可变停线绑定。"""
+
+    controls = manifest.get("control_receipts")
+    timing = expected_timing
+    if timing is None:
+        timing = (
+            controls.get("upgrade_timing")
+            if isinstance(controls, Mapping)
+            else None
+        )
+    if not isinstance(timing, Mapping):
+        raise ConfigurationError("control epoch 原 Campaign 缺少旧 Ledger 控制。")
+    frozen_timing = (
+        manifest.get("control_receipts", {}).get("upgrade_timing")
+        if isinstance(manifest.get("control_receipts"), Mapping)
+        else None
+    )
+    predecessor = manifest.get("predecessor")
+    expected_stop_phase = required_phase or (
+        "VC-0"
+        if isinstance(predecessor, Mapping)
+        and predecessor.get("reason")
+        == "candidate_recovery_control_replacement"
+        and timing == frozen_timing
+        else "VC-4"
+    )
+    relative = _control_receipt_relative(
+        ledger_root,
+        receipt_path,
+        "control epoch 旧 Ledger stop_the_line checkpoint",
+    )
+    try:
+        checkpoint = codex_upgrade_timing_ledger.replay(ledger_root, relative)
+        current = (
+            None
+            if _historical_ledger_heads
+            else codex_upgrade_timing_ledger.inspect_ledger(ledger_root)
+        )
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"control epoch 旧 Ledger 无法重放：{error}") from error
+    summary = checkpoint.get("summary")
+    current_head_valid = _historical_ledger_heads or (
+        isinstance(summary, Mapping)
+        and isinstance(current, Mapping)
+        and current.get("status") == "stopped"
+        and current.get("head_sequence") == summary.get("head_sequence")
+        and current.get("head_sha256") == summary.get("head_sha256")
+        and current.get("total_live_request_count")
+        == summary.get("total_live_request_count")
+    )
+    if (
+        not isinstance(summary, Mapping)
+        or summary.get("status") != "stopped"
+        or summary.get("active_phase") != expected_stop_phase
+        or summary.get("upgrade_id") != timing.get("upgrade_id")
+        or summary.get("evidence_decision") != timing.get("evidence_decision")
+        or str(ledger_root.resolve(strict=True)) != str(timing.get("ledger_dir"))
+        or not current_head_valid
+    ):
+        raise ConfigurationError(
+            f"control epoch 旧 Ledger 不是当前 {expected_stop_phase} 停线终态 head。"
+        )
+    stop_file = ledger_root.resolve(strict=True) / relative
+    binding = {
+        "ledger_dir": str(ledger_root.resolve(strict=True)),
+        "receipt": {
+            "path": relative,
+            "sha256": file_sha256(stop_file),
+            "bytes": stop_file.stat().st_size,
+        },
+        "upgrade_id": str(summary["upgrade_id"]),
+        "active_phase": str(summary["active_phase"]),
+        "head_sequence": int(summary["head_sequence"]),
+        "head_sha256": str(summary["head_sha256"]),
+        "total_elapsed_seconds": int(summary["total_elapsed_seconds"]),
+        "total_live_request_count": int(summary["total_live_request_count"]),
+        "total_deadline_at_utc": str(summary["total_deadline_at_utc"]),
+    }
+    return binding, dict(summary)
+
+
+def _build_control_epoch_successor_controls(
+    arguments: argparse.Namespace,
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    *,
+    required_phase: str = "VC-4",
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """绑定新 Ledger／P0／incremental-noop，并要求当前 head 已到指定阶段。"""
+
+    control_arguments = argparse.Namespace(
+        campaign_mode="preflight_only",
+        campaign_purpose=manifest["campaign_purpose"],
+        baseline_version=manifest["baseline_version"],
+        target_version=manifest["target_version"],
+        timing_ledger_dir=arguments.recovery_timing_ledger_dir,
+        timing_receipt=arguments.recovery_timing_receipt,
+        arm64_environment_root=arguments.recovery_arm64_environment_root,
+        arm64_environment_receipt=arguments.recovery_arm64_environment_receipt,
+    )
+    controls = _plan_control_receipts(control_arguments)
+    proxy_manifest = json.loads(json.dumps(manifest, ensure_ascii=False))
+    proxy_manifest["tool_identity"] = dict(current_tool)
+    proxy_manifest["control_receipts"] = controls
+    preflight_dir, preflight_manifest = _assert_recovery_rehearsal_uses_successor_controls(
+        arguments,
+        proxy_manifest,
+    )
+    target_scenario_override = _recovery_rehearsal_target_scenario_override(
+        campaign_dir,
+        manifest,
+        preflight_dir,
+        preflight_manifest,
+    )
+    expected_contract = _job_rehearsal_contract_from_manifest(
+        campaign_dir,
+        manifest,
+        target_scenario_override=target_scenario_override,
+        tool_files_sha256_override=str(current_tool.get("files_sha256", "")),
+    )
+    controls["job_rehearsal"] = _job_rehearsal_control_from_receipt(
+        arguments.job_rehearsal_root,
+        arguments.job_rehearsal_receipt,
+        expected_contract,
+        allow_incremental_noop=True,
+    )
+    rehearsal_relative = _control_receipt_relative(
+        arguments.job_rehearsal_root,
+        arguments.job_rehearsal_receipt,
+        "control epoch incremental-noop 演练收据",
+    )
+    try:
+        rehearsal = codex_upgrade_job_rehearsal_receipt.replay(
+            arguments.job_rehearsal_root,
+            rehearsal_relative,
+        )
+    except (OSError, codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError) as error:
+        raise ConfigurationError(f"control epoch 演练收据无法重放：{error}") from error
+    noop = rehearsal.get("incremental_noop")
+    if (
+        rehearsal.get("status") != "incremental-noop"
+        or not isinstance(noop, Mapping)
+        or noop.get("new_pass_fact") is not False
+        or noop.get("execute_job_ids") != []
+        or noop.get("failed_job_ids") != []
+        or noop.get("affected_job_ids") != []
+        or noop.get("scanned_bytes") != 0
+        or noop.get("live_request_count") != 0
+    ):
+        raise ConfigurationError("control epoch 必须绑定当前合同的零执行 incremental-noop。")
+    timing = controls["upgrade_timing"]
+    timing_root, checkpoint = _sealed_stage_timing_checkpoint(
+        timing,
+        label="control epoch 新 Ledger",
+    )
+    summary = checkpoint["summary"]
+    try:
+        current = codex_upgrade_timing_ledger.assert_usable(
+            timing_root,
+            str(timing["receipt"]["path"]),
+            baseline_version=str(manifest["baseline_version"]),
+            target_version=str(manifest["target_version"]),
+            campaign_purpose=str(manifest["campaign_purpose"]),
+            required_phase=required_phase,
+        )
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"control epoch 新 Ledger 未通过：{error}") from error
+    if (
+        summary.get("status") != "active"
+        or summary.get("active_phase") != required_phase
+        or summary.get("total_live_request_count") != 0
+        or current.get("head_sequence") != summary.get("head_sequence")
+        or current.get("head_sha256") != summary.get("head_sha256")
+        or current.get("total_live_request_count") != 0
+    ):
+        raise ConfigurationError(
+            f"control epoch 新 Ledger 必须是当前 {required_phase} active head 且 live=0。"
+        )
+    return controls, dict(summary), rehearsal
+
+
+def _control_epoch_invariants(
+    manifest: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    *,
+    allowed_production_paths: Iterable[str] = (),
+    required_active_phase: str = "VC-4",
+) -> dict[str, Any]:
+    """冻结不会因控制续期而改变的 Candidate、场景、compose 和工具产出身份。"""
+
+    expected_tool = manifest.get("tool_identity")
+    if not isinstance(expected_tool, Mapping):
+        raise ConfigurationError("control epoch Campaign 缺少工具身份。")
+    allowed = {str(path) for path in allowed_production_paths}
+    excluded = set(_PHASE_EVALUATION_HYBRID_FILES) | allowed
+    if _tool_identity_side_digest_excluding(
+        expected_tool,
+        "production",
+        excluded,
+    ) != _tool_identity_side_digest_excluding(current_tool, "production", excluded):
+        raise ConfigurationError("control epoch 检测到失败闭集之外的工具产出侧漂移。")
+    configuration = manifest.get("configuration")
+    if not isinstance(configuration, Mapping):
+        raise ConfigurationError("control epoch Campaign 配置非法。")
+    return {
+        "tool_files_sha256": str(current_tool.get("files_sha256", "")),
+        "tool_production_sha256": _control_epoch_production_invariant_digest(
+            expected_tool,
+            current_tool,
+            _PHASE_EVALUATION_HYBRID_FILES,
+        ),
+        "compose_sha256": _fingerprint(
+            {
+                "live_attestation_compose_dir": configuration.get(
+                    "live_attestation_compose_dir"
+                ),
+                "live_attestation_compose_files": configuration.get(
+                    "live_attestation_compose_files"
+                ),
+            }
+        ),
+        "required_active_phase": required_active_phase,
+    }
+
+
+def _control_epoch_production_invariant_digest(
+    expected_tool: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    excluded_paths: Iterable[str],
+) -> str:
+    """计算 control epoch 的稳定产出摘要并兼容旧白名单。
+
+    旧 epoch 曾把 canonical gate／activation 文件计入 production。它们如今
+    已明确归入评估侧，但不能因此改写历史收据中的摘要。这里按旧白名单从
+    expected 身份重算：兼容路径保留，新增且不在旧 plan 中的同类文件自然不
+    进入摘要；真正的产出侧漂移仍由调用方的逐文件闭集门禁 fail-close。
+    """
+
+    def entries(identity: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+        raw = identity.get("entries")
+        if not isinstance(raw, list):
+            components = identity.get("components")
+            if not isinstance(components, Mapping):
+                raise ConfigurationError("工具身份缺少文件清单。")
+            raw = [
+                entry
+                for value in components.values()
+                if isinstance(value, Mapping)
+                for entry in value.get("entries", [])
+                if isinstance(entry, Mapping)
+            ]
+        return {
+            str(entry["path"]): dict(entry)
+            for entry in raw
+            if isinstance(entry, Mapping) and isinstance(entry.get("path"), str)
+        }
+
+    expected_entries = entries(expected_tool)
+    # current_tool 作为参数保留是为了让调用点显式传入当前身份；旧 epoch
+    # 的稳定产出摘要必须锚定 plan 时的 expected 字节，不能随评估修复变化。
+    _ = current_tool
+    excluded = {str(path) for path in excluded_paths}
+    legacy_evaluation = (
+        set(_EVALUATION_SIDE_FILES) | set(_WATCHDOG_ONLY_TOOL_FILES)
+    ) - set(_CANONICAL_EVALUATION_ONLY_FILES)
+    stable: list[dict[str, Any]] = []
+    for path in sorted(expected_entries):
+        if path in excluded or path in legacy_evaluation:
+            continue
+        stable.append(expected_entries[path])
+    return _fingerprint({"entries": stable})
+
+
+def _control_epoch_failed_scope_production_paths(
+    manifest: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    source: Mapping[str, Any],
+) -> set[str]:
+    """只放行最终 epoch 冻结失败闭集内、已登记到具体 Job 的产出变化。"""
+
+    expected_tool = manifest.get("tool_identity")
+    if not isinstance(expected_tool, Mapping):
+        raise ConfigurationError("control epoch Campaign 缺少工具身份。")
+    production_paths = set(
+        _tool_identity_drift(expected_tool, current_tool).get("production", [])
+    ) - set(_PHASE_EVALUATION_HYBRID_FILES)
+    if not production_paths:
+        return set()
+    if _is_official_sealed_control_epoch_source(source):
+        raise ConfigurationError(
+            "official control epoch 检测到产出侧工具变化，必须永久停线。"
+        )
+    scope = _control_epoch_final_execution_scope(source)
+    unknown_paths = production_paths - set(
+        RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS
+    )
+    if unknown_paths:
+        raise ConfigurationError(
+            "control epoch 包含未登记的失败闭集产出变化："
+            + "、".join(sorted(unknown_paths))
+        )
+    execute_ids = set(scope["execute_job_ids"])
+    reused_ids = set(scope["reused_job_ids"])
+    affected_ids = {
+        job_id
+        for path in production_paths
+        for job_id in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS[path]
+    }
+    if (
+        not affected_ids
+        or not affected_ids.issubset(execute_ids)
+        or affected_ids.intersection(reused_ids)
+    ):
+        raise ConfigurationError(
+            "control epoch 检测到失败闭集之外的工具产出侧漂移。"
+        )
+    return production_paths
+
+
+def _control_epoch_final_execution_scope(
+    source: Mapping[str, Any],
+) -> dict[str, Any]:
+    """冻结 replacement 最终执行 epoch 唯一允许的 2 执行／7 复用闭集。"""
+
+    planned = source.get("planned_job_ids")
+    executed = source.get("execute_job_ids")
+    reused = source.get("reused_job_ids")
+    expected_executed = list(CONTROL_EPOCH_FINAL_EXECUTION_JOB_IDS)
+    if (
+        not isinstance(planned, list)
+        or not isinstance(executed, list)
+        or not isinstance(reused, list)
+        or planned != sorted(set(planned))
+        or executed != expected_executed
+        or reused != sorted(set(reused))
+        or len(planned) != 9
+        or len(reused) != 7
+        or set(executed) & set(reused)
+        or set(executed) | set(reused) != set(planned)
+    ):
+        raise ConfigurationError(
+            "replacement 最终 execution epoch 必须精确保持 2 执行／7 复用闭集。"
+        )
+    return {
+        "planned_job_ids": list(planned),
+        "execute_job_ids": list(executed),
+        "reused_job_ids": list(reused),
+        "execute_count": 2,
+        "reused_count": 7,
+    }
+
+
+def _control_epoch_final_execution_authorization(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    source: Mapping[str, Any],
+    previous_epoch: Mapping[str, Any],
+    supervisor_run_dir: Path,
+) -> dict[str, Any]:
+    """复算最终 execution epoch 对 repair-02、监督器和冻结闭集的绑定。"""
+
+    predecessor = manifest.get("predecessor")
+    if (
+        not isinstance(predecessor, Mapping)
+        or predecessor.get("reason")
+        != "candidate_recovery_control_replacement"
+    ):
+        raise ConfigurationError("最终 execution epoch 只允许用于 replacement Campaign。")
+    repair_path = _control_epoch_runtime_repair_amendment_path(campaign_dir)
+    repair_payload = _read_json(repair_path, "最终 execution epoch repair-02")
+    repair_binding = {
+        **_control_replacement_file_binding(
+            campaign_dir,
+            repair_path,
+            label="最终 execution epoch repair-02",
+        ),
+        "receipt_sha256": repair_payload.get("receipt_sha256"),
+    }
+    if (
+        repair_payload.get("schema_version")
+        != CONTROL_EPOCH_RUNTIME_REPAIR_SCHEMA
+        or repair_payload.get("repair_index") != 2
+        or not SHA256_RE.fullmatch(str(repair_binding["receipt_sha256"]))
+        or previous_epoch.get("runtime_repair") != repair_binding
+    ):
+        raise ConfigurationError(
+            "最终 execution epoch 必须绑定当前有效的 repair-02。"
+        )
+    supervisor_audit = _control_replacement_supervisor_audit(supervisor_run_dir)
+    if supervisor_audit.get("summary", {}).get("state") != "stopped":
+        raise ConfigurationError(
+            "最终 execution epoch 要求父监督器正常结束且 audit_incomplete=false。"
+        )
+    return {
+        "schema_version": CONTROL_EPOCH_FINAL_EXECUTION_SCHEMA,
+        "mode": CONTROL_EPOCH_FINAL_EXECUTION_MODE,
+        "previous_runtime_repair": repair_binding,
+        "supervisor_audit": supervisor_audit,
+        "scope": _control_epoch_final_execution_scope(source),
+        "maximum_execution_budget_seconds": (
+            CONTROL_EPOCH_FINAL_EXECUTION_MAX_SECONDS
+        ),
+    }
+
+
+def _load_control_epoch_receipt(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    _allow_unrepaired_tool_drift: bool = False,
+    _historical_ledger_heads: bool = False,
+) -> dict[str, Any] | None:
+    """加载并严格重放有界追加式 control epoch 链。"""
+
+    paths = _control_epoch_files(campaign_dir)
+    if not paths:
+        return None
+    repair_path = _control_epoch_runtime_repair_path(campaign_dir)
+    has_runtime_repair = repair_path.is_file() and not repair_path.is_symlink()
+    repair_amendment_path = _control_epoch_runtime_repair_amendment_path(
+        campaign_dir
+    )
+    has_runtime_repair_amendment = (
+        repair_amendment_path.is_file()
+        and not repair_amendment_path.is_symlink()
+    )
+    if has_runtime_repair_amendment and not has_runtime_repair:
+        raise ConfigurationError("control epoch 修复替代缺少首份运行授权修复。")
+    predecessor = manifest.get("predecessor")
+    control_replacement_epoch = (
+        isinstance(predecessor, Mapping)
+        and predecessor.get("reason")
+        == "candidate_recovery_control_replacement"
+    )
+    if control_replacement_epoch and len(paths) > 1 and (
+        len(paths) != 2 or not has_runtime_repair_amendment
+    ):
+        raise ConfigurationError(
+            "控制替代后继的第二个 epoch 必须是 repair-02 后的最终执行授权。"
+        )
+    base_required = {
+        "schema_version",
+        "status",
+        "epoch_index",
+        "created_at_utc",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "previous_epoch_sha256",
+        "previous_controls",
+        "stop_checkpoint",
+        "successor_controls",
+        "source",
+        "invariants",
+        "boundary",
+        "budget",
+        "receipt_sha256",
+    }
+    # 已发布 epoch 的历史重放必须允许其后产生的分类和 Candidate；
+    # 发布前为空门禁只属于 create_control_epoch 入口。
+    source = _control_epoch_source_context(
+        campaign_dir,
+        manifest,
+        _enforce_prepublication_boundary=False,
+    )
+    official_sealed_epoch = _is_official_sealed_control_epoch_source(source)
+    if official_sealed_epoch and (
+        len(paths) != 1 or has_runtime_repair_amendment
+    ):
+        raise ConfigurationError(
+            "official_sealed Campaign 只允许一份 control epoch 和至多一份分类控制修复。"
+        )
+    required_phase = _control_epoch_required_phase(source)
+    current_tool = _tool_identity(include_git=False)
+    allowed_production_paths = _control_epoch_failed_scope_production_paths(
+        manifest,
+        current_tool,
+        source,
+    )
+    invariants = _control_epoch_invariants(
+        manifest,
+        current_tool,
+        allowed_production_paths=allowed_production_paths,
+        required_active_phase=required_phase,
+    )
+    previous_controls = _control_epoch_previous_controls(
+        manifest,
+        source,
+        None,
+    )
+    if not isinstance(previous_controls, Mapping):
+        raise ConfigurationError("control epoch 缺少初始控制绑定。")
+    previous_epoch_sha256: str | None = None
+    previous_cumulative_elapsed = 0
+    previous_successor_elapsed = 0
+    effective: dict[str, Any] | None = None
+    frozen_production_sha256: str | None = None
+
+    for epoch_index, path in enumerate(paths, start=1):
+        payload = _read_json(path, f"control epoch {epoch_index} 收据")
+        final_execution_epoch = control_replacement_epoch and epoch_index == 2
+        required = set(base_required)
+        if final_execution_epoch:
+            required.add("execution_authorization")
+        unsigned = dict(payload)
+        digest = unsigned.pop("receipt_sha256", None)
+        if (
+            set(payload) != required
+            or payload.get("schema_version") != CONTROL_EPOCH_SCHEMA
+            or payload.get("status") != "active"
+            or payload.get("epoch_index") != epoch_index
+            or payload.get("previous_epoch_sha256") != previous_epoch_sha256
+            or not _is_rfc3339_timestamp(payload.get("created_at_utc"))
+            or payload.get("campaign_id") != manifest.get("campaign_id")
+            or payload.get("campaign_manifest_sha256")
+            != file_sha256(campaign_dir / "campaign.json")
+            or not SHA256_RE.fullmatch(str(digest))
+            or _fingerprint(unsigned) != digest
+            or payload.get("previous_controls") != previous_controls
+        ):
+            raise ConfigurationError("control epoch 收据结构、链路、身份或自摘要非法。")
+        if payload.get("source") != source:
+            raise ConfigurationError("control epoch 源 Candidate／闭集发生漂移。")
+        if final_execution_epoch:
+            authorization = payload.get("execution_authorization")
+            supervisor_audit = (
+                authorization.get("supervisor_audit")
+                if isinstance(authorization, Mapping)
+                else None
+            )
+            if (
+                not isinstance(effective, Mapping)
+                or not isinstance(supervisor_audit, Mapping)
+            ):
+                raise ConfigurationError("最终 execution epoch 授权绑定不完整。")
+            expected_authorization = _control_epoch_final_execution_authorization(
+                campaign_dir,
+                manifest,
+                source=source,
+                previous_epoch=effective,
+                supervisor_run_dir=Path(str(supervisor_audit.get("run_dir", ""))),
+            )
+            if not _supervisor_audit_bound_mapping_matches(
+                authorization,
+                expected_authorization,
+            ):
+                raise ConfigurationError("最终 execution epoch 授权绑定发生漂移。")
+
+        frozen_invariants = payload.get("invariants")
+        frozen_production = (
+            frozen_invariants.get("tool_production_sha256")
+            if isinstance(frozen_invariants, Mapping)
+            else None
+        )
+        if (
+            not SHA256_RE.fullmatch(str(frozen_production or ""))
+            or (
+                frozen_production_sha256 is not None
+                and frozen_production != frozen_production_sha256
+            )
+        ):
+            raise ConfigurationError("control epoch 历史链的产出侧冻结身份不连续。")
+        if frozen_production_sha256 is None:
+            frozen_production_sha256 = str(frozen_production)
+        authorized_production_drift = (
+            control_replacement_epoch and bool(allowed_production_paths)
+        )
+        historical_runtime = (
+            _allow_unrepaired_tool_drift
+            or epoch_index < len(paths)
+            or (epoch_index == 1 and has_runtime_repair)
+        )
+        if historical_runtime:
+            if (
+                not isinstance(frozen_invariants, Mapping)
+                or set(frozen_invariants) != set(invariants)
+                or not SHA256_RE.fullmatch(
+                    str(frozen_invariants.get("tool_files_sha256", ""))
+                )
+                or (
+                    not _allow_unrepaired_tool_drift
+                    and not authorized_production_drift
+                    and frozen_invariants.get("tool_production_sha256")
+                    != invariants.get("tool_production_sha256")
+                )
+                or frozen_invariants.get("compose_sha256")
+                != invariants.get("compose_sha256")
+                or frozen_invariants.get("required_active_phase")
+                != required_phase
+            ):
+                raise ConfigurationError("control epoch 历史链越过产出、compose 或阶段边界。")
+        elif frozen_invariants != invariants:
+            allowed_tool_files_drift = (
+                (bool(allowed_production_paths) or official_sealed_epoch)
+                and isinstance(frozen_invariants, Mapping)
+                and set(frozen_invariants) == set(invariants)
+                and SHA256_RE.fullmatch(
+                    str(frozen_invariants.get("tool_files_sha256", ""))
+                )
+                and (
+                    authorized_production_drift
+                    or frozen_invariants.get("tool_production_sha256")
+                    == invariants.get("tool_production_sha256")
+                )
+                and frozen_invariants.get("compose_sha256")
+                == invariants.get("compose_sha256")
+                and frozen_invariants.get("required_active_phase")
+                == required_phase
+            )
+            if not allowed_tool_files_drift:
+                raise ConfigurationError("control epoch 场景、compose 或工具身份漂移。")
+        if payload.get("boundary") != _control_epoch_zero_boundary():
+            raise ConfigurationError("control epoch 发布边界不是全零。")
+
+        stop = payload.get("stop_checkpoint")
+        stop_receipt = stop.get("receipt") if isinstance(stop, Mapping) else None
+        old_timing = previous_controls.get("upgrade_timing")
+        if not isinstance(stop, Mapping) or not isinstance(stop_receipt, Mapping):
+            raise ConfigurationError("control epoch 旧 Ledger 停线绑定非法。")
+        if not isinstance(old_timing, Mapping):
+            raise ConfigurationError("control epoch 前序 Ledger 控制绑定非法。")
+        stop_required_phase = required_phase
+        if (
+            _historical_ledger_heads
+            and control_replacement_epoch
+            and epoch_index == 1
+            and old_timing == manifest.get("control_receipts", {}).get(
+                "upgrade_timing"
+            )
+        ):
+            # 旧版 control-replacement 首个 epoch 已按文档允许从 VC-0
+            # 停线承接；历史重放不得用后继 Ledger 的 VC-4 规则追溯改判。
+            stop_required_phase = None
+        expected_stop, stop_summary = _control_epoch_stop_checkpoint(
+            manifest,
+            Path(str(stop.get("ledger_dir", ""))),
+            Path(str(stop_receipt.get("path", ""))),
+            expected_timing=old_timing,
+            required_phase=stop_required_phase,
+            _historical_ledger_heads=_historical_ledger_heads,
+        )
+        if stop != expected_stop:
+            raise ConfigurationError("control epoch 旧 Ledger 停线绑定漂移。")
+
+        successor = payload.get("successor_controls")
+        if not isinstance(successor, Mapping):
+            raise ConfigurationError("control epoch 缺少后继控制绑定。")
+        if not (epoch_index == 1 and has_runtime_repair):
+            _verify_control_receipts(
+                campaign_dir,
+                manifest,
+                require_active=False,
+                _control_override=successor,
+                _tool_files_sha256_override=str(
+                    frozen_invariants.get("tool_files_sha256", "")
+                ),
+                _historical_manifest_controls=(
+                    historical_runtime or bool(allowed_production_paths)
+                ),
+            )
+        timing = successor.get("upgrade_timing")
+        if not isinstance(timing, Mapping):
+            raise ConfigurationError("control epoch 后继 Ledger 绑定非法。")
+        _, successor_checkpoint = _sealed_stage_timing_checkpoint(
+            timing,
+            label="control epoch 后继 Ledger",
+        )
+        successor_summary = successor_checkpoint["summary"]
+        stop_elapsed = int(stop_summary["total_elapsed_seconds"])
+        successor_elapsed = int(successor_summary["total_elapsed_seconds"])
+        if epoch_index > 1 and stop_elapsed < previous_successor_elapsed:
+            raise ConfigurationError("control epoch 前序累计耗时发生倒退。")
+        cumulative_elapsed = (
+            stop_elapsed + successor_elapsed
+            if epoch_index == 1
+            else previous_cumulative_elapsed
+            + stop_elapsed
+            - previous_successor_elapsed
+            + successor_elapsed
+        )
+        budget = payload.get("budget")
+        expected_budget = {
+            "predecessor_total_deadline_at_utc": stop_summary[
+                "total_deadline_at_utc"
+            ],
+            "successor_total_deadline_at_utc": successor_summary[
+                "total_deadline_at_utc"
+            ],
+            "predecessor_elapsed_seconds": stop_summary["total_elapsed_seconds"],
+            "successor_elapsed_seconds": successor_summary[
+                "total_elapsed_seconds"
+            ],
+            "cumulative_elapsed_seconds": cumulative_elapsed,
+            "predecessor_live_request_count": stop_summary[
+                "total_live_request_count"
+            ],
+            "successor_live_request_count": successor_summary[
+                "total_live_request_count"
+            ],
+            "cumulative_live_request_count": 0,
+        }
+        predecessor_deadline = _rfc3339_datetime(
+            str(stop_summary["total_deadline_at_utc"]),
+            "control-epoch.predecessor-total-deadline",
+        )
+        successor_deadline = _rfc3339_datetime(
+            str(successor_summary["total_deadline_at_utc"]),
+            "control-epoch.successor-total-deadline",
+        )
+        created_at = _rfc3339_datetime(
+            str(payload["created_at_utc"]),
+            "control-epoch.created-at",
+        )
+        deadline_reset_allowed = final_execution_epoch or official_sealed_epoch
+        deadline_invalid = (
+            successor_deadline <= created_at
+            or successor_deadline
+            > created_at
+            + timedelta(seconds=CONTROL_EPOCH_FINAL_EXECUTION_MAX_SECONDS)
+            if deadline_reset_allowed
+            else successor_deadline > predecessor_deadline
+        )
+        if (
+            budget != expected_budget
+            or successor_summary.get("status") != "active"
+            or successor_summary.get("active_phase") != required_phase
+            or successor_summary.get("total_live_request_count") != 0
+            or stop_summary.get("total_live_request_count") != 0
+            or deadline_invalid
+            or timing.get("ledger_dir") == old_timing.get("ledger_dir")
+            or timing.get("upgrade_id") == old_timing.get("upgrade_id")
+            or timing.get("evidence_decision")
+            != old_timing.get("evidence_decision")
+        ):
+            raise ConfigurationError("control epoch 预算、阶段或新 Ledger 身份非法。")
+
+        effective = json.loads(json.dumps(payload, ensure_ascii=False))
+        if epoch_index == 1 and has_runtime_repair:
+            effective = _load_control_epoch_runtime_repair(
+                campaign_dir,
+                manifest,
+                payload,
+                current_invariants=invariants,
+                allow_current_tool_drift=(
+                    _allow_unrepaired_tool_drift
+                    or authorized_production_drift
+                    or official_sealed_epoch
+                    or epoch_index < len(paths)
+                    or has_runtime_repair_amendment
+                ),
+                allow_historical_production_drift=(
+                    _allow_unrepaired_tool_drift
+                    or authorized_production_drift
+                ),
+            )
+            if has_runtime_repair_amendment:
+                first_runtime_repair = effective.get("runtime_repair")
+                if not isinstance(first_runtime_repair, Mapping):
+                    raise ConfigurationError("control epoch 首份运行授权修复绑定缺失。")
+                effective = _load_control_epoch_runtime_repair(
+                    campaign_dir,
+                    manifest,
+                    effective,
+                    current_invariants=invariants,
+                    allow_current_tool_drift=True,
+                    allow_historical_production_drift=(
+                        _allow_unrepaired_tool_drift
+                        or authorized_production_drift
+                    ),
+                    adopt_current_invariants=True,
+                    repair_index=2,
+                    path=repair_amendment_path,
+                    previous_runtime_repair=first_runtime_repair,
+                )
+        previous_controls = effective["successor_controls"]
+        previous_epoch_sha256 = str(payload["receipt_sha256"])
+        previous_cumulative_elapsed = int(budget["cumulative_elapsed_seconds"])
+        previous_successor_elapsed = int(budget["successor_elapsed_seconds"])
+
+    return effective
+
+
+def _control_epoch_zero_boundary() -> dict[str, int]:
+    """返回 control epoch 及其运行授权修复共用的零执行边界。"""
+
+    return {
+        "reservation_count": 0,
+        "attempt_count": 0,
+        "checkpoint_count": 0,
+        "live_request_count": 0,
+        "scanned_bytes": 0,
+    }
+
+
+def _load_control_epoch_runtime_repair(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    base_epoch: Mapping[str, Any],
+    *,
+    current_invariants: Mapping[str, Any],
+    allow_current_tool_drift: bool = False,
+    allow_historical_production_drift: bool = False,
+    adopt_current_invariants: bool = False,
+    repair_index: int = 1,
+    path: Path | None = None,
+    previous_runtime_repair: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """重放运行授权修复链的一项，并返回下一项可消费的有效 epoch。"""
+
+    if repair_index not in {1, 2}:
+        raise ConfigurationError("control epoch 运行授权修复序号非法。")
+    source = base_epoch.get("source")
+    official_classification_repair = (
+        isinstance(source, Mapping)
+        and _is_official_sealed_control_epoch_source(source)
+    )
+    if official_classification_repair and repair_index != 1:
+        raise ConfigurationError("official epoch 分类控制修复只允许一份。")
+    if adopt_current_invariants and not allow_current_tool_drift:
+        raise ConfigurationError("control epoch 历史修复不得无条件采用当前工具身份。")
+    if path is None:
+        path = _control_epoch_runtime_repair_path(campaign_dir)
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError("control epoch 运行授权修复路径不可信。")
+    payload = _read_json(path, "control epoch 运行授权修复收据")
+    required = {
+        "schema_version",
+        "status",
+        "repair_index",
+        "created_at_utc",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "control_epoch",
+        "previous_tool_files_sha256",
+        "successor_controls",
+        "source",
+        "invariants",
+        "boundary",
+        "budget",
+        "receipt_sha256",
+    }
+    if repair_index == 2:
+        required.add("previous_runtime_repair")
+    if official_classification_repair:
+        required.add("stop_checkpoint")
+    unsigned = dict(payload)
+    digest = unsigned.pop("receipt_sha256", None)
+    epoch_path = _control_epoch_path(campaign_dir)
+    epoch_binding = {
+        "path": epoch_path.relative_to(campaign_dir).as_posix(),
+        "sha256": file_sha256(epoch_path),
+        "bytes": epoch_path.stat().st_size,
+        "receipt_sha256": base_epoch.get("receipt_sha256"),
+    }
+    if (
+        set(payload) != required
+        or payload.get("schema_version") != CONTROL_EPOCH_RUNTIME_REPAIR_SCHEMA
+        or payload.get("status") != "active"
+        or payload.get("repair_index") != repair_index
+        or not _is_rfc3339_timestamp(payload.get("created_at_utc"))
+        or payload.get("campaign_id") != manifest.get("campaign_id")
+        or payload.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or payload.get("control_epoch") != epoch_binding
+        or payload.get("previous_tool_files_sha256")
+        != base_epoch.get("invariants", {}).get("tool_files_sha256")
+        or (
+            repair_index == 2
+            and payload.get("previous_runtime_repair")
+            != previous_runtime_repair
+        )
+        or (repair_index == 1 and previous_runtime_repair is not None)
+        or not SHA256_RE.fullmatch(str(digest))
+        or _fingerprint(unsigned) != digest
+    ):
+        raise ConfigurationError("control epoch 运行授权修复结构、身份或自摘要非法。")
+
+    if payload.get("source") != source:
+        raise ConfigurationError("control epoch 运行授权修复的源闭集发生漂移。")
+    repair_invariants = payload.get("invariants")
+    required_phase = (
+        _control_epoch_required_phase(source)
+        if isinstance(source, Mapping)
+        else "VC-4"
+    )
+    if allow_current_tool_drift:
+        if (
+            not isinstance(repair_invariants, Mapping)
+            or set(repair_invariants) != set(current_invariants)
+            or not SHA256_RE.fullmatch(
+                str(repair_invariants.get("tool_files_sha256", ""))
+            )
+            or (
+                not allow_historical_production_drift
+                and repair_invariants.get("tool_production_sha256")
+                != current_invariants.get("tool_production_sha256")
+            )
+            or repair_invariants.get("compose_sha256")
+            != current_invariants.get("compose_sha256")
+            or repair_invariants.get("required_active_phase") != required_phase
+        ):
+            raise ConfigurationError("control epoch 运行修复越过产出、compose 或阶段边界。")
+    elif repair_invariants != dict(current_invariants):
+        raise ConfigurationError("control epoch 运行授权修复未绑定当前工具身份。")
+    if payload.get("boundary") != _control_epoch_zero_boundary():
+        raise ConfigurationError("control epoch 运行授权修复边界不是全零。")
+    if payload.get("budget") != base_epoch.get("budget"):
+        raise ConfigurationError("control epoch 运行授权修复改变了既有预算。")
+
+    base_controls = base_epoch.get("successor_controls")
+    controls = payload.get("successor_controls")
+    expected_control_names = {
+        "upgrade_timing",
+        "arm64_environment",
+        "job_rehearsal",
+    }
+    if (
+        not isinstance(base_controls, Mapping)
+        or not isinstance(controls, Mapping)
+        or set(base_controls) != expected_control_names
+        or set(controls) != expected_control_names
+    ):
+        raise ConfigurationError("control epoch 运行授权修复控制字段不闭合。")
+    if official_classification_repair:
+        stop = payload.get("stop_checkpoint")
+        stop_receipt = stop.get("receipt") if isinstance(stop, Mapping) else None
+        if not isinstance(stop, Mapping) or not isinstance(stop_receipt, Mapping):
+            raise ConfigurationError("official epoch 分类控制修复缺少旧 Ledger 停线绑定。")
+        expected_stop, stop_summary = _control_epoch_stop_checkpoint(
+            manifest,
+            Path(str(stop.get("ledger_dir", ""))),
+            Path(str(stop_receipt.get("path", ""))),
+            expected_timing=base_controls.get("upgrade_timing"),
+            required_phase="VC-2",
+        )
+        timing = controls.get("upgrade_timing")
+        if not isinstance(timing, Mapping):
+            raise ConfigurationError("official epoch 分类控制修复缺少新 Ledger。")
+        _, checkpoint = _sealed_stage_timing_checkpoint(
+            timing,
+            label="official epoch 分类控制修复",
+        )
+        successor_summary = checkpoint.get("summary")
+        base_budget = base_epoch.get("budget")
+        if (
+            stop != expected_stop
+            or not isinstance(stop_summary, Mapping)
+            or not isinstance(successor_summary, Mapping)
+            or not isinstance(base_budget, Mapping)
+            or controls.get("upgrade_timing") == base_controls.get("upgrade_timing")
+            or controls.get("arm64_environment")
+            == base_controls.get("arm64_environment")
+            or controls.get("job_rehearsal") == base_controls.get("job_rehearsal")
+            or successor_summary.get("status") != "active"
+            or successor_summary.get("active_phase") != "VC-2"
+            or successor_summary.get("total_live_request_count") != 0
+            or stop_summary.get("total_live_request_count") != 0
+            or _rfc3339_datetime(
+                str(successor_summary.get("total_deadline_at_utc", "")),
+                "official-classification-repair.successor-total-deadline",
+            )
+            > _rfc3339_datetime(
+                str(base_budget.get("successor_total_deadline_at_utc", "")),
+                "official-classification-repair.epoch-total-deadline",
+            )
+        ):
+            raise ConfigurationError(
+                "official epoch 分类控制修复越过零执行、VC-2 或总截止边界。"
+            )
+    elif (
+        controls.get("upgrade_timing") != base_controls.get("upgrade_timing")
+        or controls.get("arm64_environment")
+        != base_controls.get("arm64_environment")
+        or controls.get("job_rehearsal") == base_controls.get("job_rehearsal")
+    ):
+        raise ConfigurationError(
+            "control epoch 运行授权修复只能替换当前工具的 incremental-noop。"
+        )
+    if (
+        payload.get("previous_tool_files_sha256")
+        == current_invariants.get("tool_files_sha256")
+    ):
+        raise ConfigurationError("control epoch 运行授权修复没有工具身份变化。")
+    _verify_control_receipts(
+        campaign_dir,
+        manifest,
+        require_active=False,
+        _control_override=controls,
+        _tool_files_sha256_override=str(
+            repair_invariants.get("tool_files_sha256", "")
+        ),
+        _historical_manifest_controls=allow_current_tool_drift,
+    )
+
+    effective = json.loads(json.dumps(base_epoch, ensure_ascii=False))
+    effective["successor_controls"] = json.loads(
+        json.dumps(controls, ensure_ascii=False)
+    )
+    effective["invariants"] = dict(
+        current_invariants
+        if adopt_current_invariants
+        else repair_invariants
+    )
+    effective["runtime_repair"] = {
+        "path": path.relative_to(campaign_dir).as_posix(),
+        "sha256": file_sha256(path),
+        "bytes": path.stat().st_size,
+        "receipt_sha256": payload["receipt_sha256"],
+    }
+    return effective
+
+
+def _create_control_epoch_runtime_repair(
+    arguments: argparse.Namespace,
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """追加一次零执行运行授权修复，不创建第二份 epoch 或 transition。"""
+
+    first_path = _control_epoch_runtime_repair_path(campaign_dir)
+    amendment_path = _control_epoch_runtime_repair_amendment_path(campaign_dir)
+    if amendment_path.exists() or amendment_path.is_symlink():
+        raise ConfigurationError("同一 control epoch 已有修复替代，禁止第三份。")
+    repair_index = 2 if first_path.is_file() and not first_path.is_symlink() else 1
+    path = amendment_path if repair_index == 2 else first_path
+    base_epoch = _load_control_epoch_receipt(
+        campaign_dir,
+        manifest,
+        _allow_unrepaired_tool_drift=True,
+    )
+    if base_epoch is None:
+        raise ConfigurationError("运行授权修复要求已发布的唯一 control epoch。")
+    boundary = _control_epoch_empty_boundary(campaign_dir)
+    if boundary != _control_epoch_zero_boundary():
+        raise ConfigurationError("control epoch 运行授权修复边界不是全零。")
+    source = _control_epoch_source_context(
+        campaign_dir,
+        manifest,
+        candidate_id=arguments.candidate_id,
+        attempt_id=arguments.attempt_id,
+    )
+    if source != base_epoch.get("source"):
+        raise ConfigurationError("运行授权修复不得改变 control epoch 源闭集。")
+    official_classification_repair = _is_official_sealed_control_epoch_source(
+        source
+    )
+    if official_classification_repair and (
+        repair_index != 1 or first_path.exists() or first_path.is_symlink()
+    ):
+        raise ConfigurationError("official epoch 分类控制修复只允许一份。")
+    base_controls = base_epoch.get("successor_controls")
+    if not isinstance(base_controls, Mapping):
+        raise ConfigurationError("运行授权修复缺少 control epoch 生效控制。")
+    if official_classification_repair:
+        stop, _stop_summary = _control_epoch_stop_checkpoint(
+            manifest,
+            arguments.predecessor_stop_ledger_dir,
+            arguments.predecessor_stop_receipt,
+            expected_timing=base_controls.get("upgrade_timing"),
+            required_phase="VC-2",
+        )
+    else:
+        stop, _stop_summary = _control_epoch_stop_checkpoint(
+            manifest,
+            arguments.predecessor_stop_ledger_dir,
+            arguments.predecessor_stop_receipt,
+        )
+        if stop != base_epoch.get("stop_checkpoint"):
+            raise ConfigurationError("运行授权修复不得改变旧 Ledger 停线绑定。")
+
+    current_tool = _tool_identity(include_git=False)
+    required_phase = "VC-2" if official_classification_repair else "VC-4"
+    invariants = _control_epoch_invariants(
+        manifest,
+        current_tool,
+        required_active_phase=required_phase,
+    )
+    previous_invariants = base_epoch.get("invariants")
+    if (
+        not isinstance(previous_invariants, Mapping)
+        or previous_invariants.get("tool_files_sha256")
+        == invariants.get("tool_files_sha256")
+    ):
+        raise ConfigurationError("运行授权修复要求工具身份确实发生变化。")
+    controls, successor_summary, _rehearsal = (
+        _build_control_epoch_successor_controls(
+            arguments,
+            campaign_dir,
+            manifest,
+            current_tool,
+            required_phase=required_phase,
+        )
+    )
+    if official_classification_repair:
+        base_budget = base_epoch.get("budget")
+        if (
+            not isinstance(base_budget, Mapping)
+            or controls.get("upgrade_timing") == base_controls.get("upgrade_timing")
+            or controls.get("arm64_environment")
+            == base_controls.get("arm64_environment")
+            or controls.get("job_rehearsal") == base_controls.get("job_rehearsal")
+            or successor_summary.get("status") != "active"
+            or successor_summary.get("active_phase") != "VC-2"
+            or successor_summary.get("total_live_request_count") != 0
+            or _rfc3339_datetime(
+                str(successor_summary.get("total_deadline_at_utc", "")),
+                "official-classification-repair.successor-total-deadline",
+            )
+            > _rfc3339_datetime(
+                str(base_budget.get("successor_total_deadline_at_utc", "")),
+                "official-classification-repair.epoch-total-deadline",
+            )
+        ):
+            raise ConfigurationError(
+                "official epoch 分类控制修复越过零执行、VC-2 或总截止边界。"
+            )
+    elif (
+        controls.get("upgrade_timing") != base_controls.get("upgrade_timing")
+        or controls.get("arm64_environment")
+        != base_controls.get("arm64_environment")
+        or controls.get("job_rehearsal") == base_controls.get("job_rehearsal")
+        or successor_summary.get("status") != "active"
+        or successor_summary.get("active_phase") != "VC-4"
+        or successor_summary.get("total_live_request_count") != 0
+    ):
+        raise ConfigurationError(
+            "运行授权修复只能在同一 Ledger/P0 上替换当前 incremental-noop。"
+        )
+
+    epoch_path = _control_epoch_path(campaign_dir)
+    epoch_binding = {
+        "path": epoch_path.relative_to(campaign_dir).as_posix(),
+        "sha256": file_sha256(epoch_path),
+        "bytes": epoch_path.stat().st_size,
+        "receipt_sha256": base_epoch["receipt_sha256"],
+    }
+    core = {
+        "schema_version": CONTROL_EPOCH_RUNTIME_REPAIR_SCHEMA,
+        "status": "active",
+        "repair_index": repair_index,
+        "created_at_utc": _utc_now(),
+        "campaign_id": manifest["campaign_id"],
+        "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+        "control_epoch": epoch_binding,
+        "previous_tool_files_sha256": previous_invariants[
+            "tool_files_sha256"
+        ],
+        "successor_controls": controls,
+        "source": source,
+        "invariants": invariants,
+        "boundary": boundary,
+        "budget": base_epoch["budget"],
+    }
+    if official_classification_repair:
+        core["stop_checkpoint"] = stop
+    if repair_index == 2:
+        previous_runtime_repair = base_epoch.get("runtime_repair")
+        if not isinstance(previous_runtime_repair, Mapping):
+            raise ConfigurationError("修复替代缺少首份 runtime-repair 绑定。")
+        core["previous_runtime_repair"] = dict(previous_runtime_repair)
+    payload = {**core, "receipt_sha256": _fingerprint(core)}
+    _secure_write_json_once(path, payload)
+    effective = _load_control_epoch_receipt(campaign_dir, manifest)
+    runtime_binding = effective.get("runtime_repair") if effective else None
+    if (
+        not isinstance(runtime_binding, Mapping)
+        or runtime_binding.get("receipt_sha256") != payload["receipt_sha256"]
+        or runtime_binding.get("sha256") != file_sha256(path)
+    ):
+        raise ConfigurationError("control epoch 运行授权修复发布后重放不一致。")
+    return {
+        "status": (
+            "official_classification_control_repaired"
+            if official_classification_repair
+            else "control_epoch_runtime_repaired"
+        ),
+        "campaign_id": manifest["campaign_id"],
+        "candidate_id": source.get("candidate_id"),
+        "attempt_id": source.get("attempt_id"),
+        "runtime_repair": {
+            "path": str(path),
+            "sha256": file_sha256(path),
+            "receipt_sha256": payload["receipt_sha256"],
+        },
+        "repair_index": repair_index,
+        "execute_job_ids": source.get("execute_job_ids", []),
+        "reused_job_ids": source.get("reused_job_ids", []),
+        **boundary,
+        "next_command": (
+            "classify"
+            if official_classification_repair
+            else "resume --rerun-failed --preview-recovery"
+        ),
+    }
+
+
+def create_control_epoch(arguments: argparse.Namespace) -> dict[str, Any]:
+    """在原 Campaign 追加有界控制纪元，不创建执行事实。"""
+
+    campaign_dir = arguments.campaign_dir
+    manifest = _require_formal_campaign(
+        campaign_dir,
+        load_campaign_manifest(campaign_dir, _control_epoch_bootstrap=True),
+    )
+    phase = str(getattr(arguments, "phase", "candidate"))
+    official_sealed_epoch = phase == "official"
+    candidate_coordinates = (
+        getattr(arguments, "candidate_id", None),
+        getattr(arguments, "attempt_id", None),
+    )
+    if official_sealed_epoch:
+        if any(candidate_coordinates):
+            raise ConfigurationError(
+                "official control epoch 不得提供 Candidate 或 attempt。"
+            )
+    elif any(value is None for value in candidate_coordinates):
+        raise ConfigurationError(
+            "candidate control epoch 必须同时提供 Candidate 和 attempt。"
+        )
+    with _campaign_lock(campaign_dir):
+        existing = _control_epoch_files(campaign_dir)
+        if (
+            official_sealed_epoch
+            and existing
+            and not arguments.repair_runtime_authorization
+        ):
+            raise ConfigurationError(
+                "official_sealed Campaign 已使用唯一 control epoch。"
+            )
+        predecessor = manifest.get("predecessor")
+        control_replacement_epoch = (
+            isinstance(predecessor, Mapping)
+            and predecessor.get("reason")
+            == "candidate_recovery_control_replacement"
+        )
+        final_execution_epoch = bool(
+            getattr(arguments, "final_execution_epoch", False)
+        )
+        if official_sealed_epoch and final_execution_epoch:
+            raise ConfigurationError(
+                "official control epoch 不允许 final-execution。"
+            )
+        supervisor_run_dir = getattr(
+            arguments,
+            "predecessor_supervisor_run_dir",
+            None,
+        )
+        replacement_current_tool: Mapping[str, Any] | None = None
+        if control_replacement_epoch:
+            if not existing and final_execution_epoch:
+                raise ConfigurationError(
+                    "最终 execution epoch 要求已有第一份 control epoch。"
+                )
+            if existing and not arguments.repair_runtime_authorization:
+                if not final_execution_epoch or len(existing) != 1:
+                    raise ConfigurationError(
+                        "控制替代后继只允许 repair-02 后追加一次最终 execution epoch。"
+                    )
+            if not existing:
+                replacement_current_tool = _tool_identity(include_git=False)
+                frozen_tool = manifest.get("tool_identity")
+                if (
+                    not isinstance(frozen_tool, Mapping)
+                    or replacement_current_tool.get("files_sha256")
+                    == frozen_tool.get("files_sha256")
+                ):
+                    raise ConfigurationError(
+                        "控制替代后继的 control epoch 要求编排工具身份确实变化。"
+                    )
+        elif final_execution_epoch:
+            raise ConfigurationError(
+                "--final-execution-epoch 只允许用于 replacement Campaign。"
+            )
+        if final_execution_epoch and arguments.repair_runtime_authorization:
+            raise ConfigurationError("最终 execution epoch 不能同时创建 runtime-repair。")
+        if (supervisor_run_dir is not None) != final_execution_epoch:
+            raise ConfigurationError(
+                "父监督器审计目录只能且必须随最终 execution epoch 提供。"
+            )
+        if existing and arguments.repair_runtime_authorization:
+            if len(existing) != 1:
+                raise ConfigurationError("运行授权修复只允许绑定第一个 control epoch。")
+            return _create_control_epoch_runtime_repair(
+                arguments,
+                campaign_dir,
+                manifest,
+            )
+        if len(existing) >= CONTROL_EPOCH_MAX_COUNT:
+            raise ConfigurationError("同一 Campaign 已用完两个 control epoch。")
+        if arguments.repair_runtime_authorization:
+            raise ConfigurationError("运行授权修复要求先有第一个 control epoch。")
+        previous_epoch = (
+            _load_control_epoch_receipt(
+                campaign_dir,
+                manifest,
+                _allow_unrepaired_tool_drift=True,
+            )
+            if existing
+            else None
+        )
+        boundary = _control_epoch_empty_boundary(campaign_dir)
+        source = _control_epoch_source_context(
+            campaign_dir,
+            manifest,
+            candidate_id=arguments.candidate_id,
+            attempt_id=arguments.attempt_id,
+        )
+        previous_controls = _control_epoch_previous_controls(
+            manifest,
+            source,
+            previous_epoch,
+        )
+        required_phase = _control_epoch_required_phase(source)
+        stop, stop_summary = _control_epoch_stop_checkpoint(
+            manifest,
+            arguments.predecessor_stop_ledger_dir,
+            arguments.predecessor_stop_receipt,
+            expected_timing=previous_controls.get("upgrade_timing"),
+            required_phase=required_phase,
+        )
+        current_tool = (
+            replacement_current_tool
+            if replacement_current_tool is not None
+            else _tool_identity(include_git=False)
+        )
+        invariants = _control_epoch_invariants(
+            manifest,
+            current_tool,
+            required_active_phase=required_phase,
+        )
+        controls, successor_summary, _rehearsal = (
+            _build_control_epoch_successor_controls(
+                arguments,
+                campaign_dir,
+                manifest,
+                current_tool,
+                required_phase=required_phase,
+            )
+        )
+        if (
+            int(stop_summary.get("total_live_request_count", -1)) != 0
+            or int(successor_summary.get("total_live_request_count", -1)) != 0
+        ):
+            raise ConfigurationError("control epoch 发布前旧／新 Ledger live 请求必须为 0。")
+        predecessor_deadline = _rfc3339_datetime(
+            str(stop_summary["total_deadline_at_utc"]),
+            "control-epoch.predecessor-total-deadline",
+        )
+        successor_deadline = _rfc3339_datetime(
+            str(successor_summary["total_deadline_at_utc"]),
+            "control-epoch.successor-total-deadline",
+        )
+        created_at_utc = _utc_now()
+        created_at = _rfc3339_datetime(
+            created_at_utc,
+            "control-epoch.created-at",
+        )
+        if final_execution_epoch or official_sealed_epoch:
+            if (
+                successor_deadline <= created_at
+                or successor_deadline
+                > created_at
+                + timedelta(seconds=CONTROL_EPOCH_FINAL_EXECUTION_MAX_SECONDS)
+            ):
+                raise ConfigurationError(
+                    "最终 execution epoch 的新总截止必须位于创建后 6 小时内。"
+                )
+        elif successor_deadline > predecessor_deadline:
+            raise ConfigurationError("control epoch 新 Ledger 不得把总截止时间后移。")
+        old_timing = previous_controls["upgrade_timing"]
+        new_timing = controls["upgrade_timing"]
+        if (
+            old_timing.get("ledger_dir") == new_timing.get("ledger_dir")
+            or old_timing.get("upgrade_id") == new_timing.get("upgrade_id")
+            or old_timing.get("evidence_decision")
+            != new_timing.get("evidence_decision")
+        ):
+            raise ConfigurationError("control epoch 必须使用新 Ledger 并保留证据决定。")
+        previous_budget = (
+            previous_epoch.get("budget")
+            if isinstance(previous_epoch, Mapping)
+            else None
+        )
+        previous_cumulative_elapsed = (
+            int(previous_budget["cumulative_elapsed_seconds"])
+            if isinstance(previous_budget, Mapping)
+            else int(stop_summary["total_elapsed_seconds"])
+        )
+        previous_successor_elapsed = (
+            int(previous_budget["successor_elapsed_seconds"])
+            if isinstance(previous_budget, Mapping)
+            else 0
+        )
+        stop_elapsed = int(stop_summary["total_elapsed_seconds"])
+        if (
+            isinstance(previous_budget, Mapping)
+            and stop_elapsed < previous_successor_elapsed
+        ):
+            raise ConfigurationError("control epoch 前序累计耗时发生倒退。")
+        cumulative_elapsed = (
+            previous_cumulative_elapsed
+            + stop_elapsed
+            - previous_successor_elapsed
+            + int(successor_summary["total_elapsed_seconds"])
+            if isinstance(previous_budget, Mapping)
+            else stop_elapsed + int(successor_summary["total_elapsed_seconds"])
+        )
+        budget = {
+            "predecessor_total_deadline_at_utc": stop_summary[
+                "total_deadline_at_utc"
+            ],
+            "successor_total_deadline_at_utc": successor_summary[
+                "total_deadline_at_utc"
+            ],
+            "predecessor_elapsed_seconds": stop_summary["total_elapsed_seconds"],
+            "successor_elapsed_seconds": successor_summary["total_elapsed_seconds"],
+            "cumulative_elapsed_seconds": cumulative_elapsed,
+            "predecessor_live_request_count": stop_summary[
+                "total_live_request_count"
+            ],
+            "successor_live_request_count": successor_summary[
+                "total_live_request_count"
+            ],
+            "cumulative_live_request_count": 0,
+        }
+        core = {
+            "schema_version": CONTROL_EPOCH_SCHEMA,
+            "status": "active",
+            "epoch_index": len(existing) + 1,
+            "created_at_utc": created_at_utc,
+            "campaign_id": manifest["campaign_id"],
+            "campaign_manifest_sha256": file_sha256(campaign_dir / "campaign.json"),
+            "previous_epoch_sha256": (
+                str(previous_epoch.get("receipt_sha256"))
+                if existing and isinstance(previous_epoch, Mapping)
+                else None
+            ),
+            "previous_controls": json.loads(
+                json.dumps(previous_controls, ensure_ascii=False)
+            ),
+            "stop_checkpoint": stop,
+            "successor_controls": controls,
+            "source": source,
+            "invariants": invariants,
+            "boundary": boundary,
+            "budget": budget,
+        }
+        if final_execution_epoch:
+            assert isinstance(previous_epoch, Mapping)
+            assert isinstance(supervisor_run_dir, Path)
+            core["execution_authorization"] = (
+                _control_epoch_final_execution_authorization(
+                    campaign_dir,
+                    manifest,
+                    source=source,
+                    previous_epoch=previous_epoch,
+                    supervisor_run_dir=supervisor_run_dir,
+                )
+            )
+        payload = {**core, "receipt_sha256": _fingerprint(core)}
+        path = _control_epoch_path(campaign_dir, int(core["epoch_index"]))
+        _secure_write_json_once(path, payload)
+        validated = _load_control_epoch_receipt(campaign_dir, manifest)
+        if validated != payload:
+            raise ConfigurationError("control epoch 发布后重放结果不一致。")
+    return {
+        "status": "control_epoch_active",
+        "campaign_id": manifest["campaign_id"],
+        "phase": phase,
+        "candidate_id": source.get("candidate_id"),
+        "attempt_id": source.get("attempt_id"),
+        "control_epoch": {
+            "path": str(path),
+            "sha256": file_sha256(path),
+            "receipt_sha256": payload["receipt_sha256"],
+        },
+        "execute_job_ids": source["execute_job_ids"],
+        "reused_job_ids": source["reused_job_ids"],
+        "reservation_count": 0,
+        "attempt_count": 0,
+        "checkpoint_count": 0,
+        "live_request_count": 0,
+        "scanned_bytes": 0,
+        "final_execution_epoch": final_execution_epoch,
+        "next_command": (
+            "classify"
+            if official_sealed_epoch
+            else "resume --rerun-failed --preview-recovery"
+        ),
+    }
+
+
+def _control_replacement_file_binding(
+    root: Path,
+    path: Path,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    """为控制替代审计文件生成不可变绑定。"""
+
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError(f"{label}不存在或不可信。")
+    try:
+        relative = path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ConfigurationError(f"{label}不在受管根目录内。") from error
+    size = path.stat().st_size
+    if size <= 0:
+        raise ConfigurationError(f"{label}为空。")
+    return {
+        "path": relative.as_posix(),
+        "sha256": file_sha256(path),
+        "bytes": size,
+    }
+
+
+def _control_replacement_stopped_ledger(
+    ledger_root: Path,
+    receipt_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    expected_evidence_decision: str,
+) -> dict[str, Any]:
+    """重放零执行替代所绑定的未发布 Ledger 当前停线 head。"""
+
+    relative = _control_receipt_relative(
+        ledger_root,
+        receipt_path,
+        "控制替代未发布 Ledger stop_the_line checkpoint",
+    )
+    try:
+        checkpoint = codex_upgrade_timing_ledger.replay(ledger_root, relative)
+        current = codex_upgrade_timing_ledger.inspect_ledger(ledger_root)
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(
+            f"控制替代未发布 Ledger 无法重放：{error}"
+        ) from error
+    summary = checkpoint.get("summary")
+    if (
+        not isinstance(summary, Mapping)
+        or summary.get("status") != "stopped"
+        or summary.get("active_phase") != "VC-4"
+        or summary.get("baseline_version") != manifest.get("baseline_version")
+        or summary.get("target_version") != manifest.get("target_version")
+        or summary.get("campaign_purpose") != manifest.get("campaign_purpose")
+        or summary.get("evidence_decision") != expected_evidence_decision
+        or summary.get("total_live_request_count") != 0
+        or current.get("status") != "stopped"
+        or current.get("head_sequence") != summary.get("head_sequence")
+        or current.get("head_sha256") != summary.get("head_sha256")
+        or current.get("total_live_request_count") != 0
+    ):
+        raise ConfigurationError(
+            "控制替代未发布 Ledger 必须是当前 VC-4 零请求停线 head。"
+        )
+    resolved_root = ledger_root.resolve(strict=True)
+    stop_file = resolved_root / relative
+    return {
+        "ledger_dir": str(resolved_root),
+        "receipt": {
+            "path": relative,
+            "sha256": file_sha256(stop_file),
+            "bytes": stop_file.stat().st_size,
+        },
+        "upgrade_id": summary["upgrade_id"],
+        "evidence_decision": summary["evidence_decision"],
+        "active_phase": summary["active_phase"],
+        "head_sequence": summary["head_sequence"],
+        "head_sha256": summary["head_sha256"],
+        "total_elapsed_seconds": summary["total_elapsed_seconds"],
+        "total_live_request_count": summary["total_live_request_count"],
+        "total_deadline_at_utc": summary["total_deadline_at_utc"],
+    }
+
+
+def _control_replacement_supervisor_audit(run_dir: Path) -> dict[str, Any]:
+    """绑定已终止且无缺口的父监督器审计链，不复制日志内容。"""
+
+    if not run_dir.is_absolute():
+        raise ConfigurationError("控制替代父监督器目录必须是绝对路径。")
+    try:
+        resolved = run_dir.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ConfigurationError("控制替代父监督器目录不存在。") from error
+    if resolved != run_dir or run_dir.is_symlink() or not run_dir.is_dir():
+        raise ConfigurationError("控制替代父监督器目录不可信。")
+    try:
+        audit = codex_upgrade_supervisor._audit_command(resolved)
+    except (OSError, codex_upgrade_supervisor.SupervisorError) as error:
+        raise ConfigurationError(f"控制替代父监督器审计失败：{error}") from error
+    state_path = resolved / "state.json"
+    stop_path = resolved / "stop-receipt.json"
+    events_path = resolved / "events.ndjson"
+    minute_path = resolved / "minute-ledger.ndjson"
+    state = _read_json(state_path, "控制替代父监督器状态")
+    stop = _read_json(stop_path, "控制替代父监督器停线收据")
+    unsigned_stop = dict(stop)
+    stop_digest = unsigned_stop.pop("receipt_sha256", None)
+    expected_stop_digest = codex_upgrade_supervisor._sha256(
+        codex_upgrade_supervisor._canonical(unsigned_stop)
+    )
+    terminal_states = {"stopped", "failed"}
+    if (
+        audit.get("audit_incomplete") is not False
+        or audit.get("integrity_errors") != []
+        or audit.get("state") not in terminal_states
+        or state.get("state") != audit.get("state")
+        or state.get("state") not in terminal_states
+        or not _is_rfc3339_timestamp(state.get("terminal_at_utc"))
+        or stop.get("schema_version")
+        != codex_upgrade_supervisor.STOP_SCHEMA
+        or not SHA256_RE.fullmatch(str(stop_digest))
+        or expected_stop_digest != stop_digest
+        or stop.get("campaign_id") != state.get("campaign_id")
+        or stop.get("phase") != state.get("phase")
+        or stop.get("owner_pid") != state.get("owner_pid")
+        or stop.get("owner_nonce") != state.get("owner_nonce")
+    ):
+        raise ConfigurationError(
+            "控制替代要求父监督器已进入可重放终态且 audit_incomplete=false。"
+        )
+    return {
+        "run_dir": str(resolved),
+        "state": _control_replacement_file_binding(
+            resolved, state_path, label="控制替代父监督器状态"
+        ),
+        "stop_receipt": _control_replacement_file_binding(
+            resolved, stop_path, label="控制替代父监督器停线收据"
+        ),
+        "events": _control_replacement_file_binding(
+            resolved, events_path, label="控制替代父监督器事件账本"
+        ),
+        "minute_ledger": _control_replacement_file_binding(
+            resolved, minute_path, label="控制替代父监督器分钟账本"
+        ),
+        "summary": audit,
+    }
+
+
+def _supervisor_audit_bound_mapping_matches(
+    stored: Mapping[str, Any], replayed: Mapping[str, Any]
+) -> bool:
+    """比较绑定监督器摘要，并兼容旧监督器缺省的 continuity 字段。
+
+    旧版监督器的 ``_audit_command`` 摘要没有 ``continuity`` 字段；新版在
+    没有父监督器续接时会显式写入 ``continuity: null``。这只是摘要形状
+    变化，不代表控制链或失败闭集变化。兼容范围仅限于“旧值缺字段且当前
+    重放值为 null”，任何真实续接内容或其它字段差异仍然失败关闭。
+    """
+
+    if dict(stored) == dict(replayed):
+        return True
+    normalized = json.loads(json.dumps(stored, ensure_ascii=False))
+    stored_audit = normalized.get("supervisor_audit")
+    replayed_audit = replayed.get("supervisor_audit")
+    if not isinstance(stored_audit, Mapping) or not isinstance(
+        replayed_audit, Mapping
+    ):
+        return False
+    stored_summary = stored_audit.get("summary")
+    replayed_summary = replayed_audit.get("summary")
+    if not isinstance(stored_summary, Mapping) or not isinstance(
+        replayed_summary, Mapping
+    ):
+        return False
+    if (
+        "continuity" not in stored_summary
+        and replayed_summary.get("continuity") is None
+    ):
+        normalized_audit = dict(stored_audit)
+        normalized_audit["summary"] = {
+            **dict(stored_summary),
+            "continuity": None,
+        }
+        normalized["supervisor_audit"] = normalized_audit
+    return normalized == dict(replayed)
+
+
+def _control_replacement_context_matches(
+    stored: Mapping[str, Any], replayed: Mapping[str, Any]
+) -> bool:
+    """比较控制替代上下文，并复用监督器摘要的历史兼容规则。"""
+
+    return _supervisor_audit_bound_mapping_matches(stored, replayed)
+
+
+def _control_replacement_context(
+    arguments: argparse.Namespace,
+    predecessor_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """重放已耗尽 control-refresh，并冻结唯一零执行替代边界。"""
+
+    predecessor = predecessor_manifest.get("predecessor")
+    if (
+        arguments.reason != "candidate_recovery_control_replacement"
+        or not isinstance(predecessor, Mapping)
+        or predecessor.get("reason") != "candidate_recovery_control_refresh"
+    ):
+        raise ConfigurationError(
+            "零执行控制替代只允许直接承接唯一 candidate_recovery_control_refresh。"
+        )
+    required_paths = (
+        arguments.predecessor_control_epoch,
+        arguments.predecessor_unpublished_ledger_dir,
+        arguments.predecessor_unpublished_stop_receipt,
+        arguments.predecessor_supervisor_run_dir,
+    )
+    if not all(isinstance(value, Path) for value in required_paths):
+        raise ConfigurationError(
+            "零执行控制替代必须绑定有效 epoch、未发布停线 Ledger 和父监督器终态。"
+        )
+    epoch_paths = _control_epoch_files(predecessor_dir)
+    if not epoch_paths:
+        raise ConfigurationError("零执行控制替代要求前序已经发布 control epoch。")
+    assert isinstance(arguments.predecessor_control_epoch, Path)
+    if (
+        arguments.predecessor_control_epoch.resolve(strict=True)
+        != epoch_paths[-1].resolve(strict=True)
+    ):
+        raise ConfigurationError("零执行控制替代未绑定最后一份有效 control epoch。")
+    effective_epoch = _load_control_epoch_receipt(
+        predecessor_dir,
+        predecessor_manifest,
+        _allow_unrepaired_tool_drift=True,
+    )
+    if not isinstance(effective_epoch, Mapping):
+        raise ConfigurationError("零执行控制替代无法重放有效 control epoch。")
+    epoch_payload = _read_json(epoch_paths[-1], "控制替代有效 epoch")
+    epoch_binding = {
+        "path": epoch_paths[-1].relative_to(predecessor_dir).as_posix(),
+        "sha256": file_sha256(epoch_paths[-1]),
+        "bytes": epoch_paths[-1].stat().st_size,
+        "receipt_sha256": epoch_payload.get("receipt_sha256"),
+    }
+    repair_path = _control_epoch_runtime_repair_path(predecessor_dir)
+    repair_binding: dict[str, Any] | None = None
+    if repair_path.exists() or repair_path.is_symlink():
+        supplied_repair = arguments.predecessor_control_runtime_repair
+        if (
+            not isinstance(supplied_repair, Path)
+            or supplied_repair.resolve(strict=True) != repair_path.resolve(strict=True)
+            or repair_path.is_symlink()
+            or not repair_path.is_file()
+        ):
+            raise ConfigurationError("零执行控制替代必须绑定有效 epoch 的运行授权修复。")
+        repair_payload = _read_json(repair_path, "控制替代运行授权修复")
+        repair_binding = {
+            "path": repair_path.relative_to(predecessor_dir).as_posix(),
+            "sha256": file_sha256(repair_path),
+            "bytes": repair_path.stat().st_size,
+            "receipt_sha256": repair_payload.get("receipt_sha256"),
+        }
+    elif arguments.predecessor_control_runtime_repair is not None:
+        raise ConfigurationError("前序没有运行授权修复，不得提供伪造绑定。")
+
+    boundary = _control_epoch_empty_boundary(predecessor_dir)
+    if boundary != _control_epoch_zero_boundary():
+        raise ConfigurationError("零执行控制替代边界不是全零。")
+    source = effective_epoch.get("source")
+    controls = effective_epoch.get("successor_controls")
+    timing = controls.get("upgrade_timing") if isinstance(controls, Mapping) else None
+    if (
+        not isinstance(source, Mapping)
+        or not isinstance(controls, Mapping)
+        or set(controls)
+        != {"upgrade_timing", "arm64_environment", "job_rehearsal"}
+        or not isinstance(timing, Mapping)
+        or source.get("candidate_id") != arguments.predecessor_candidate_id
+        or source.get("attempt_id") != arguments.predecessor_attempt_id
+    ):
+        raise ConfigurationError("零执行控制替代的源 attempt、闭集或有效控制漂移。")
+    planned = set(source.get("planned_job_ids", []))
+    executed = set(source.get("execute_job_ids", []))
+    reused = set(source.get("reused_job_ids", []))
+    failed = set(source.get("failed_job_ids", []))
+    pending = set(source.get("pending_job_ids", []))
+    if (
+        not planned
+        or not failed
+        or executed != failed | pending
+        or executed & reused
+        or executed | reused != planned
+    ):
+        raise ConfigurationError("零执行控制替代的失败／复用 Job 闭集不闭合。")
+
+    source_dir = Path(str(predecessor.get("campaign_dir", "")))
+    if (
+        not source_dir.is_absolute()
+        or str(source_dir.resolve(strict=True)) != str(source_dir)
+    ):
+        raise ConfigurationError("零执行控制替代的源 Campaign 路径不可信。")
+    source_manifest = _require_formal_campaign(
+        source_dir,
+        load_campaign_manifest(
+            source_dir,
+            _control_epoch_bootstrap=True,
+        ),
+    )
+    if (
+        source_manifest.get("campaign_id") != predecessor.get("campaign_id")
+        or file_sha256(source_dir / "campaign.json")
+        != predecessor.get("campaign_manifest_sha256")
+    ):
+        raise ConfigurationError("零执行控制替代的源 Campaign 身份漂移。")
+    source_attempt = _successor_abandoned_attempt(
+        source_dir,
+        arguments.predecessor_candidate_id,
+        arguments.predecessor_attempt_id,
+        _historical_manifest_controls=True,
+    )
+    if (
+        not isinstance(source_attempt, Mapping)
+        or source_attempt.get("status") != "failed"
+        or source_attempt.get("attempt_digest") != source.get("attempt_digest")
+        or source_attempt.get("identity_sha256")
+        != source.get("candidate_identity_sha256")
+    ):
+        raise ConfigurationError("零执行控制替代的源失败 attempt 绑定漂移。")
+
+    assert isinstance(arguments.predecessor_unpublished_ledger_dir, Path)
+    assert isinstance(arguments.predecessor_unpublished_stop_receipt, Path)
+    unpublished = _control_replacement_stopped_ledger(
+        arguments.predecessor_unpublished_ledger_dir,
+        arguments.predecessor_unpublished_stop_receipt,
+        predecessor_manifest,
+        expected_evidence_decision=str(timing.get("evidence_decision", "")),
+    )
+    registered_ledgers = {
+        str(value.get("ledger_dir"))
+        for path in epoch_paths
+        for payload in [_read_json(path, "控制替代 epoch 链")]
+        for controls_value in (
+            payload.get("previous_controls"),
+            payload.get("successor_controls"),
+        )
+        if isinstance(controls_value, Mapping)
+        for value in [controls_value.get("upgrade_timing")]
+        if isinstance(value, Mapping)
+    }
+    frozen_timing = predecessor_manifest.get("control_receipts", {}).get(
+        "upgrade_timing"
+    )
+    if isinstance(frozen_timing, Mapping):
+        registered_ledgers.add(str(frozen_timing.get("ledger_dir")))
+    if unpublished["ledger_dir"] in registered_ledgers:
+        raise ConfigurationError("控制替代所谓未发布 Ledger 已出现在 Campaign 控制链中。")
+
+    assert isinstance(arguments.predecessor_supervisor_run_dir, Path)
+    supervisor_audit = _control_replacement_supervisor_audit(
+        arguments.predecessor_supervisor_run_dir
+    )
+    return {
+        "boundary": boundary,
+        "effective_epoch": epoch_binding,
+        "runtime_repair": repair_binding,
+        "source_campaign": {
+            "campaign_dir": str(source_dir),
+            "campaign_id": source_manifest["campaign_id"],
+            "campaign_manifest_sha256": file_sha256(source_dir / "campaign.json"),
+        },
+        "source_attempt": dict(source_attempt),
+        "source": dict(source),
+        "effective_controls": json.loads(json.dumps(controls, ensure_ascii=False)),
+        "unpublished_stop_checkpoint": unpublished,
+        "supervisor_audit": supervisor_audit,
+        "execution_summary": {
+            "executed_job_ids": [],
+            "scanned_bytes": 0,
+            "live_request_count": 0,
+        },
+    }
+
+
 def _successor_recovery_control_transition(
     arguments: argparse.Namespace,
+    predecessor_dir: Path,
     successor_manifest: dict[str, Any],
 ) -> dict[str, Any] | None:
     """把已停线 Ledger 精确连接到新的离线恢复 P0 控制收据。"""
@@ -7035,6 +14416,35 @@ def _successor_recovery_control_transition(
         raise ConfigurationError("前序 Formal Campaign 缺少控制收据。")
     predecessor_timing = controls.get("upgrade_timing")
     predecessor_arm = controls.get("arm64_environment")
+    source_transition_binding: dict[str, str] | None = None
+    if arguments.reason == "candidate_recovery_control_refresh":
+        assert arguments.predecessor_candidate_id is not None
+        assert arguments.predecessor_attempt_id is not None
+        source_transition = getattr(
+            arguments,
+            "predecessor_recovery_transition",
+            None,
+        )
+        if not isinstance(source_transition, Path):
+            raise ConfigurationError(
+                "控制刷新必须显式绑定已批准的前序恢复 transition。"
+            )
+        _, source_transition_binding, source_controls = (
+            _candidate_control_refresh_source_transition(
+                predecessor_dir,
+                _require_formal_campaign(predecessor_dir),
+                candidate_id=arguments.predecessor_candidate_id,
+                attempt_id=arguments.predecessor_attempt_id,
+                source=source_transition,
+            )
+        )
+        predecessor_timing = source_controls.get("upgrade_timing")
+        predecessor_arm = source_controls.get("arm64_environment")
+        controls["job_rehearsal"] = source_controls.get("job_rehearsal")
+    elif getattr(arguments, "predecessor_recovery_transition", None) is not None:
+        raise ConfigurationError(
+            "--predecessor-recovery-transition 只允许控制刷新后继使用。"
+        )
     if not isinstance(predecessor_timing, dict) or not isinstance(
         predecessor_arm, dict
     ):
@@ -7064,11 +14474,27 @@ def _successor_recovery_control_transition(
     if (
         not isinstance(stop_summary, dict)
         or stop_summary.get("status") != "stopped"
-        or stop_summary.get("active_phase")
-        not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+        or not _successor_stop_phase_allowed(
+            arguments, stop_summary.get("active_phase")
+        )
         or any(stop_summary.get(key) != value for key, value in expected_summary.items())
     ):
-        raise ConfigurationError("前序 checkpoint 不是当前升级在 VC-1～VC-6 的停线事实。")
+        raise ConfigurationError(
+            "前序 checkpoint 不是当前升级在 VC-1～VC-6 的停线事实，"
+            "也不满足首个 reservation 前 VC-0 控制刷新条件。"
+        )
+    current_stop_summary = codex_upgrade_timing_ledger.inspect_ledger(stop_root)
+    if (
+        current_stop_summary.get("status") != "stopped"
+        or current_stop_summary.get("head_sequence")
+        != stop_summary.get("head_sequence")
+        or current_stop_summary.get("head_sha256") != stop_summary.get("head_sha256")
+        or current_stop_summary.get("total_elapsed_seconds")
+        < stop_summary.get("total_elapsed_seconds", 0)
+        or current_stop_summary.get("total_live_request_count")
+        != stop_summary.get("total_live_request_count")
+    ):
+        raise ConfigurationError("前序停线 checkpoint 不是旧 Ledger 的当前终态 head。")
     resolved_stop_root = stop_root.resolve(strict=True)
     if (
         Path(str(predecessor_timing.get("ledger_dir", ""))).resolve(strict=True)
@@ -7099,7 +14525,7 @@ def _successor_recovery_control_transition(
 
     controls.update(successor_controls)
     stop_file = resolved_stop_root / stop_relative
-    return {
+    result = {
         "reason": "stopped_ledger_recovery",
         "predecessor": {
             "upgrade_timing": predecessor_timing,
@@ -7121,6 +14547,9 @@ def _successor_recovery_control_transition(
         },
         "successor": successor_controls,
     }
+    if source_transition_binding is not None:
+        result["source_transition"] = source_transition_binding
+    return result
 
 
 def _assert_recovery_rehearsal_uses_successor_controls(
@@ -7144,6 +14573,26 @@ def _assert_recovery_rehearsal_uses_successor_controls(
         )
     except (OSError, codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError) as error:
         raise ConfigurationError(f"恢复完整 Job 演练无法重放：{error}") from error
+    preflight_dir, preflight_manifest = _recovery_rehearsal_preflight_from_receipt(
+        rehearsal,
+        successor_manifest,
+    )
+    _verify_control_receipts(
+        preflight_dir,
+        preflight_manifest,
+        require_active=True,
+    )
+    return preflight_dir, preflight_manifest
+
+
+def _recovery_rehearsal_preflight_from_receipt(
+    rehearsal: Mapping[str, Any],
+    successor_manifest: Mapping[str, Any],
+    *,
+    require_successor_controls: bool = True,
+) -> tuple[Path, dict[str, Any]]:
+    """从已重放的演练收据取得并校验其 preflight 控制合同。"""
+
     preflight = rehearsal.get("preflight_campaign")
     if not isinstance(preflight, dict):
         raise ConfigurationError("恢复完整 Job 演练缺少 preflight Campaign。")
@@ -7168,19 +14617,19 @@ def _assert_recovery_rehearsal_uses_successor_controls(
         )
         or preflight_manifest.get("tool_identity")
         != successor_manifest.get("tool_identity")
-        or not isinstance(expected_controls, dict)
-        or not isinstance(actual_controls, dict)
-        or actual_controls.get("upgrade_timing")
-        != expected_controls.get("upgrade_timing")
-        or actual_controls.get("arm64_environment")
-        != expected_controls.get("arm64_environment")
+        or (
+            require_successor_controls
+            and (
+                not isinstance(expected_controls, dict)
+                or not isinstance(actual_controls, dict)
+                or actual_controls.get("upgrade_timing")
+                != expected_controls.get("upgrade_timing")
+                or actual_controls.get("arm64_environment")
+                != expected_controls.get("arm64_environment")
+            )
+        )
     ):
         raise ConfigurationError("恢复 preflight 与后继当前控制合同不一致。")
-    _verify_control_receipts(
-        preflight_dir,
-        preflight_manifest,
-        require_active=True,
-    )
     return preflight_dir, preflight_manifest
 
 
@@ -7276,6 +14725,132 @@ def _recovery_rehearsal_target_scenario_override(
     return managed
 
 
+def _successor_rehearsal_target_scenario_override(
+    arguments: argparse.Namespace,
+    staging_dir: Path,
+    successor_manifest: Mapping[str, Any],
+    *,
+    reclassification_successor: bool,
+    recovery_control_transition: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """让分类纠正的显式演练和恢复演练都绑定当前 preflight 场景。"""
+
+    explicit_reclassification_rehearsal = bool(
+        reclassification_successor
+        and isinstance(getattr(arguments, "job_rehearsal_root", None), Path)
+        and isinstance(getattr(arguments, "job_rehearsal_receipt", None), Path)
+    )
+    recovery_rehearsal = bool(
+        recovery_control_transition is not None
+        and (
+            reclassification_successor
+            or arguments.reason
+            in {
+                "candidate_recovery_control_refresh",
+                "candidate_recovery_control_replacement",
+            }
+        )
+    )
+    if recovery_rehearsal:
+        preflight_dir, preflight_manifest = (
+            _assert_recovery_rehearsal_uses_successor_controls(
+                arguments,
+                successor_manifest,
+            )
+        )
+    elif explicit_reclassification_rehearsal:
+        assert isinstance(arguments.job_rehearsal_root, Path)
+        assert isinstance(arguments.job_rehearsal_receipt, Path)
+        preflight_dir, preflight_manifest = (
+            _successor_incremental_noop_preflight_from_coordinates(
+                arguments.job_rehearsal_root,
+                arguments.job_rehearsal_receipt,
+                successor_manifest,
+                label="分类纠正后继显式 Job 演练",
+            )
+        )
+    elif reclassification_successor:
+        bound_preflight = _successor_incremental_noop_preflight(
+            successor_manifest
+        )
+        if bound_preflight is None:
+            return None
+        preflight_dir, preflight_manifest = bound_preflight
+    else:
+        return None
+    return _recovery_rehearsal_target_scenario_override(
+        staging_dir,
+        successor_manifest,
+        preflight_dir,
+        preflight_manifest,
+    )
+
+
+def _successor_incremental_noop_preflight(
+    successor_manifest: Mapping[str, Any],
+    *,
+    require_active: bool = True,
+    allow_stopped_metadata_only: bool = False,
+) -> tuple[Path, dict[str, Any]] | None:
+    """重放后继直接继承的 no-op，并返回其当前 preflight。"""
+
+    controls = successor_manifest.get("control_receipts")
+    rehearsal_control = (
+        controls.get("job_rehearsal") if isinstance(controls, Mapping) else None
+    )
+    if not isinstance(rehearsal_control, Mapping):
+        raise ConfigurationError("前序 Formal Campaign 缺少完整 Job 演练绑定。")
+    root = Path(str(rehearsal_control.get("evidence_root", "")))
+    receipt = rehearsal_control.get("receipt")
+    receipt_path = Path(
+        str(receipt.get("path", "")) if isinstance(receipt, Mapping) else ""
+    )
+    coordinate_kwargs: dict[str, Any] = {
+        "label": "分类纠正后继继承的 Job 演练",
+        "require_active": require_active,
+    }
+    if allow_stopped_metadata_only:
+        coordinate_kwargs["allow_stopped_metadata_only"] = True
+    return _successor_incremental_noop_preflight_from_coordinates(
+        root,
+        receipt_path,
+        successor_manifest,
+        **coordinate_kwargs,
+    )
+
+
+def _successor_incremental_noop_preflight_from_coordinates(
+    root: Path,
+    receipt_path: Path,
+    successor_manifest: Mapping[str, Any],
+    *,
+    label: str,
+    require_active: bool = True,
+    allow_stopped_metadata_only: bool = False,
+) -> tuple[Path, dict[str, Any]] | None:
+    """重放 no-op 来源；不把其 Ledger/P0 误当成 successor 控制。"""
+
+    relative = _control_receipt_relative(root, receipt_path, f"{label}收据")
+    try:
+        rehearsal = codex_upgrade_job_rehearsal_receipt.replay(root, relative)
+    except (OSError, codex_upgrade_job_rehearsal_receipt.JobRehearsalReceiptError) as error:
+        raise ConfigurationError(f"{label}无法重放：{error}") from error
+    if rehearsal.get("status") != "incremental-noop":
+        return None
+    preflight_dir, preflight_manifest = _recovery_rehearsal_preflight_from_receipt(
+        rehearsal,
+        successor_manifest,
+        require_successor_controls=False,
+    )
+    _verify_control_receipts(
+        preflight_dir,
+        preflight_manifest,
+        require_active=require_active,
+        allow_stopped_metadata_only=allow_stopped_metadata_only,
+    )
+    return preflight_dir, preflight_manifest
+
+
 def _reject_repeated_successor_reason(
     predecessor_dir: Path,
     predecessor_manifest: Mapping[str, Any],
@@ -7290,7 +14865,22 @@ def _reject_repeated_successor_reason(
         binding = current.get("predecessor")
         if binding is None:
             return
-        if not isinstance(binding, dict):
+        if (
+            not isinstance(binding, dict)
+            or set(binding)
+            != {
+                "campaign_dir",
+                "campaign_id",
+                "campaign_manifest_sha256",
+                "reason",
+            }
+            or not isinstance(binding.get("campaign_dir"), str)
+            or not SAFE_ID_RE.fullmatch(str(binding.get("campaign_id", "")))
+            or not SHA256_RE.fullmatch(
+                str(binding.get("campaign_manifest_sha256", ""))
+            )
+            or binding.get("reason") not in SUCCESSOR_REASONS
+        ):
             raise ConfigurationError("前序 Campaign 链绑定非法。")
         if binding.get("reason") == reason:
             raise ConfigurationError(
@@ -7312,12 +14902,587 @@ def _reject_repeated_successor_reason(
             != binding.get("campaign_manifest_sha256")
         ):
             raise ConfigurationError("前序 Campaign 链清单摘要漂移。")
-        current = load_campaign_manifest(next_dir)
-        if current.get("campaign_id") != binding.get("campaign_id"):
+        current = _read_json(manifest_path, "前序 Campaign 链清单")
+        if (
+            current.get("schema_version") != CAMPAIGN_SCHEMA
+            or current.get("campaign_id") != binding.get("campaign_id")
+            or not SAFE_ID_RE.fullmatch(str(current.get("campaign_id", "")))
+        ):
             raise ConfigurationError("前序 Campaign 链 ID 漂移。")
+        _campaign_coordinates(current)
         current_dir = next_dir.resolve()
         visited.add(current_dir)
     raise ConfigurationError("前序 Campaign 链超过 64 层，拒绝继续 successor。")
+
+
+def _successor_reason_ancestor(
+    campaign_dir: Path,
+    campaign_manifest: Mapping[str, Any],
+    reason: str,
+) -> dict[str, str] | None:
+    """返回使用过指定原因的可信祖先后继，不重放控制或证据。"""
+
+    current_dir = campaign_dir.resolve(strict=True)
+    current: Mapping[str, Any] = campaign_manifest
+    visited = {current_dir}
+    for _depth in range(64):
+        binding = current.get("predecessor")
+        if binding is None:
+            return None
+        if (
+            not isinstance(binding, dict)
+            or set(binding)
+            != {
+                "campaign_dir",
+                "campaign_id",
+                "campaign_manifest_sha256",
+                "reason",
+            }
+            or not isinstance(binding.get("campaign_dir"), str)
+            or not SAFE_ID_RE.fullmatch(str(binding.get("campaign_id", "")))
+            or not SHA256_RE.fullmatch(
+                str(binding.get("campaign_manifest_sha256", ""))
+            )
+            or binding.get("reason") not in SUCCESSOR_REASONS
+        ):
+            raise ConfigurationError("前序 Campaign 链绑定非法。")
+        next_dir = Path(str(binding["campaign_dir"]))
+        if (
+            not next_dir.is_absolute()
+            or str(next_dir.resolve()) != str(next_dir)
+            or next_dir.resolve() in visited
+        ):
+            raise ConfigurationError("前序 Campaign 链路径不可信或形成循环。")
+        manifest_path = next_dir / "campaign.json"
+        if (
+            manifest_path.is_symlink()
+            or not manifest_path.is_file()
+            or file_sha256(manifest_path)
+            != binding.get("campaign_manifest_sha256")
+        ):
+            raise ConfigurationError("前序 Campaign 链清单摘要漂移。")
+        predecessor = _read_json(manifest_path, "前序 Campaign 链清单")
+        if (
+            predecessor.get("schema_version") != CAMPAIGN_SCHEMA
+            or predecessor.get("campaign_id") != binding.get("campaign_id")
+            or not SAFE_ID_RE.fullmatch(str(predecessor.get("campaign_id", "")))
+        ):
+            raise ConfigurationError("前序 Campaign 链 ID 漂移。")
+        _campaign_coordinates(predecessor)
+        if binding.get("reason") == reason:
+            current_manifest_path = current_dir / "campaign.json"
+            return {
+                "campaign_dir": str(current_dir),
+                "campaign_id": str(current.get("campaign_id", "")),
+                "campaign_manifest_sha256": file_sha256(current_manifest_path),
+                "reason": reason,
+            }
+        current_dir = next_dir.resolve()
+        current = predecessor
+        visited.add(current_dir)
+    raise ConfigurationError("前序 Campaign 链超过 64 层，拒绝继续 control epoch。")
+
+
+def _imported_stage_evaluation_transition_source(
+    campaign_dir: Path,
+    stage_payload: Mapping[str, Any],
+    binding: Mapping[str, Any],
+) -> tuple[Path, Path, dict[str, Any]]:
+    """沿已验证的导入链定位 official evaluation transition 原件。
+
+    导入阶段只投影 transition 的原始相对路径；该路径属于真正签发
+    transition 的祖先 Campaign。这里只读重放最多 64 级
+    predecessor-import 摘要链，不复制 transition，也不读取原始证据。
+    """
+
+    if (
+        stage_payload.get("stage") != "capture-official"
+        or not isinstance(stage_payload.get("predecessor_import"), Mapping)
+    ):
+        raise ConfigurationError("评估 transition 只能从 official 导入链解析。")
+    _require_file_binding(binding, "导入 official 评估 transition")
+    current_dir = campaign_dir.resolve(strict=True)
+    seen: set[Path] = set()
+    for _depth in range(64):
+        if current_dir in seen:
+            raise ConfigurationError("评估 transition 导入链形成循环。")
+        seen.add(current_dir)
+        manifest_path = current_dir / "campaign.json"
+        stage_path = current_dir / "official" / "result.json"
+        if (
+            current_dir.is_symlink()
+            or manifest_path.is_symlink()
+            or not manifest_path.is_file()
+            or stage_path.is_symlink()
+            or not stage_path.is_file()
+        ):
+            raise ConfigurationError("评估 transition 导入链的 Campaign 不可信。")
+        manifest = _read_json(manifest_path, "评估 transition 导入链 Campaign")
+        local_stage = _read_json(stage_path, "评估 transition 导入链 official")
+        unsigned_stage = dict(local_stage)
+        package_digest = unsigned_stage.pop("package_digest", None)
+        if (
+            local_stage.get("stage") != "capture-official"
+            or local_stage.get("campaign_id") != manifest.get("campaign_id")
+            or local_stage.get("campaign_manifest_sha256")
+            != file_sha256(manifest_path)
+            or not SHA256_RE.fullmatch(str(package_digest))
+            or package_digest != _fingerprint(unsigned_stage)
+        ):
+            raise ConfigurationError("评估 transition 导入链的 official 摘要非法。")
+        local_binding = local_stage.get("evaluation_transition")
+        if local_binding is not None:
+            _require_file_binding(local_binding, "official 评估 transition 原始绑定")
+            if dict(local_binding) != dict(binding):
+                raise ConfigurationError("评估 transition 导入链的原始绑定漂移。")
+            source = _campaign_file(current_dir, str(binding["path"]))
+            if (
+                source.is_symlink()
+                or not source.is_file()
+                or file_sha256(source) != binding["sha256"]
+            ):
+                raise ConfigurationError("评估 transition 导入链的原文件漂移。")
+            return source, current_dir, manifest
+        import_binding = local_stage.get("predecessor_import")
+        _require_file_binding(import_binding, "评估 transition predecessor-import")
+        _verify_predecessor_import_shallow(current_dir, manifest, local_stage)
+        receipt_path = _campaign_file(current_dir, str(import_binding["path"]))
+        receipt = _read_json(receipt_path, "评估 transition predecessor-import")
+        predecessor = receipt.get("predecessor_campaign")
+        if (
+            not isinstance(predecessor, Mapping)
+            or set(predecessor)
+            != {"campaign_dir", "campaign_id", "campaign_manifest_sha256"}
+        ):
+            raise ConfigurationError("评估 transition 导入链缺少前序坐标。")
+        predecessor_dir = Path(str(predecessor["campaign_dir"]))
+        if not predecessor_dir.is_absolute():
+            raise ConfigurationError("评估 transition 导入链前序路径非法。")
+        try:
+            predecessor_dir = predecessor_dir.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            raise ConfigurationError("评估 transition 导入链前序不存在。") from error
+        predecessor_manifest_path = predecessor_dir / "campaign.json"
+        if (
+            predecessor_dir.is_symlink()
+            or predecessor_manifest_path.is_symlink()
+            or not predecessor_manifest_path.is_file()
+        ):
+            raise ConfigurationError("评估 transition 导入链前序不可信。")
+        predecessor_manifest = _read_json(
+            predecessor_manifest_path,
+            "评估 transition 导入链前序 Campaign",
+        )
+        if (
+            predecessor_manifest.get("campaign_id") != predecessor["campaign_id"]
+            or file_sha256(predecessor_manifest_path)
+            != predecessor["campaign_manifest_sha256"]
+        ):
+            raise ConfigurationError("评估 transition 导入链前序摘要漂移。")
+        current_dir = predecessor_dir
+    raise ConfigurationError("评估 transition 导入链超过 64 级上限。")
+
+
+def _sealed_stage_recovery_context(
+    predecessor_dir: Path,
+    predecessor_manifest: Mapping[str, Any],
+    official: Mapping[str, Any],
+    *,
+    require_active: bool,
+) -> dict[str, Any]:
+    """读取已封存 official 阶段实际使用的恢复控制链。
+
+    Campaign 清单不可改写，因此 official seal 之后的阶段必须显式承接
+    seal 所绑定 transition 的 recovery 控制，而不能退回已经停线的 plan
+    Ledger。这里只重放小型控制收据，不读取原始证据。
+    """
+
+    transition_binding = official.get("evaluation_transition")
+    _require_file_binding(transition_binding, "已封存 official 评估 transition")
+    transition_path = _campaign_file(
+        predecessor_dir,
+        str(transition_binding["path"]),
+    )
+    transition_origin_dir = predecessor_dir.resolve(strict=True)
+    transition_origin_manifest = dict(predecessor_manifest)
+    if (
+        not transition_path.exists()
+        and not transition_path.is_symlink()
+        and isinstance(official.get("predecessor_import"), Mapping)
+    ):
+        (
+            transition_path,
+            transition_origin_dir,
+            transition_origin_manifest,
+        ) = _imported_stage_evaluation_transition_source(
+            predecessor_dir,
+            official,
+            transition_binding,
+        )
+    if (
+        transition_path.is_symlink()
+        or not transition_path.is_file()
+        or file_sha256(transition_path) != transition_binding["sha256"]
+    ):
+        raise ConfigurationError("已封存 official 评估 transition 摘要漂移。")
+    transition = _read_json(transition_path, "已封存 official 评估 transition")
+    unsigned = dict(transition)
+    transition_digest = unsigned.pop("transition_digest", None)
+    recovery_controls = transition.get("recovery_controls")
+    effective_controls = (
+        recovery_controls.get("recovery")
+        if isinstance(recovery_controls, Mapping)
+        else None
+    )
+    if (
+        transition.get("schema_version") != TOOL_EVALUATION_TRANSITION_SCHEMA
+        or transition.get("status") != "approved"
+        or transition.get("phase") != "official"
+        or transition.get("campaign_id")
+        != transition_origin_manifest.get("campaign_id")
+        or transition.get("campaign_manifest_sha256")
+        != file_sha256(transition_origin_dir / "campaign.json")
+        or not SHA256_RE.fullmatch(str(transition_digest))
+        or _fingerprint(unsigned) != transition_digest
+        or not isinstance(effective_controls, Mapping)
+        or set(effective_controls)
+        != {"upgrade_timing", "arm64_environment", "job_rehearsal"}
+    ):
+        raise ConfigurationError("已封存 official 评估 transition 控制链非法。")
+    if not isinstance(official.get("evidence_manifest"), Mapping):
+        raise ConfigurationError("已封存 official 阶段缺少 EvidenceManifest。")
+
+    current_tool = _tool_identity()
+    expected_tool = predecessor_manifest.get("tool_identity")
+    if not isinstance(expected_tool, Mapping):
+        raise ConfigurationError("前序 Campaign 缺少可分级工具身份。")
+    changed = _phase_evaluation_changed_files(expected_tool, current_tool)
+    allowed_paths = _SEALED_STAGE_RECOVERY_ALLOWED_FILES
+    if not changed or any(item["path"] not in allowed_paths for item in changed):
+        raise ConfigurationError(
+            "已封存阶段控制恢复只允许评估／编排白名单内的工具变化。"
+        )
+    drift = _tool_identity_drift(current_tool, expected_tool)
+    if set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES):
+        raise ConfigurationError("已封存阶段控制恢复检测到产出侧工具变化。")
+
+    proxy_manifest = dict(predecessor_manifest)
+    proxy_manifest["campaign_mode"] = "preflight_only"
+    proxy_manifest["control_receipts"] = {
+        "upgrade_timing": effective_controls["upgrade_timing"],
+        "arm64_environment": effective_controls["arm64_environment"],
+    }
+    _verify_control_receipts(
+        predecessor_dir,
+        proxy_manifest,
+        require_active=require_active,
+        _control_override=proxy_manifest["control_receipts"],
+    )
+    official_path = _stage_path(predecessor_dir, "capture-official")[1]
+    return {
+        "effective_controls": json.loads(
+            json.dumps(effective_controls, ensure_ascii=False)
+        ),
+        "evaluation_transition": {
+            "path": str(transition_binding["path"]),
+            "sha256": str(transition_binding["sha256"]),
+        },
+        "source_stage": {
+            "path": official_path.relative_to(predecessor_dir).as_posix(),
+            "sha256": file_sha256(official_path),
+            "package_digest": official["package_digest"],
+        },
+    }
+
+
+def _sealed_stage_timing_checkpoint(
+    control: Mapping[str, Any],
+    *,
+    label: str,
+) -> tuple[Path, dict[str, Any]]:
+    """重放已封存阶段控制中的 Ledger checkpoint。"""
+
+    expected_fields = {
+        "ledger_dir",
+        "ledger_plan_sha256",
+        "receipt",
+        "upgrade_id",
+        "evidence_decision",
+        "checkpoint_head_sha256",
+    }
+    receipt = control.get("receipt")
+    if (
+        set(control) != expected_fields
+        or not isinstance(receipt, Mapping)
+        or set(receipt) != {"path", "sha256", "bytes"}
+    ):
+        raise ConfigurationError(f"{label} Ledger 控制字段不闭合。")
+    root = Path(str(control.get("ledger_dir", "")))
+    relative = str(receipt.get("path", ""))
+    digest = receipt.get("sha256")
+    size = receipt.get("bytes")
+    if (
+        not root.is_absolute()
+        or str(root.resolve(strict=True)) != str(root)
+        or not relative
+        or not SHA256_RE.fullmatch(str(digest))
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size <= 0
+    ):
+        raise ConfigurationError(f"{label} Ledger 控制坐标非法。")
+    receipt_relative = _control_receipt_relative(
+        root,
+        root / relative,
+        f"{label} Ledger checkpoint",
+    )
+    receipt_path = root / receipt_relative
+    if (
+        file_sha256(root / "ledger.json")
+        != control.get("ledger_plan_sha256")
+        or file_sha256(receipt_path) != digest
+        or receipt_path.stat().st_size != size
+    ):
+        raise ConfigurationError(f"{label} Ledger 控制摘要漂移。")
+    try:
+        checkpoint = codex_upgrade_timing_ledger.replay(root, receipt_relative)
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"{label} Ledger checkpoint 未通过：{error}") from error
+    summary = checkpoint.get("summary")
+    if (
+        not isinstance(summary, dict)
+        or summary.get("upgrade_id") != control.get("upgrade_id")
+        or summary.get("evidence_decision") != control.get("evidence_decision")
+        or summary.get("head_sha256")
+        != control.get("checkpoint_head_sha256")
+    ):
+        raise ConfigurationError(f"{label} Ledger checkpoint 身份漂移。")
+    return root, checkpoint
+
+
+def _assert_sealed_stage_checkpoint_progression(
+    predecessor_timing: Mapping[str, Any],
+    successor_timing: Mapping[str, Any],
+    predecessor_arm: Mapping[str, Any],
+    successor_arm: Mapping[str, Any],
+    *,
+    baseline_version: str,
+    target_version: str,
+    campaign_purpose: str,
+    require_current_head: bool,
+) -> None:
+    """只允许同一 Ledger 从封存 checkpoint 单调前进到当前 VC-2。"""
+
+    if predecessor_arm != successor_arm:
+        raise ConfigurationError("已封存阶段控制恢复必须逐字沿用原 ARM64 P0。")
+    invariant_fields = (
+        "ledger_dir",
+        "ledger_plan_sha256",
+        "upgrade_id",
+        "evidence_decision",
+    )
+    if any(
+        predecessor_timing.get(field) != successor_timing.get(field)
+        for field in invariant_fields
+    ):
+        raise ConfigurationError(
+            "已封存阶段控制恢复必须沿用同一 Ledger、upgrade-id、计划和证据决定。"
+        )
+    predecessor_root, predecessor_checkpoint = _sealed_stage_timing_checkpoint(
+        predecessor_timing,
+        label="封存 transition",
+    )
+    successor_root, successor_checkpoint = _sealed_stage_timing_checkpoint(
+        successor_timing,
+        label="当前 active",
+    )
+    if predecessor_root != successor_root:
+        raise ConfigurationError("已封存阶段控制恢复不得切换 Ledger 目录。")
+    predecessor_summary = predecessor_checkpoint["summary"]
+    successor_summary = successor_checkpoint["summary"]
+    expected_identity = {
+        "baseline_version": baseline_version,
+        "target_version": target_version,
+        "campaign_purpose": campaign_purpose,
+    }
+    if any(
+        predecessor_summary.get(field) != value
+        or successor_summary.get(field) != value
+        for field, value in expected_identity.items()
+    ):
+        raise ConfigurationError("已封存阶段控制恢复的 Ledger 版本或用途漂移。")
+    predecessor_phase = predecessor_summary.get("active_phase")
+    successor_phase = successor_summary.get("active_phase")
+    phase_order = codex_upgrade_timing_ledger.PHASE_ORDER
+    if (
+        predecessor_summary.get("status") != "active"
+        or successor_summary.get("status") != "active"
+        or predecessor_phase not in phase_order
+        or successor_phase != "VC-2"
+        or phase_order.index(str(successor_phase))
+        < phase_order.index(str(predecessor_phase))
+        or successor_summary.get("head_sequence", 0)
+        <= predecessor_summary.get("head_sequence", 0)
+        or successor_summary.get("total_elapsed_seconds", -1)
+        < predecessor_summary.get("total_elapsed_seconds", 0)
+        or successor_summary.get("total_live_request_count")
+        != predecessor_summary.get("total_live_request_count")
+    ):
+        raise ConfigurationError(
+            "已封存阶段控制恢复必须从封存 checkpoint 单调前进到 VC-2，"
+            "且不得增加 live 请求。"
+        )
+    if require_current_head:
+        try:
+            current = codex_upgrade_timing_ledger.assert_usable(
+                successor_root,
+                str(successor_timing["receipt"]["path"]),
+                baseline_version=baseline_version,
+                target_version=target_version,
+                campaign_purpose=campaign_purpose,
+                required_phase="VC-2",
+            )
+        except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+            raise ConfigurationError(
+                f"当前 VC-2 Ledger checkpoint 未通过：{error}"
+            ) from error
+        if (
+            current.get("head_sequence") != successor_summary.get("head_sequence")
+            or current.get("head_sha256") != successor_summary.get("head_sha256")
+            or current.get("total_live_request_count")
+            != successor_summary.get("total_live_request_count")
+        ):
+            raise ConfigurationError("提供的 VC-2 checkpoint 不是 Ledger 当前 head。")
+
+
+def _sealed_stage_active_controls(
+    arguments: argparse.Namespace,
+    successor_manifest: dict[str, Any],
+    effective_controls: Mapping[str, Any],
+) -> None:
+    """用显式当前 checkpoint 更新后继，但保持同一 Ledger 与原 P0。"""
+
+    names = (
+        "active_timing_ledger_dir",
+        "active_timing_receipt",
+        "active_arm64_environment_root",
+        "active_arm64_environment_receipt",
+    )
+    values = {name: getattr(arguments, name, None) for name in names}
+    if not all(isinstance(value, Path) for value in values.values()):
+        raise ConfigurationError(
+            "已封存阶段控制恢复必须显式提供当前 VC-2 Ledger checkpoint "
+            "和原 ARM64 P0 四项坐标。"
+        )
+    current_arguments = argparse.Namespace(
+        campaign_mode="preflight_only",
+        campaign_purpose=successor_manifest["campaign_purpose"],
+        baseline_version=successor_manifest["baseline_version"],
+        target_version=successor_manifest["target_version"],
+        timing_ledger_dir=values["active_timing_ledger_dir"],
+        timing_receipt=values["active_timing_receipt"],
+        arm64_environment_root=values["active_arm64_environment_root"],
+        arm64_environment_receipt=values[
+            "active_arm64_environment_receipt"
+        ],
+    )
+    current_controls = _plan_control_receipts(current_arguments)
+    predecessor_timing = effective_controls.get("upgrade_timing")
+    predecessor_arm = effective_controls.get("arm64_environment")
+    if not isinstance(predecessor_timing, Mapping) or not isinstance(
+        predecessor_arm, Mapping
+    ):
+        raise ConfigurationError("封存 transition 缺少有效 Ledger 或 ARM64 P0。")
+    _assert_sealed_stage_checkpoint_progression(
+        predecessor_timing,
+        current_controls["upgrade_timing"],
+        predecessor_arm,
+        current_controls["arm64_environment"],
+        baseline_version=str(successor_manifest["baseline_version"]),
+        target_version=str(successor_manifest["target_version"]),
+        campaign_purpose=str(successor_manifest["campaign_purpose"]),
+        require_current_head=True,
+    )
+    controls = successor_manifest.get("control_receipts")
+    if not isinstance(controls, dict):
+        raise ConfigurationError("后继 Campaign 缺少控制收据。")
+    controls.update(current_controls)
+
+
+def _sealed_stage_control_mode(arguments: argparse.Namespace) -> str:
+    """要求已封存阶段恢复只选择一套完整控制坐标。"""
+
+    active_names = (
+        "active_timing_ledger_dir",
+        "active_timing_receipt",
+        "active_arm64_environment_root",
+        "active_arm64_environment_receipt",
+    )
+    stopped_names = (
+        "recovery_timing_ledger_dir",
+        "recovery_timing_receipt",
+        "recovery_arm64_environment_root",
+        "recovery_arm64_environment_receipt",
+        "predecessor_stop_ledger_dir",
+        "predecessor_stop_receipt",
+    )
+    active_values = [getattr(arguments, name, None) for name in active_names]
+    stopped_values = [getattr(arguments, name, None) for name in stopped_names]
+    active_any = any(value is not None for value in active_values)
+    stopped_any = any(value is not None for value in stopped_values)
+    if active_any and stopped_any:
+        raise ConfigurationError(
+            "已封存阶段控制恢复的 active 与 stopped 控制坐标不得混用。"
+        )
+    if active_any:
+        if not all(isinstance(value, Path) for value in active_values):
+            raise ConfigurationError(
+                "已封存阶段 active 恢复必须完整提供 Ledger checkpoint 和原 ARM64 P0 四项坐标。"
+            )
+        return "active"
+    if stopped_any:
+        if not all(isinstance(value, Path) for value in stopped_values):
+            raise ConfigurationError(
+                "已封存阶段 stopped 恢复必须完整提供旧停线 checkpoint、新 Ledger 和新 ARM64 P0 六项坐标。"
+            )
+        return "stopped"
+    raise ConfigurationError(
+        "已封存阶段控制恢复必须选择 active 四项坐标或 stopped 六项坐标。"
+    )
+
+
+def _assert_sealed_stage_stopped_recovery(
+    recovery_transition: Mapping[str, Any],
+    successor_manifest: Mapping[str, Any],
+) -> None:
+    """确认新 Ledger 位于当前 VC-2 head，且没有产生新的 live 请求。"""
+
+    controls = successor_manifest.get("control_receipts")
+    successor_timing = (
+        controls.get("upgrade_timing") if isinstance(controls, Mapping) else None
+    )
+    if not isinstance(successor_timing, Mapping):
+        raise ConfigurationError("已封存阶段 stopped 恢复缺少新 Ledger 控制。")
+    successor_root, checkpoint = _sealed_stage_timing_checkpoint(
+        successor_timing,
+        label="已封存阶段 stopped 恢复",
+    )
+    summary = checkpoint["summary"]
+    current = codex_upgrade_timing_ledger.inspect_ledger(successor_root)
+    if (
+        recovery_transition.get("reason") != "stopped_ledger_recovery"
+        or summary.get("status") != "active"
+        or summary.get("active_phase") != "VC-2"
+        or summary.get("total_live_request_count") != 0
+        or current.get("status") != "active"
+        or current.get("active_phase") != "VC-2"
+        or current.get("head_sequence") != summary.get("head_sequence")
+        or current.get("head_sha256") != summary.get("head_sha256")
+        or current.get("total_live_request_count") != 0
+    ):
+        raise ConfigurationError(
+            "已封存阶段 stopped 恢复的新 Ledger 必须是当前 VC-2 head，且 live 请求数为 0。"
+        )
 
 
 def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -7340,11 +15505,113 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         raise ConfigurationError("--codex-account-id 必须为正整数。")
     if arguments.reason not in SUCCESSOR_REASONS:
         raise ConfigurationError("--reason 不是受管的同版本后继原因。")
+    control_replacement_successor = (
+        arguments.reason == "candidate_recovery_control_replacement"
+    )
+    failed_job_tool_recovery = arguments.reason in {
+        "candidate_failed_job_tool_recovery",
+        "candidate_recovery_control_refresh",
+        "candidate_recovery_control_replacement",
+    }
+    if failed_job_tool_recovery:
+        required = (
+            arguments.predecessor_candidate_id,
+            arguments.predecessor_attempt_id,
+            arguments.job_rehearsal_root,
+            arguments.job_rehearsal_receipt,
+            arguments.recovery_timing_ledger_dir,
+            arguments.recovery_timing_receipt,
+            arguments.recovery_arm64_environment_root,
+            arguments.recovery_arm64_environment_receipt,
+            arguments.predecessor_stop_ledger_dir,
+            arguments.predecessor_stop_receipt,
+        )
+        if not all(value is not None for value in required):
+            raise ConfigurationError(
+                "Candidate 失败闭集恢复必须同时绑定前序失败 attempt、"
+                "旧停线 checkpoint、新 Ledger／P0 和当前闭集演练收据。"
+            )
+        if (
+            arguments.reason == "candidate_recovery_control_refresh"
+            and arguments.predecessor_recovery_transition is None
+        ):
+            raise ConfigurationError(
+                "控制刷新必须同时绑定前序已批准恢复 transition。"
+            )
+        if (
+            arguments.reason != "candidate_recovery_control_refresh"
+            and arguments.predecessor_recovery_transition is not None
+        ):
+            raise ConfigurationError(
+                "前序恢复 transition 只允许控制刷新后继使用。"
+            )
+        replacement_paths = (
+            arguments.predecessor_control_epoch,
+            arguments.predecessor_unpublished_ledger_dir,
+            arguments.predecessor_unpublished_stop_receipt,
+            arguments.predecessor_supervisor_run_dir,
+        )
+        if control_replacement_successor and not all(
+            isinstance(value, Path) for value in replacement_paths
+        ):
+            raise ConfigurationError(
+                "零执行控制替代必须绑定有效 epoch、未发布停线 Ledger 和父监督器终态。"
+            )
+        if (
+            arguments.live_attestation_compose_dir is not None
+            or bool(str(arguments.live_attestation_compose_files or "").strip())
+            or arguments.target_scenario_manifest is not None
+        ):
+            raise ConfigurationError(
+                "Candidate 失败闭集恢复不得改变 compose 或 target 场景。"
+            )
+    replacement_argument_names = (
+        "predecessor_control_epoch",
+        "predecessor_control_runtime_repair",
+        "predecessor_unpublished_ledger_dir",
+        "predecessor_unpublished_stop_receipt",
+        "predecessor_supervisor_run_dir",
+    )
+    if not control_replacement_successor and any(
+        getattr(arguments, name, None) is not None
+        for name in replacement_argument_names
+    ):
+        raise ConfigurationError("控制替代审计参数只允许零执行控制替代后继使用。")
     reclassification_successor = (
         arguments.reason in RECLASSIFICATION_SUCCESSOR_REASONS
     )
+    sealed_stage_recovery_successor = (
+        arguments.reason in SEALED_STAGE_RECOVERY_SUCCESSOR_REASONS
+    )
+    sealed_stage_control_mode = (
+        _sealed_stage_control_mode(arguments)
+        if sealed_stage_recovery_successor
+        else None
+    )
+    official_only_successor = (
+        reclassification_successor or sealed_stage_recovery_successor
+    )
+    active_control_names = (
+        "active_timing_ledger_dir",
+        "active_timing_receipt",
+        "active_arm64_environment_root",
+        "active_arm64_environment_receipt",
+    )
+    if not sealed_stage_recovery_successor and any(
+        getattr(arguments, name, None) is not None
+        for name in active_control_names
+    ):
+        raise ConfigurationError(
+            "当前 active checkpoint 参数只允许 sealed_stage_control_recovery 使用。"
+        )
 
-    predecessor_manifest = _require_formal_campaign(predecessor_dir)
+    predecessor_manifest = _require_formal_campaign(
+        predecessor_dir,
+        load_campaign_manifest(
+            predecessor_dir,
+            _control_epoch_bootstrap=control_replacement_successor,
+        ),
+    )
     _reject_repeated_successor_reason(
         predecessor_dir,
         predecessor_manifest,
@@ -7374,19 +15641,61 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         predecessor_dir,
         "capture-official",
         _replay_machine_receipts=False,
+        _historical_manifest_controls=control_replacement_successor,
     )
-    classification = _load_stage_result(predecessor_dir, "classify")
     if official.get("status") != "complete":
         raise ConfigurationError("前序 Campaign 官方阶段尚未完整封存。")
-    if (
-        classification.get("status") != "complete"
-        or classification.get("migration", {}).get("unclassified_count") != 0
-    ):
-        raise ConfigurationError("前序 Campaign 分类未完整批准或仍有阻断。")
-    abandoned_attempt = _successor_abandoned_attempt(
-        predecessor_dir,
-        arguments.predecessor_candidate_id,
-        arguments.predecessor_attempt_id,
+    classification: dict[str, Any] | None = None
+    sealed_stage_context: dict[str, Any] | None = None
+    if sealed_stage_recovery_successor:
+        if (predecessor_dir / "classification" / "result.json").exists():
+            raise ConfigurationError("已封存阶段控制恢复要求前序尚未产生分类结果。")
+        predecessor_status = campaign_status(predecessor_dir)
+        if predecessor_status.get("status") != "official_sealed":
+            raise ConfigurationError(
+                "已封存阶段控制恢复只允许从 official_sealed 状态执行。"
+            )
+        if (
+            arguments.job_rehearsal_root is None
+            or arguments.job_rehearsal_receipt is None
+        ):
+            raise ConfigurationError(
+                "已封存阶段控制恢复必须绑定当前工具生成的完整 Job 演练收据。"
+            )
+        sealed_stage_context = _sealed_stage_recovery_context(
+            predecessor_dir,
+            predecessor_manifest,
+            official,
+            require_active=sealed_stage_control_mode == "active",
+        )
+    else:
+        classification = _load_stage_result(
+            predecessor_dir,
+            "classify",
+            _historical_manifest_controls=control_replacement_successor,
+        )
+        if (
+            classification.get("status") != "complete"
+            or classification.get("migration", {}).get("unclassified_count") != 0
+        ):
+            raise ConfigurationError("前序 Campaign 分类未完整批准或仍有阻断。")
+    control_replacement_context = (
+        _control_replacement_context(
+            arguments,
+            predecessor_dir,
+            predecessor_manifest,
+        )
+        if control_replacement_successor
+        else None
+    )
+    abandoned_attempt = (
+        dict(control_replacement_context["source_attempt"])
+        if control_replacement_context is not None
+        else _successor_abandoned_attempt(
+            predecessor_dir,
+            arguments.predecessor_candidate_id,
+            arguments.predecessor_attempt_id,
+        )
     )
 
     if successor_dir.parent.exists():
@@ -7405,8 +15714,15 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
     try:
         copied_files: dict[str, dict[str, Any]] = {}
         for group_name in ("inputs", "analysis"):
-            for reference in predecessor_manifest[group_name].values():
+            for field, reference in predecessor_manifest[group_name].items():
                 if reference is None:
+                    continue
+                if (
+                    group_name == "inputs"
+                    and field == "target_discovery_scenarios"
+                    and getattr(arguments, "target_scenario_manifest", None)
+                    is not None
+                ):
                     continue
                 _copy_successor_binding(
                     predecessor_dir,
@@ -7416,8 +15732,17 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                     copied_files=copied_files,
                 )
 
+        target_scenario_transition = _successor_target_scenario_transition(
+            arguments,
+            predecessor_dir,
+            staging_dir,
+            predecessor_manifest,
+            copied_files,
+        )
+
         classification_bindings: dict[str, dict[str, str]] = {}
-        if not reclassification_successor:
+        if not official_only_successor:
+            assert classification is not None
             for field in _CLASSIFICATION_APPROVAL_FIELDS:
                 classification_bindings[field] = _copy_successor_binding(
                     predecessor_dir,
@@ -7446,6 +15771,10 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         )
         if runtime_configuration is not None:
             successor_manifest["configuration"].update(runtime_configuration)
+        if target_scenario_transition is not None:
+            successor_manifest["inputs"]["target_discovery_scenarios"] = (
+                target_scenario_transition["successor"]
+            )
         successor_manifest.update(
             {
                 "campaign_id": arguments.campaign_id,
@@ -7459,7 +15788,27 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                 },
             }
         )
-        if reclassification_successor:
+        if control_replacement_context is not None:
+            successor_manifest["control_receipts"] = json.loads(
+                json.dumps(
+                    control_replacement_context["effective_controls"],
+                    ensure_ascii=False,
+                )
+            )
+        if sealed_stage_context is not None:
+            successor_manifest["control_receipts"] = json.loads(
+                json.dumps(
+                    sealed_stage_context["effective_controls"],
+                    ensure_ascii=False,
+                )
+            )
+            if sealed_stage_control_mode == "active":
+                _sealed_stage_active_controls(
+                    arguments,
+                    successor_manifest,
+                    sealed_stage_context["effective_controls"],
+                )
+        if official_only_successor:
             scenario_reference = successor_manifest["inputs"].get(
                 "target_discovery_scenarios"
             )
@@ -7507,7 +15856,8 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                 )
             )
         rehearsal_scenario_override: Mapping[str, Any] | None = None
-        if historical_source_spec_binding is not None and not reclassification_successor:
+        if historical_source_spec_binding is not None and not official_only_successor:
+            assert classification is not None
             approved_scenario_reference = classification_bindings[
                 "scenario_manifest"
             ]
@@ -7520,33 +15870,62 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             )
         recovery_control_transition = _successor_recovery_control_transition(
             arguments,
+            predecessor_dir,
             successor_manifest,
         )
+        if sealed_stage_control_mode == "active" and recovery_control_transition is not None:
+            raise ConfigurationError("已封存阶段 active 恢复不得重绑 stopped 控制。")
+        if sealed_stage_control_mode == "stopped":
+            if recovery_control_transition is None:
+                raise ConfigurationError("已封存阶段 stopped 恢复缺少控制过渡。")
+            _assert_sealed_stage_stopped_recovery(
+                recovery_control_transition,
+                successor_manifest,
+            )
         # 分类事实纠正后继可能继续承接历史 Formal 的 target 场景字节，
         # 但恢复 preflight 必须使用当前受管场景。两者只要存在合法的
         # source_spec 摘要差异，完整 Job 演练合同就应以恢复 preflight
         # 的当前场景重算；否则会把同一组 Job 错误判成工具／合同漂移。
-        if recovery_control_transition is not None and reclassification_successor:
-            recovery_preflight_dir, recovery_preflight_manifest = (
-                _assert_recovery_rehearsal_uses_successor_controls(
-                    arguments,
-                    successor_manifest,
-                )
-            )
-            recovery_scenario_override = _recovery_rehearsal_target_scenario_override(
+        recovery_scenario_override = (
+            _successor_rehearsal_target_scenario_override(
+                arguments,
                 staging_dir,
                 successor_manifest,
-                recovery_preflight_dir,
-                recovery_preflight_manifest,
+                reclassification_successor=reclassification_successor,
+                recovery_control_transition=recovery_control_transition,
             )
-            if recovery_scenario_override is not None:
-                rehearsal_scenario_override = recovery_scenario_override
+        )
+        if recovery_scenario_override is not None:
+            rehearsal_scenario_override = recovery_scenario_override
+        if failed_job_tool_recovery:
+            _assert_recovery_rehearsal_uses_successor_controls(
+                arguments,
+                successor_manifest,
+            )
+        if sealed_stage_recovery_successor:
+            _assert_recovery_rehearsal_uses_successor_controls(
+                arguments,
+                successor_manifest,
+            )
         job_rehearsal_transition = _successor_job_rehearsal_transition(
             arguments,
             staging_dir,
             successor_manifest,
             target_scenario_override=rehearsal_scenario_override,
         )
+        if failed_job_tool_recovery and not control_replacement_successor:
+            assert arguments.predecessor_candidate_id is not None
+            assert arguments.predecessor_attempt_id is not None
+            _validate_failed_job_tool_recovery_source(
+                predecessor_dir,
+                predecessor_manifest,
+                successor_manifest,
+                candidate_id=arguments.predecessor_candidate_id,
+                attempt_id=arguments.predecessor_attempt_id,
+                reason=arguments.reason,
+            )
+        if sealed_stage_recovery_successor and job_rehearsal_transition is None:
+            raise ConfigurationError("已封存阶段控制恢复没有形成新的 Job 演练绑定。")
         _rebuild_successor_plan(
             staging_dir,
             successor_dir,
@@ -7562,21 +15941,37 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         official_path = _stage_path(
             predecessor_dir, "capture-official"
         )[1]
-        classification_path = _stage_path(predecessor_dir, "classify")[1]
+        classification_path = (
+            _stage_path(predecessor_dir, "classify")[1]
+            if classification is not None
+            else None
+        )
         import_receipt: dict[str, Any] = {
             "schema_version": (
-                PREDECESSOR_RECOVERY_IMPORT_SCHEMA
-                if recovery_control_transition is not None
+                PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA
+                if control_replacement_successor
                 else (
-                    PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
-                    if job_rehearsal_transition is not None
+                    PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA
+                    if target_scenario_transition is not None
                     else (
-                        PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
-                        if reclassification_successor
+                        PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA
+                        if sealed_stage_recovery_successor
                         else (
-                            PREDECESSOR_RUNTIME_IMPORT_SCHEMA
-                            if runtime_configuration is not None
-                            else PREDECESSOR_IMPORT_SCHEMA
+                            PREDECESSOR_RECOVERY_IMPORT_SCHEMA
+                            if recovery_control_transition is not None
+                            else (
+                                PREDECESSOR_REHEARSAL_IMPORT_SCHEMA
+                                if job_rehearsal_transition is not None
+                                else (
+                                    PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA
+                                    if reclassification_successor
+                                    else (
+                                        PREDECESSOR_RUNTIME_IMPORT_SCHEMA
+                                        if runtime_configuration is not None
+                                        else PREDECESSOR_IMPORT_SCHEMA
+                                    )
+                                )
+                            )
                         )
                     )
                 )
@@ -7600,16 +15995,6 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
                     ]["digest"],
                     "security_sha256": _fingerprint(official["security"]),
                 },
-                "classify": {
-                    "path": classification_path.relative_to(
-                        predecessor_dir
-                    ).as_posix(),
-                    "sha256": file_sha256(classification_path),
-                    "package_digest": classification["package_digest"],
-                    "joint_manifest_sha256": classification[
-                        "joint_manifest_sha256"
-                    ],
-                },
             },
             "copied_files": sorted(
                 copied_files.values(), key=lambda item: item["target_path"]
@@ -7623,14 +16008,46 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             },
             "abandoned_candidate_attempt": abandoned_attempt,
         }
+        if classification is not None and classification_path is not None:
+            import_receipt["stages"]["classify"] = {
+                "path": classification_path.relative_to(
+                    predecessor_dir
+                ).as_posix(),
+                "sha256": file_sha256(classification_path),
+                "package_digest": classification["package_digest"],
+                "joint_manifest_sha256": classification[
+                    "joint_manifest_sha256"
+                ],
+            }
         if job_rehearsal_transition is not None:
             import_receipt["job_rehearsal_transition"] = (
                 job_rehearsal_transition
+            )
+        if target_scenario_transition is not None:
+            import_receipt["target_scenario_transition"] = (
+                target_scenario_transition
             )
         if recovery_control_transition is not None:
             import_receipt["recovery_control_transition"] = (
                 recovery_control_transition
             )
+        if control_replacement_context is not None:
+            import_receipt["control_replacement"] = control_replacement_context
+        if sealed_stage_context is not None:
+            import_receipt["stage_control_transition"] = {
+                "reason": "sealed_stage_control_recovery",
+                "source_stage": sealed_stage_context["source_stage"],
+                "evaluation_transition": sealed_stage_context[
+                    "evaluation_transition"
+                ],
+                "predecessor": sealed_stage_context["effective_controls"],
+                "successor": successor_manifest["control_receipts"],
+            }
+            import_receipt["execution_summary"] = {
+                "executed_job_ids": [],
+                "scanned_bytes": 0,
+                "live_request_count": 0,
+            }
         if runtime_configuration is not None:
             import_receipt["configuration_transition"].update(
                 {
@@ -7646,6 +16063,10 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             )
         if reclassification_successor:
             import_receipt["import_mode"] = "official_only_reclassification"
+        elif sealed_stage_recovery_successor:
+            import_receipt["import_mode"] = (
+                "official_only_sealed_stage_control_recovery"
+            )
         import_receipt["receipt_digest"] = _fingerprint(import_receipt)
         import_path = staging_dir / "predecessor-import.json"
         _secure_write_json_once(import_path, import_receipt)
@@ -7665,7 +16086,8 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             },
             _successor_manifest=successor_manifest,
         )
-        if not reclassification_successor:
+        if not official_only_successor:
+            assert classification is not None
             imported_classification = {
                 "status": "complete",
                 "predecessor_import": import_binding,
@@ -7705,18 +16127,41 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
         "predecessor_campaign_dir": str(predecessor_dir.resolve()),
         "reason": arguments.reason,
         "official_imported": True,
-        "classification_imported": not reclassification_successor,
+        "classification_imported": not official_only_successor,
         "classification_reapproval_required": reclassification_successor,
+        "sealed_stage_control_recovered": sealed_stage_recovery_successor,
+        "control_replaced": control_replacement_successor,
+        "executed_job_count": (
+            0
+            if sealed_stage_recovery_successor or control_replacement_successor
+            else None
+        ),
+        "scanned_bytes": (
+            0
+            if sealed_stage_recovery_successor or control_replacement_successor
+            else None
+        ),
+        "live_request_count": (
+            0
+            if sealed_stage_recovery_successor or control_replacement_successor
+            else None
+        ),
         "official_recapture_required": False,
         "codex_account_id": arguments.codex_account_id,
         "runtime_configuration_rebound": runtime_configuration is not None,
+        "target_scenario_rebound": target_scenario_transition is not None,
         "job_rehearsal_rebound": job_rehearsal_transition is not None,
         "recovery_controls_rebound": recovery_control_transition is not None,
         "next_command": status["next_command"],
     }
 
 
-def load_campaign_manifest(path: Path) -> dict[str, Any]:
+def load_campaign_manifest(
+    path: Path,
+    *,
+    _control_epoch_bootstrap: bool = False,
+    _skip_control_validation: bool = False,
+) -> dict[str, Any]:
     """加载 Campaign，并验证核心清单及其计划期输入未被改写。"""
 
     campaign_dir = path.parent if path.name == "campaign.json" else path
@@ -7765,11 +16210,13 @@ def load_campaign_manifest(path: Path) -> dict[str, Any]:
             target = _campaign_file(campaign_dir, relative)
             if not target.is_file() or file_sha256(target) != expected_sha:
                 raise ConfigurationError(f"Campaign 输入摘要漂移：{relative}")
-    _verify_control_receipts(
-        campaign_dir,
-        manifest,
-        require_active=False,
-    )
+    if not _skip_control_validation:
+        _verify_control_receipts(
+            campaign_dir,
+            manifest,
+            require_active=False,
+            _historical_manifest_controls=_control_epoch_bootstrap,
+        )
     return manifest
 
 
@@ -7839,6 +16286,63 @@ def _require_file_binding(value: Any, label: str) -> None:
         or not SHA256_RE.fullmatch(str(value.get("sha256")))
     ):
         raise ConfigurationError(f"{label}文件绑定非法。")
+
+
+def _stage_inventory_binding_matches(
+    document: dict[str, Any],
+    reference: Any,
+    *,
+    label: str,
+) -> bool:
+    """校验阶段绑定；兼容旧 draft 的当前 attempt 相对路径。"""
+
+    _require_file_binding(reference, label)
+    inventory = document.get("evidence_inventory")
+    entries = inventory.get("entries") if isinstance(inventory, dict) else None
+    if not isinstance(entries, list):
+        return False
+    inventory_index = {
+        entry.get("path"): entry.get("sha256")
+        for entry in entries
+        if isinstance(entry, dict)
+    }
+    path = reference["path"]
+    digest = reference["sha256"]
+    if inventory_index.get(path) == digest:
+        return True
+    prefix = "evidence/"
+    if not path.startswith(prefix):
+        return False
+    relative = PurePosixPath(path[len(prefix) :])
+    if (
+        relative.is_absolute()
+        or "\\" in path
+        or not relative.parts
+        or str(PurePosixPath(path)) != path
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        return False
+    attempt_reference = document.get("attempt")
+    attempt_path = (
+        attempt_reference.get("path")
+        if isinstance(attempt_reference, Mapping)
+        else None
+    )
+    if not isinstance(attempt_path, str):
+        return False
+    attempt_parts = PurePosixPath(attempt_path).parts
+    if len(attempt_parts) < 3 or attempt_parts[-1] != "attempt.json":
+        return False
+    attempt_id = attempt_parts[-2]
+    roots = document.get("evidence_roots")
+    if not isinstance(roots, list):
+        return False
+    root_paths = [Path(raw_root) for raw_root in roots if isinstance(raw_root, str)]
+    candidates: list[str] = []
+    for root, root_prefix in _evidence_root_map(root_paths):
+        if root.name == "evidence" and root.parent.name == attempt_id:
+            candidates.append(f"{root_prefix}/{relative.as_posix()}")
+    return len(candidates) == 1 and inventory_index.get(candidates[0]) == digest
 
 
 def _validate_stage_contract(document: dict[str, Any]) -> None:
@@ -7964,7 +16468,11 @@ def _validate_stage_contract(document: dict[str, Any]) -> None:
         ):
             raise ConfigurationError("抓包阶段恢复门禁未通过。")
         _require_file_binding(restoration.get("report"), "环境恢复报告")
-        if inventory_index.get(restoration["report"]["path"]) != restoration["report"]["sha256"]:
+        if not _stage_inventory_binding_matches(
+            document,
+            restoration["report"],
+            label="环境恢复报告",
+        ):
             raise ConfigurationError("环境恢复报告未绑定封存证据清单。")
         security = document["security"]
         if (
@@ -7982,7 +16490,11 @@ def _validate_stage_contract(document: dict[str, Any]) -> None:
         ):
             raise ConfigurationError("抓包阶段 assertion_context 非法。")
         _require_file_binding(context.get("capture_manifest"), "capture manifest")
-        if inventory_index.get(context["capture_manifest"]["path"]) != context["capture_manifest"]["sha256"]:
+        if not _stage_inventory_binding_matches(
+            document,
+            context["capture_manifest"],
+            label="capture manifest",
+        ):
             raise ConfigurationError("capture manifest 未绑定封存证据清单。")
         if stage == "capture-candidate":
             capture_identity = document.get("identity")
@@ -8003,13 +16515,18 @@ def _validate_stage_contract(document: dict[str, Any]) -> None:
             _require_file_binding(
                 post_client.get("report"), "Kilo 后环境恢复报告"
             )
-            if (
-                inventory_index.get(post_client["report"]["path"])
-                != post_client["report"]["sha256"]
+            if not _stage_inventory_binding_matches(
+                document,
+                post_client["report"],
+                label="Kilo 后环境恢复报告",
             ):
                 raise ConfigurationError("Kilo 后恢复报告未绑定封存证据清单。")
             _require_file_binding(document.get("observed_profile"), "运行画像观测")
-            if inventory_index.get(document["observed_profile"]["path"]) != document["observed_profile"]["sha256"]:
+            if not _stage_inventory_binding_matches(
+                document,
+                document["observed_profile"],
+                label="运行画像观测",
+            ):
                 raise ConfigurationError("运行画像观测未绑定封存证据清单。")
             client_bindings = document.get("client_bindings")
             client_ids = {
@@ -8215,12 +16732,15 @@ def save_stage_result(
 
 
 def _successor_copy_expectations(
+    campaign_dir: Path,
+    manifest: dict[str, Any],
     predecessor_dir: Path,
     predecessor_manifest: dict[str, Any],
     official: dict[str, Any],
-    classification: dict[str, Any],
+    classification: dict[str, Any] | None,
     *,
     include_classification: bool = True,
+    replace_target_scenario: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """重建后继 Campaign 必须逐字复制的完整文件闭集。"""
 
@@ -8260,10 +16780,39 @@ def _successor_copy_expectations(
         expected.setdefault(destination_relative, row)
 
     for group_name in ("inputs", "analysis"):
-        for reference in predecessor_manifest[group_name].values():
+        for field, reference in predecessor_manifest[group_name].items():
             if reference is not None:
+                if (
+                    replace_target_scenario
+                    and group_name == "inputs"
+                    and field == "target_discovery_scenarios"
+                ):
+                    continue
                 add(reference, f"plan_{group_name}")
+    if replace_target_scenario:
+        reference = manifest.get("inputs", {}).get(
+            "target_discovery_scenarios"
+        )
+        _require_file_binding(reference, "后继运行时 target 场景")
+        assert isinstance(reference, dict)
+        relative = str(reference["path"])
+        target = _campaign_file(campaign_dir, relative)
+        if (
+            target.is_symlink()
+            or not target.is_file()
+            or file_sha256(target) != reference["sha256"]
+        ):
+            raise ConfigurationError("后继运行时 target 场景摘要漂移。")
+        expected[relative] = {
+            "kind": "runtime_target_scenario",
+            "source_path": relative,
+            "target_path": relative,
+            "sha256": reference["sha256"],
+            "bytes": target.stat().st_size,
+        }
     if include_classification:
+        if classification is None:
+            raise ConfigurationError("前序批准分类缺失，无法重建复制闭集。")
         for field in _CLASSIFICATION_APPROVAL_FIELDS:
             add(classification.get(field), "approved_classification")
     add(
@@ -8277,6 +16826,8 @@ def _successor_copy_expectations(
 def _validate_direct_predecessor_official_attempt(
     predecessor_dir: Path,
     predecessor_official: dict[str, Any],
+    *,
+    _historical_manifest_controls: bool = False,
 ) -> None:
     """重放直接前序的官方 attempt 与原子预约。
 
@@ -8293,12 +16844,14 @@ def _validate_direct_predecessor_official_attempt(
         "official",
         None,
         attempt_path.parent.name,
+        _historical_manifest_controls=_historical_manifest_controls,
     )
     reservation = _load_capture_reservation(
         predecessor_dir,
         attempt_root,
         phase="official",
         candidate_id=None,
+        _historical_manifest_controls=_historical_manifest_controls,
     )
     planned = {
         item["id"]: item
@@ -8329,6 +16882,7 @@ def _validate_predecessor_import_receipt(
     *,
     import_cache: dict[tuple[str, str, str | None], dict[str, Any]] | None = None,
     skip_evidence_scan: bool = False,
+    _historical_manifest_controls: bool = False,
 ) -> dict[str, Any]:
     """重放前序 Campaign、官方证据、安全门禁和批准五件套。"""
 
@@ -8355,15 +16909,40 @@ def _validate_predecessor_import_receipt(
         PREDECESSOR_RUNTIME_IMPORT_SCHEMA,
         PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
         PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+        PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+        *PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS,
     }:
         expected_receipt_fields.add("configuration_transition")
     if receipt_schema in {
         PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
         PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+        PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+        *PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS,
     }:
         expected_receipt_fields.add("job_rehearsal_transition")
-    if receipt_schema == PREDECESSOR_RECOVERY_IMPORT_SCHEMA:
+    if receipt_schema == PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA:
+        expected_receipt_fields.add("target_scenario_transition")
+    if (
+        receipt_schema
+        in {
+            PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+            PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+            PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+        }
+        and "recovery_control_transition" in receipt
+    ) or (
+        receipt_schema == PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA
+        and "recovery_control_transition" in receipt
+    ):
         expected_receipt_fields.add("recovery_control_transition")
+    if receipt_schema == PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA:
+        expected_receipt_fields.add("control_replacement")
+    if receipt_schema in PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS:
+        expected_receipt_fields.update(
+            {"stage_control_transition", "execution_summary", "import_mode"}
+        )
     if receipt_schema == PREDECESSOR_RECLASSIFICATION_IMPORT_SCHEMA or (
         receipt_schema in {
             PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
@@ -8384,6 +16963,9 @@ def _validate_predecessor_import_receipt(
             PREDECESSOR_RUNTIME_IMPORT_SCHEMA,
             PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
             PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+            PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+            PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+            *PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS,
         }
         or not _is_rfc3339_timestamp(receipt.get("created_at_utc"))
         or receipt.get("reason") not in SUCCESSOR_REASONS
@@ -8399,6 +16981,19 @@ def _validate_predecessor_import_receipt(
         PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
         PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
     } and receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS
+    sealed_stage_recovery_import = (
+        receipt_schema in PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS
+        and receipt.get("reason") in SEALED_STAGE_RECOVERY_SUCCESSOR_REASONS
+    )
+    control_refresh_import = (
+        receipt_schema == PREDECESSOR_RECOVERY_IMPORT_SCHEMA
+        and receipt.get("reason") == "candidate_recovery_control_refresh"
+    )
+    control_replacement_import = (
+        receipt_schema == PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA
+        and receipt.get("reason") == "candidate_recovery_control_replacement"
+    )
+    official_only_import = reclassification_import or sealed_stage_recovery_import
     if reclassification_import:
         if (
             receipt.get("reason") not in RECLASSIFICATION_SUCCESSOR_REASONS
@@ -8407,7 +17002,23 @@ def _validate_predecessor_import_receipt(
             or canonical != "capture-official"
         ):
             raise ConfigurationError("分类纠正后继的导入模式或阶段边界非法。")
-    elif receipt.get("reason") in RECLASSIFICATION_SUCCESSOR_REASONS:
+    elif sealed_stage_recovery_import:
+        if (
+            receipt.get("import_mode")
+            != "official_only_sealed_stage_control_recovery"
+            or canonical != "capture-official"
+            or receipt.get("execution_summary")
+            != {
+                "executed_job_ids": [],
+                "scanned_bytes": 0,
+                "live_request_count": 0,
+            }
+        ):
+            raise ConfigurationError("已封存阶段控制恢复的导入边界非法。")
+    elif receipt.get("reason") in (
+        RECLASSIFICATION_SUCCESSOR_REASONS
+        | SEALED_STAGE_RECOVERY_SUCCESSOR_REASONS
+    ):
         raise ConfigurationError("分类纠正后继必须使用 official-only 受管收据。")
 
     manifest_predecessor = manifest.get("predecessor")
@@ -8433,7 +17044,15 @@ def _validate_predecessor_import_receipt(
     ):
         raise ConfigurationError("前序 Campaign 路径不可信或导入链形成循环。")
     _validate_existing_campaign_path(predecessor_dir)
-    predecessor_manifest = _require_formal_campaign(predecessor_dir)
+    predecessor_manifest = _require_formal_campaign(
+        predecessor_dir,
+        load_campaign_manifest(
+            predecessor_dir,
+            # predecessor-import 读取的永远是不可变祖先；即使当前边不是
+            # control-replacement，也必须保留更早 epoch 的历史阶段规则。
+            _control_epoch_bootstrap=True,
+        ),
+    )
     if (
         predecessor_binding.get("campaign_id")
         != predecessor_manifest.get("campaign_id")
@@ -8442,11 +17061,255 @@ def _validate_predecessor_import_receipt(
     ):
         raise ConfigurationError("前序 Campaign 清单身份或摘要漂移。")
 
+    runtime_scenario_import = (
+        receipt_schema == PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA
+    )
+    if runtime_scenario_import:
+        transition = receipt.get("target_scenario_transition")
+        predecessor_reference = predecessor_manifest.get("inputs", {}).get(
+            "target_discovery_scenarios"
+        )
+        successor_reference = manifest.get("inputs", {}).get(
+            "target_discovery_scenarios"
+        )
+        if (
+            receipt.get("reason") != "candidate_runtime_identity_correction"
+            or not isinstance(transition, dict)
+            or set(transition)
+            != {"reason", "predecessor", "successor", "changed_job_ids"}
+            or transition.get("reason")
+            != "candidate_codex_binary_binding_correction"
+            or transition.get("predecessor") != predecessor_reference
+            or transition.get("successor") != successor_reference
+        ):
+            raise ConfigurationError("后继 target 场景过渡收据非法。")
+        _require_file_binding(
+            predecessor_reference,
+            "后继 target 场景过渡的前序绑定",
+        )
+        _require_file_binding(
+            successor_reference,
+            "后继 target 场景过渡的当前绑定",
+        )
+        assert isinstance(predecessor_reference, dict)
+        assert isinstance(successor_reference, dict)
+        predecessor_scenario_path = _campaign_file(
+            predecessor_dir,
+            str(predecessor_reference["path"]),
+        )
+        successor_scenario_path = _campaign_file(
+            campaign_dir,
+            str(successor_reference["path"]),
+        )
+        if (
+            predecessor_scenario_path.is_symlink()
+            or not predecessor_scenario_path.is_file()
+            or file_sha256(predecessor_scenario_path)
+            != predecessor_reference["sha256"]
+            or successor_scenario_path.is_symlink()
+            or not successor_scenario_path.is_file()
+            or file_sha256(successor_scenario_path)
+            != successor_reference["sha256"]
+        ):
+            raise ConfigurationError("后继 target 场景过渡文件摘要漂移。")
+        changed_job_ids = _validate_runtime_target_scenario_change(
+            _read_json(
+                predecessor_scenario_path,
+                "后继 target 场景过渡的前序文件",
+            ),
+            _read_json(
+                successor_scenario_path,
+                "后继 target 场景过渡的当前文件",
+            ),
+        )
+        if transition.get("changed_job_ids") != list(changed_job_ids):
+            raise ConfigurationError("后继 target 场景过渡 Job 集漂移。")
+
+    replayed_control_replacement: dict[str, Any] | None = None
+    if control_replacement_import:
+        stored_replacement = receipt.get("control_replacement")
+        if not isinstance(stored_replacement, Mapping):
+            raise ConfigurationError("零执行控制替代缺少审计绑定。")
+        epoch = stored_replacement.get("effective_epoch")
+        repair = stored_replacement.get("runtime_repair")
+        unpublished = stored_replacement.get("unpublished_stop_checkpoint")
+        audit = stored_replacement.get("supervisor_audit")
+        source_attempt = stored_replacement.get("source_attempt")
+        if (
+            not isinstance(epoch, Mapping)
+            or not isinstance(unpublished, Mapping)
+            or not isinstance(audit, Mapping)
+            or not isinstance(source_attempt, Mapping)
+            or (repair is not None and not isinstance(repair, Mapping))
+        ):
+            raise ConfigurationError("零执行控制替代审计字段不闭合。")
+        unpublished_receipt = unpublished.get("receipt")
+        if not isinstance(unpublished_receipt, Mapping):
+            raise ConfigurationError("零执行控制替代未发布 Ledger 绑定非法。")
+        replay_arguments = argparse.Namespace(
+            reason="candidate_recovery_control_replacement",
+            predecessor_candidate_id=source_attempt.get("candidate_id"),
+            predecessor_attempt_id=source_attempt.get("attempt_id"),
+            predecessor_control_epoch=predecessor_dir / str(epoch.get("path", "")),
+            predecessor_control_runtime_repair=(
+                predecessor_dir / str(repair.get("path", ""))
+                if isinstance(repair, Mapping)
+                else None
+            ),
+            predecessor_unpublished_ledger_dir=Path(
+                str(unpublished.get("ledger_dir", ""))
+            ),
+            predecessor_unpublished_stop_receipt=(
+                Path(str(unpublished.get("ledger_dir", "")))
+                / str(unpublished_receipt.get("path", ""))
+            ),
+            predecessor_supervisor_run_dir=Path(str(audit.get("run_dir", ""))),
+        )
+        replayed_control_replacement = _control_replacement_context(
+            replay_arguments,
+            predecessor_dir,
+            predecessor_manifest,
+        )
+        if not _supervisor_audit_bound_mapping_matches(
+            stored_replacement,
+            replayed_control_replacement,
+        ):
+            raise ConfigurationError("零执行控制替代的 Campaign、epoch 或审计终态漂移。")
+
     predecessor_controls = predecessor_manifest.get("control_receipts")
     successor_controls = manifest.get("control_receipts")
+    effective_predecessor_controls = predecessor_controls
+    if sealed_stage_recovery_import:
+        stage_control = receipt.get("stage_control_transition")
+        if not isinstance(stage_control, dict) or set(stage_control) != {
+            "reason",
+            "source_stage",
+            "evaluation_transition",
+            "predecessor",
+            "successor",
+        }:
+            raise ConfigurationError("已封存阶段控制过渡字段不闭合。")
+        source_stage = stage_control.get("source_stage")
+        evaluation_transition = stage_control.get("evaluation_transition")
+        if (
+            stage_control.get("reason") != "sealed_stage_control_recovery"
+            or not isinstance(source_stage, dict)
+            or set(source_stage) != {"path", "sha256", "package_digest"}
+            or source_stage.get("path") != "official/result.json"
+            or not isinstance(evaluation_transition, dict)
+            or set(evaluation_transition) != {"path", "sha256"}
+        ):
+            raise ConfigurationError("已封存阶段控制过渡身份非法。")
+        predecessor_official_path = predecessor_dir / "official" / "result.json"
+        predecessor_official_raw = _read_json(
+            predecessor_official_path,
+            "已封存阶段控制恢复的前序 official",
+        )
+        transition_path = _campaign_file(
+            predecessor_dir,
+            str(evaluation_transition.get("path", "")),
+        )
+        transition_origin_dir = predecessor_dir.resolve(strict=True)
+        transition_origin_manifest = predecessor_manifest
+        transition_binding_matches = (
+            predecessor_official_raw.get("evaluation_transition")
+            == evaluation_transition
+        )
+        if (
+            predecessor_official_raw.get("evaluation_transition") is None
+            and not transition_path.exists()
+            and not transition_path.is_symlink()
+            and isinstance(
+                predecessor_official_raw.get("predecessor_import"), Mapping
+            )
+        ):
+            (
+                transition_path,
+                transition_origin_dir,
+                transition_origin_manifest,
+            ) = _imported_stage_evaluation_transition_source(
+                predecessor_dir,
+                predecessor_official_raw,
+                evaluation_transition,
+            )
+            transition_binding_matches = True
+        transition_payload = _read_json(
+            transition_path,
+            "已封存阶段控制恢复的评估 transition",
+        )
+        transition_unsigned = dict(transition_payload)
+        transition_digest = transition_unsigned.pop("transition_digest", None)
+        recovery_controls = transition_payload.get("recovery_controls")
+        transition_recovery = (
+            recovery_controls.get("recovery")
+            if isinstance(recovery_controls, Mapping)
+            else None
+        )
+        expected_source_stage = {
+            "path": "official/result.json",
+            "sha256": file_sha256(predecessor_official_path),
+            "package_digest": predecessor_official_raw.get("package_digest"),
+        }
+        if (
+            source_stage != expected_source_stage
+            or not transition_binding_matches
+            or transition_path.is_symlink()
+            or not transition_path.is_file()
+            or file_sha256(transition_path) != evaluation_transition.get("sha256")
+            or transition_payload.get("schema_version")
+            != TOOL_EVALUATION_TRANSITION_SCHEMA
+            or transition_payload.get("status") != "approved"
+            or transition_payload.get("phase") != "official"
+            or transition_payload.get("campaign_id")
+            != transition_origin_manifest.get("campaign_id")
+            or transition_payload.get("campaign_manifest_sha256")
+            != file_sha256(transition_origin_dir / "campaign.json")
+            or not SHA256_RE.fullmatch(str(transition_digest))
+            or _fingerprint(transition_unsigned) != transition_digest
+            or not isinstance(transition_recovery, dict)
+            or stage_control.get("predecessor") != transition_recovery
+            or stage_control.get("successor") != successor_controls
+        ):
+            raise ConfigurationError("已封存阶段控制过渡摘要或控制链漂移。")
+        effective_predecessor_controls = transition_recovery
+    elif control_refresh_import:
+        control_transition = receipt.get("recovery_control_transition")
+        source_transition = (
+            control_transition.get("source_transition")
+            if isinstance(control_transition, Mapping)
+            else None
+        )
+        abandoned = receipt.get("abandoned_candidate_attempt")
+        if (
+            not isinstance(abandoned, Mapping)
+            or not isinstance(abandoned.get("candidate_id"), str)
+            or not isinstance(abandoned.get("attempt_id"), str)
+            or not isinstance(source_transition, Mapping)
+        ):
+            raise ConfigurationError(
+                "控制刷新导入缺少源 Candidate／attempt／transition 绑定。"
+            )
+        _, expected_source_binding, transition_recovery = (
+            _candidate_control_refresh_source_transition(
+                predecessor_dir,
+                predecessor_manifest,
+                candidate_id=str(abandoned["candidate_id"]),
+                attempt_id=str(abandoned["attempt_id"]),
+                source=source_transition,
+                _historical_manifest_controls=_historical_manifest_controls,
+            )
+        )
+        if source_transition != expected_source_binding:
+            raise ConfigurationError("控制刷新导入的源 transition 绑定漂移。")
+        effective_predecessor_controls = transition_recovery
+    elif control_replacement_import:
+        assert replayed_control_replacement is not None
+        effective_predecessor_controls = replayed_control_replacement[
+            "effective_controls"
+        ]
     predecessor_rehearsal = (
-        predecessor_controls.get("job_rehearsal")
-        if isinstance(predecessor_controls, dict)
+        effective_predecessor_controls.get("job_rehearsal")
+        if isinstance(effective_predecessor_controls, dict)
         else None
     )
     successor_rehearsal = (
@@ -8461,6 +17324,9 @@ def _validate_predecessor_import_receipt(
     if receipt_schema in {
         PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
         PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+        PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+        PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+        *PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS,
     }:
         expected_rehearsal_transition = {
             "reason": "current_execution_contract_rehearsal",
@@ -8477,13 +17343,13 @@ def _validate_predecessor_import_receipt(
         raise ConfigurationError("后继未登记完整 Job 演练绑定变化。")
 
     predecessor_timing = (
-        predecessor_controls.get("upgrade_timing")
-        if isinstance(predecessor_controls, dict)
+        effective_predecessor_controls.get("upgrade_timing")
+        if isinstance(effective_predecessor_controls, dict)
         else None
     )
     predecessor_arm = (
-        predecessor_controls.get("arm64_environment")
-        if isinstance(predecessor_controls, dict)
+        effective_predecessor_controls.get("arm64_environment")
+        if isinstance(effective_predecessor_controls, dict)
         else None
     )
     successor_timing = (
@@ -8506,12 +17372,47 @@ def _validate_predecessor_import_receipt(
         )
     ):
         raise ConfigurationError("前序或后继 Campaign 的计时／ARM64 控制绑定非法。")
-    if receipt_schema == PREDECESSOR_RECOVERY_IMPORT_SCHEMA:
+    sealed_stage_stopped_recovery = (
+        receipt_schema == PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMA
+        and receipt.get("recovery_control_transition") is not None
+    )
+    if (
+        receipt_schema in PREDECESSOR_SEALED_STAGE_RECOVERY_IMPORT_SCHEMAS
+        and not sealed_stage_stopped_recovery
+    ):
+        _assert_sealed_stage_checkpoint_progression(
+            predecessor_timing,
+            successor_timing,
+            predecessor_arm,
+            successor_arm,
+            baseline_version=str(manifest["baseline_version"]),
+            target_version=str(manifest["target_version"]),
+            campaign_purpose=str(manifest["campaign_purpose"]),
+            require_current_head=False,
+        )
+    elif (
+        receipt_schema
+        in {
+            PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+            PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+            PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
+        }
+        and receipt.get("recovery_control_transition") is not None
+        or sealed_stage_stopped_recovery
+    ):
         control_transition = receipt.get("recovery_control_transition")
+        expected_control_fields = {
+            "reason",
+            "predecessor",
+            "stop_checkpoint",
+            "successor",
+        }
+        if control_refresh_import:
+            expected_control_fields.add("source_transition")
         if (
             not isinstance(control_transition, dict)
             or set(control_transition)
-            != {"reason", "predecessor", "stop_checkpoint", "successor"}
+            != expected_control_fields
             or control_transition.get("reason") != "stopped_ledger_recovery"
             or control_transition.get("predecessor")
             != {
@@ -8585,10 +17486,30 @@ def _validate_predecessor_import_receipt(
             or stop_binding != expected_stop
             or stop_summary.get("upgrade_id")
             != predecessor_timing.get("upgrade_id")
-            or stop_summary.get("active_phase")
-            not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+            or (
+                stop_summary.get("active_phase")
+                not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+                and not (
+                    control_refresh_import
+                    and stop_summary.get("active_phase") == "VC-0"
+                )
+            )
         ):
             raise ConfigurationError("后继恢复停线 checkpoint 事实非法。")
+        if sealed_stage_stopped_recovery:
+            _, recovery_checkpoint = _sealed_stage_timing_checkpoint(
+                successor_timing,
+                label="已封存阶段 stopped 恢复",
+            )
+            recovery_summary = recovery_checkpoint["summary"]
+            if (
+                recovery_summary.get("status") != "active"
+                or recovery_summary.get("active_phase") != "VC-2"
+                or recovery_summary.get("total_live_request_count") != 0
+            ):
+                raise ConfigurationError(
+                    "已封存阶段 stopped 恢复的新 checkpoint 必须位于 VC-2，且 live 请求数为 0。"
+                )
     elif (
         successor_timing != predecessor_timing
         or successor_arm != predecessor_arm
@@ -8604,7 +17525,6 @@ def _validate_predecessor_import_receipt(
         "suite",
         "official_identity",
         "baseline_identity",
-        "inputs",
         "analysis",
         "required_rules",
     )
@@ -8618,6 +17538,21 @@ def _validate_predecessor_import_receipt(
             "同版本后继 Campaign 改变了禁止承接的前序坐标："
             + "、".join(mismatches)
         )
+    predecessor_inputs = predecessor_manifest.get("inputs")
+    successor_inputs = manifest.get("inputs")
+    if not isinstance(predecessor_inputs, dict) or not isinstance(
+        successor_inputs, dict
+    ):
+        raise ConfigurationError("同版本后继 Campaign 输入绑定不是对象。")
+    predecessor_fixed_inputs = dict(predecessor_inputs)
+    successor_fixed_inputs = dict(successor_inputs)
+    if runtime_scenario_import:
+        predecessor_fixed_inputs.pop("target_discovery_scenarios", None)
+        successor_fixed_inputs.pop("target_discovery_scenarios", None)
+    if predecessor_fixed_inputs != successor_fixed_inputs or (
+        not runtime_scenario_import and predecessor_inputs != successor_inputs
+    ):
+        raise ConfigurationError("同版本后继 Campaign 改变了未授权的输入绑定。")
 
     predecessor_configuration = predecessor_manifest.get("configuration")
     successor_configuration = manifest.get("configuration")
@@ -8642,6 +17577,8 @@ def _validate_predecessor_import_receipt(
         in {
             PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
             PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+            PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+            PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
         }
         and runtime_configuration_changed
     ):
@@ -8670,6 +17607,8 @@ def _validate_predecessor_import_receipt(
             in {
                 PREDECESSOR_REHEARSAL_IMPORT_SCHEMA,
                 PREDECESSOR_RECOVERY_IMPORT_SCHEMA,
+                PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA,
+                PREDECESSOR_CONTROL_REPLACEMENT_IMPORT_SCHEMA,
             }
             and runtime_configuration_changed
         ):
@@ -8740,27 +17679,35 @@ def _validate_predecessor_import_receipt(
             _replay_machine_receipts=(stage != "capture-official"),
             _import_cache=cache,
             _skip_evidence_scan=skip_evidence_scan,
+            # 祖先阶段递归不得因中间 successor 类型不同而丢失历史上下文。
+            _historical_manifest_controls=True,
         )
         cache[key] = dict(loaded)
         return loaded
 
     predecessor_official = load_predecessor_stage("capture-official")
-    predecessor_classification = load_predecessor_stage("classify")
-    if (
-        predecessor_official.get("status") != "complete"
+    predecessor_classification = (
+        None if sealed_stage_recovery_import else load_predecessor_stage("classify")
+    )
+    if predecessor_official.get("status") != "complete":
+        raise ConfigurationError("前序官方阶段已不满足完整承接条件。")
+    if not sealed_stage_recovery_import and (
+        predecessor_classification is None
         or predecessor_classification.get("status") != "complete"
         or predecessor_classification.get("migration", {}).get(
             "unclassified_count"
         )
         != 0
     ):
-        raise ConfigurationError("前序官方阶段或批准分类已不满足完整承接条件。")
+        raise ConfigurationError("前序批准分类已不满足完整承接条件。")
 
     stage_receipts = receipt.get("stages")
-    if not isinstance(stage_receipts, dict) or set(stage_receipts) != {
-        "capture-official",
-        "classify",
-    }:
+    expected_stage_ids = (
+        {"capture-official"}
+        if sealed_stage_recovery_import
+        else {"capture-official", "classify"}
+    )
+    if not isinstance(stage_receipts, dict) or set(stage_receipts) != expected_stage_ids:
         raise ConfigurationError("前序导入收据阶段闭集非法。")
     stage_expectations = {
         "capture-official": {
@@ -8772,7 +17719,9 @@ def _validate_predecessor_import_receipt(
             ]["digest"],
             "security_sha256": _fingerprint(predecessor_official["security"]),
         },
-        "classify": {
+    }
+    if predecessor_classification is not None:
+        stage_expectations["classify"] = {
             "path": "classification/result.json",
             "sha256": file_sha256(
                 predecessor_dir / "classification" / "result.json"
@@ -8781,8 +17730,7 @@ def _validate_predecessor_import_receipt(
             "joint_manifest_sha256": predecessor_classification[
                 "joint_manifest_sha256"
             ],
-        },
-    }
+        }
     if stage_receipts != stage_expectations:
         raise ConfigurationError("前序导入收据的阶段摘要或证据门禁发生漂移。")
 
@@ -8790,11 +17738,16 @@ def _validate_predecessor_import_receipt(
     if not isinstance(copied, list):
         raise ConfigurationError("前序导入收据缺少复制文件闭集。")
     expected_copies = _successor_copy_expectations(
+        campaign_dir,
+        manifest,
         predecessor_dir,
         predecessor_manifest,
         predecessor_official,
         predecessor_classification,
-        include_classification=not reclassification_import,
+        include_classification=not official_only_import,
+        replace_target_scenario=(
+            receipt_schema == PREDECESSOR_RUNTIME_SCENARIO_IMPORT_SCHEMA
+        ),
     )
     copied_index: dict[str, dict[str, Any]] = {}
     for row in copied:
@@ -8842,17 +17795,32 @@ def _validate_predecessor_import_receipt(
             }
         ):
             raise ConfigurationError("前序放弃 attempt 绑定结构非法。")
+        attempt_campaign_dir = (
+            Path(
+                str(
+                    replayed_control_replacement["source_campaign"][
+                        "campaign_dir"
+                    ]
+                )
+            )
+            if control_replacement_import
+            and replayed_control_replacement is not None
+            else predecessor_dir
+        )
         attempt_root, attempt = _load_capture_attempt(
-            predecessor_dir,
+            attempt_campaign_dir,
             "candidate",
             str(abandoned.get("candidate_id", "")),
             str(abandoned.get("attempt_id", "")),
+            _historical_manifest_controls=(
+                control_replacement_import or _historical_manifest_controls
+            ),
         )
         expected_abandoned = {
             "candidate_id": attempt["candidate_id"],
             "attempt_id": attempt["attempt_id"],
             "path": (attempt_root / "attempt.json")
-            .relative_to(predecessor_dir)
+            .relative_to(attempt_campaign_dir)
             .as_posix(),
             "sha256": file_sha256(attempt_root / "attempt.json"),
             "attempt_digest": attempt["attempt_digest"],
@@ -8868,6 +17836,9 @@ def _validate_predecessor_import_receipt(
         _validate_direct_predecessor_official_attempt(
             predecessor_dir,
             predecessor_official,
+            _historical_manifest_controls=(
+                control_replacement_import or _historical_manifest_controls
+            ),
         )
 
     predecessor_stage = (
@@ -8875,6 +17846,8 @@ def _validate_predecessor_import_receipt(
         if canonical == "capture-official"
         else predecessor_classification
     )
+    if predecessor_stage is None:
+        raise ConfigurationError("official-only 后继不得投影分类阶段。")
     if stage_payload.get("predecessor_package_digest") != predecessor_stage.get(
         "package_digest"
     ):
@@ -8958,6 +17931,8 @@ def _load_imported_stage_checkpoint(
     canonical: str,
     candidate_id: str | None,
     local_payload: Mapping[str, Any],
+    *,
+    _historical_manifest_controls: bool = False,
 ) -> dict[str, Any] | None:
     path = _imported_stage_checkpoint_path(campaign_dir, canonical, candidate_id)
     if not path.exists():
@@ -8989,7 +17964,10 @@ def _load_imported_stage_checkpoint(
         }
         or payload.get("schema_version") != IMPORTED_STAGE_CHECKPOINT_SCHEMA
         or payload.get("campaign_id")
-        != load_campaign_manifest(campaign_dir).get("campaign_id")
+        != load_campaign_manifest(
+            campaign_dir,
+            _control_epoch_bootstrap=_historical_manifest_controls,
+        ).get("campaign_id")
         or payload.get("campaign_manifest_sha256")
         != file_sha256(campaign_dir / "campaign.json")
         or payload.get("stage") != canonical
@@ -9067,8 +18045,22 @@ def _load_stage_result(
     _ignore_checkpoint: bool = False,
     _import_cache: dict[tuple[str, str, str | None], dict[str, Any]] | None = None,
     _skip_evidence_scan: bool = False,
+    _historical_manifest_controls: bool = False,
+    _verified_campaign_manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    campaign_manifest = _require_formal_campaign(campaign_dir)
+    # control epoch 的源上下文由外层清单校验触发。重放已写入 epoch 时若在这里
+    # 再加载同一清单，会重新进入 control receipt 校验并形成无限递归。
+    campaign_manifest = _require_formal_campaign(
+        campaign_dir,
+        (
+            dict(_verified_campaign_manifest)
+            if _verified_campaign_manifest is not None
+            else load_campaign_manifest(
+                campaign_dir,
+                _control_epoch_bootstrap=_historical_manifest_controls,
+            )
+        ),
+    )
     canonical, path = _stage_path(campaign_dir, stage, candidate_id)
     _reject_symlink_components(path, campaign_dir, f"{canonical} 阶段结果")
     if not path.is_file() or path.is_symlink():
@@ -9143,6 +18135,7 @@ def _load_stage_result(
                 candidate_id,
                 _replay_machine_receipts=False,
                 _shallow=True,
+                _historical_manifest_controls=_historical_manifest_controls,
             )
             _replay_bound_candidate_external_gate(
                 payload.get("candidate_external_gate"),
@@ -9168,6 +18161,7 @@ def _load_stage_result(
                 canonical,
                 candidate_id,
                 payload,
+                _historical_manifest_controls=_historical_manifest_controls,
             )
             if checkpoint is not None:
                 return checkpoint
@@ -9179,6 +18173,7 @@ def _load_stage_result(
             _import_chain or frozenset(),
             import_cache=_import_cache,
             skip_evidence_scan=_skip_evidence_scan,
+            _historical_manifest_controls=_historical_manifest_controls,
         )
         return projected
     if canonical in {"capture-official", "capture-candidate"}:
@@ -9192,7 +18187,12 @@ def _load_stage_result(
                 payload.get("evaluation_transition"),
                 "评估工具 transition",
             )
-        _verify_capture_seal_preview(campaign_dir, payload, canonical)
+        _verify_capture_seal_preview(
+            campaign_dir,
+            payload,
+            canonical,
+            _historical_manifest_controls=_historical_manifest_controls,
+        )
         if _replay_machine_receipts:
             _replay_capture_stage_receipts(campaign_dir, payload, canonical)
         if _skip_evidence_scan:
@@ -9228,6 +18228,7 @@ def _load_stage_result(
             campaign_dir,
             "capture-candidate",
             candidate_id,
+            _historical_manifest_controls=_historical_manifest_controls,
         )
         _replay_bound_candidate_external_gate(
             payload.get("candidate_external_gate"),
@@ -9270,6 +18271,8 @@ def _verify_capture_seal_preview(
     campaign_dir: Path,
     stage: dict[str, Any],
     canonical: str,
+    *,
+    _historical_manifest_controls: bool = False,
 ) -> None:
     """证明阶段 payload 仍是人工批准的同一组机器事实。"""
 
@@ -9288,6 +18291,7 @@ def _verify_capture_seal_preview(
         phase,
         candidate_id,
         attempt_id,
+        _historical_manifest_controls=_historical_manifest_controls,
     )
     preview_path = _campaign_file(
         campaign_dir,
@@ -9314,6 +18318,11 @@ def _verify_capture_seal_preview(
     stage_payload = {
         key: value for key, value in stage.items() if key not in envelope_fields
     }
+    transition_index = _seal_transition_index(
+        stage_payload.get("evaluation_transition")
+    )
+    if preview_path != _seal_preview_path(attempt_root, transition_index):
+        raise ConfigurationError("seal 预览与当前 transition 槽位不一致。")
     expected_core: dict[str, Any] = {
         "schema_version": preview_schema,
         "campaign_id": attempt["campaign_id"],
@@ -9345,6 +18354,7 @@ def _verify_capture_seal_preview(
             phase=phase,
             candidate_id=candidate_id,
             attempt=attempt,
+            transition_index=transition_index,
         )
         if draft["stage_payload"] != stage_payload:
             raise ConfigurationError("阶段收据与冻结 seal 草案不一致。")
@@ -9354,7 +18364,9 @@ def _verify_capture_seal_preview(
                     "sha256"
                 ],
                 "evidence_manifest_digest": manifest["manifest_digest"],
-                "seal_draft_sha256": file_sha256(_seal_draft_path(attempt_root)),
+                "seal_draft_sha256": file_sha256(
+                    _seal_draft_path(attempt_root, transition_index)
+                ),
                 "scan_summary": stage_payload["scan_summary"],
             }
         )
@@ -9386,6 +18398,8 @@ def _latest_attempt_summary(
     campaign_dir: Path,
     phase: str,
     candidate_id: str | None,
+    *,
+    _manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """返回指定抓包边界最近一个可验证 attempt 的摘要。"""
 
@@ -9393,6 +18407,7 @@ def _latest_attempt_summary(
         campaign_dir,
         phase,
         candidate_id,
+        _manifest=_manifest,
     ):
         attempt_path = path / "attempt.json"
         if not attempt_path.exists():
@@ -9405,7 +18420,11 @@ def _latest_attempt_summary(
                 "evidence_root": None,
             }
         _, attempt = _load_capture_attempt(
-            campaign_dir, phase, candidate_id, path.name
+            campaign_dir,
+            phase,
+            candidate_id,
+            path.name,
+            _verified_campaign_manifest=_manifest,
         )
         client_checkpoint_at: str | None = None
         if phase == "candidate":
@@ -9447,9 +18466,14 @@ def _latest_attempt_summary(
                 ):
                     raise ConfigurationError("Kilo 后探针清单身份或时间非法。")
                 client_checkpoint_at = str(checkpoint["observed_at_utc"])
-        preview_path = path / "seal-preview.json"
-        preview_exists = preview_path.exists() or preview_path.is_symlink()
-        if preview_exists:
+        preview_paths = [
+            _seal_preview_path(path, index)
+            for index in range(1, MAX_PHASE_EVALUATION_TRANSITIONS + 1)
+            if _seal_preview_path(path, index).exists()
+            or _seal_preview_path(path, index).is_symlink()
+        ]
+        preview_exists = bool(preview_paths)
+        for preview_path in preview_paths:
             if preview_path.is_symlink() or not preview_path.is_file():
                 raise ConfigurationError("seal 预览路径不可信。")
             preview = _read_json(preview_path, "seal 预览")
@@ -9473,6 +18497,7 @@ def _latest_attempt_summary(
         return {
             "attempt_id": path.name,
             "status": attempt["status"],
+            "failed_job_ids": _failed_job_ids(attempt.get("results")),
             "seal_preview": preview_exists,
             "client_checkpoint_at_utc": client_checkpoint_at,
             "run_nonce": attempt["run_nonce"],
@@ -9490,6 +18515,9 @@ def _ordered_capture_attempts(
     campaign_dir: Path,
     phase: str,
     candidate_id: str | None,
+    *,
+    _historical_manifest_controls: bool = False,
+    _manifest: Mapping[str, Any] | None = None,
 ) -> list[tuple[Path, dict[str, Any]]]:
     """按预约微秒时间倒序排列 attempt，编号仅作为同刻平局键。"""
 
@@ -9506,6 +18534,8 @@ def _ordered_capture_attempts(
             path,
             phase=phase,
             candidate_id=candidate_id,
+            _manifest=_manifest,
+            _historical_manifest_controls=_historical_manifest_controls,
         )
         attempts.append((path, reservation))
     return sorted(
@@ -9562,7 +18592,11 @@ def _campaign_attempt_roots(
     return attempts
 
 
-def _campaign_contamination_records(campaign_dir: Path) -> list[str]:
+def _campaign_contamination_records(
+    campaign_dir: Path,
+    *,
+    _manifest: Mapping[str, Any] | None = None,
+) -> list[str]:
     """从主 attempt／seal 失败事实推导污染，旁路 marker 仅作冗余提示。"""
 
     records: list[str] = []
@@ -9577,6 +18611,7 @@ def _campaign_contamination_records(campaign_dir: Path) -> list[str]:
             attempt_root,
             phase=phase,
             candidate_id=current_candidate_id,
+            _manifest=_manifest,
         )
         attempt_path = attempt_root / "attempt.json"
         if attempt_path.exists() or attempt_path.is_symlink():
@@ -9587,6 +18622,7 @@ def _campaign_contamination_records(campaign_dir: Path) -> list[str]:
                 phase,
                 current_candidate_id,
                 attempt_root.name,
+                _verified_campaign_manifest=_manifest,
             )
             if attempt.get("status") == "environment_contaminated":
                 records.append(
@@ -9605,6 +18641,7 @@ def _campaign_contamination_records(campaign_dir: Path) -> list[str]:
                 attempt_root,
                 phase=phase,
                 candidate_id=current_candidate_id,
+                _manifest=_manifest,
             )
             if (
                 phase != "candidate"
@@ -9632,18 +18669,245 @@ def _campaign_contamination_records(campaign_dir: Path) -> list[str]:
             records.append(
                 f"{current_candidate_id or phase}:{attempt_root.name}:seal"
             )
+    # 旧工具可能把 metadata-only attempt 缺少恢复收据误记成污染。收据已经
+    # 由受管修复路径生成并可独立重放后，该冗余 marker／seal-failure 不再
+    # 阻断后续的 canonical seal；其他污染事实仍原样保留。
+    if records:
+        for phase, current_candidate_id, attempt_root in _campaign_attempt_roots(
+            campaign_dir
+        ):
+            if phase != "candidate" or current_candidate_id is None:
+                continue
+            attempt_path = attempt_root / "attempt.json"
+            if not attempt_path.is_file() or attempt_path.is_symlink():
+                continue
+            try:
+                _, attempt = _load_capture_attempt(
+                    campaign_dir,
+                    phase,
+                    current_candidate_id,
+                    attempt_root.name,
+                    _historical_manifest_controls=True,
+                )
+            except (ConfigurationError, OSError, ValueError):
+                continue
+            seal_record = f"{current_candidate_id}:{attempt_root.name}:seal"
+            if (
+                seal_record in records
+                and "campaign-marker" in records
+                and _metadata_only_seal_repair_allowed(
+                    campaign_dir,
+                    attempt_root,
+                    attempt,
+                    {"campaign-marker", seal_record},
+                )
+                and _metadata_only_repair_receipt_complete(attempt_root, attempt)
+            ):
+                records = [
+                    item
+                    for item in records
+                    if item not in {"campaign-marker", seal_record}
+                ]
+                break
     return records
 
 
-def _reject_contaminated_campaign(campaign_dir: Path) -> None:
-    """任何主污染事实存在时，除只读 status 外禁止继续使用 Campaign。"""
+def _metadata_only_seal_repair_allowed(
+    campaign_dir: Path,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    contamination_records: Iterable[str],
+) -> bool:
+    """判断旧工具留下的 metadata-only 恢复收据缺口是否可安全修复。
+
+    旧版在 metadata-only seal 尚未生成 ``client-restoration-report.json``
+    时，会把缺少收据误记为环境污染。只有零执行、九项全复用、没有任何
+    深度扫描／seal 草案，且污染事实只来自该 attempt 的 seal 失败时，才
+    允许进入一次性收据修复；真实环境探针失败或其他 attempt 的污染仍拒绝。
+    """
+
+    records = set(str(item) for item in contamination_records)
+    candidate_id = attempt.get("candidate_id")
+    attempt_id = attempt.get("attempt_id")
+    if (
+        attempt.get("phase") != "candidate"
+        or attempt.get("status") != "awaiting_receipts"
+        or not isinstance(candidate_id, str)
+        or not isinstance(attempt_id, str)
+        or records
+        != {"campaign-marker", f"{candidate_id}:{attempt_id}:seal"}
+        or not isinstance(attempt.get("classification_candidate_reuse_transition"), Mapping)
+    ):
+        return False
+    plan = attempt.get("incremental_plan")
+    results = attempt.get("results")
+    if (
+        not isinstance(plan, Mapping)
+        or any(plan.get(name) for name in ("executed_job_ids", "failed_job_ids", "pending_job_ids"))
+        or not isinstance(results, list)
+        or not results
+        or any(
+            not isinstance(result, Mapping)
+            or result.get("status") != "complete"
+            or result.get("disposition") != "reused"
+            for result in results
+        )
+    ):
+        return False
+    environment = attempt.get("environment")
+    if not isinstance(environment, Mapping):
+        return False
+    expected_environment_fields = {
+        "evidence_root",
+        "before_probe",
+        "after_probe",
+        "restoration_report",
+        "arm64_before_receipt",
+        "arm64_after_receipt",
+    }
+    if (
+        set(environment) != expected_environment_fields
+        or any(environment.get(name) is not None for name in expected_environment_fields - {"evidence_root"})
+    ):
+        return False
+    evidence_root_raw = environment.get("evidence_root")
+    if not isinstance(evidence_root_raw, str) or not Path(evidence_root_raw).is_absolute():
+        return False
+    evidence_root = Path(evidence_root_raw)
+    restoration_report = evidence_root / "receipts" / "client-restoration-report.json"
+    client_after = evidence_root / "environment" / "client-after"
+    if restoration_report.is_symlink() or not client_after.is_dir():
+        return False
+    # deep-verify 与首次 seal 可能已经为这个零执行 attempt 生成了来源清单、
+    # draft 或 preview。只要来源 EvidenceManifest 已显式封存，且恢复收据可重放，
+    # 这些派生文件仍属于同一 metadata-only 链；批准阶段必须能够承接它们，
+    # 不能被旧的污染 marker 再次自锁。来源清单缺失时仍保持旧的 fail-closed。
+    derived_artifacts = (
+        attempt_root / "evidence-manifest.json",
+        attempt_root / "seal-draft.json",
+        attempt_root / "seal-preview.json",
+        attempt_root / "seal-preview-1.json",
+    )
+    if any(path.exists() or path.is_symlink() for path in derived_artifacts):
+        source_manifest = (
+            attempt_root / CLASSIFICATION_CANDIDATE_REUSE_SOURCE_MANIFEST_FILENAME
+        )
+        if source_manifest.is_symlink() or not source_manifest.is_file():
+            return False
+    return True
+
+
+def _metadata_only_repair_receipt_complete(
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+) -> bool:
+    """验证 metadata-only 修复已经生成可重放的 Kilo 后恢复收据。"""
+
+    environment = attempt.get("environment")
+    if not isinstance(environment, Mapping):
+        return False
+    evidence_root_raw = environment.get("evidence_root")
+    if not isinstance(evidence_root_raw, str) or not Path(evidence_root_raw).is_absolute():
+        return False
+    evidence_root = Path(evidence_root_raw)
+    receipt_path = evidence_root / "receipts" / "client-restoration-report.json"
+    probe_path = evidence_root / "environment" / "client-after" / "probe-manifest.json"
+    if (
+        receipt_path.is_symlink()
+        or not receipt_path.is_file()
+        or probe_path.is_symlink()
+        or not probe_path.is_file()
+    ):
+        return False
+    try:
+        replay_receipt(
+            receipt_path,
+            evidence_root,
+            expected_subcommand="restoration",
+        )
+        probe = _read_json(probe_path, "metadata-only Kilo 后探针清单")
+    except (ReceiptFinalizerError, OSError, ValueError, ConfigurationError):
+        return False
+    return (
+        probe.get("phase") == "after"
+        and _is_rfc3339_timestamp(probe.get("observed_at_utc"))
+    )
+
+
+def _reject_contaminated_campaign(
+    campaign_dir: Path,
+    *,
+    allow_metadata_only_repair: bool = False,
+    attempt_root: Path | None = None,
+    attempt: Mapping[str, Any] | None = None,
+) -> None:
+    """任何主污染事实存在时，除只读 status 外禁止继续使用 Campaign。
+
+    ``allow_metadata_only_repair`` 只由候选 seal 的一次性收据修复路径传入，
+    且必须再次通过零执行边界校验；它不放宽普通 run、resume、compare 或
+    production 写入入口。
+    """
 
     records = _campaign_contamination_records(campaign_dir)
     if records:
+        if (
+            allow_metadata_only_repair
+            and attempt_root is not None
+            and attempt is not None
+            and _metadata_only_seal_repair_allowed(
+                campaign_dir,
+                attempt_root,
+                attempt,
+                records,
+            )
+        ):
+            return
         raise ConfigurationError(
             "环境恢复失败已封锁 Campaign；只能只读 status，并在人工恢复后新建 "
             f"Campaign。污染事实={records}"
         )
+
+
+def _campaign_lease_status(
+    campaign_dir: Path,
+    *,
+    campaign_id: str | None = None,
+) -> dict[str, Any]:
+    """生成只读租约摘要；不会续租、接管或修改任何文件。"""
+
+    payload = _read_campaign_lease(campaign_dir)
+    stop_receipts = _read_campaign_lease_stop_receipts(
+        campaign_dir,
+        campaign_id=campaign_id,
+    )
+    if payload is None:
+        return {
+            "present": False,
+            "state": None,
+            "stale": False,
+            "owner_alive": False,
+            "deadline_expired": False,
+            "stop_receipt_count": len(stop_receipts),
+        }
+    stale, reason, owner_alive, deadline_expired = _campaign_lease_staleness(payload)
+    return {
+        "present": True,
+        "state": payload["state"],
+        "phase": payload["phase"],
+        "candidate_id": payload["candidate_id"],
+        "attempt_id": payload["attempt_id"],
+        "owner_pid": payload["owner_pid"],
+        "owner_nonce": payload["owner_nonce"],
+        "started_at_utc": payload["started_at_utc"],
+        "deadline_at_utc": payload["deadline_at_utc"],
+        "last_heartbeat_at_utc": payload["last_heartbeat_at_utc"],
+        "operation": payload["operation"],
+        "stale": stale,
+        "stale_reason": reason or None,
+        "owner_alive": owner_alive,
+        "deadline_expired": deadline_expired,
+        "stop_receipt_count": len(stop_receipts),
+    }
 
 
 def campaign_status(
@@ -9654,8 +18918,18 @@ def campaign_status(
 
     if candidate_id is not None and not SAFE_ID_RE.fullmatch(candidate_id):
         raise ConfigurationError("status --candidate-id 格式非法。")
-    manifest = load_campaign_manifest(campaign_dir)
+    # status 是只读浅检查：阶段和 attempt 会做廉价摘要校验，完整 control
+    # epoch 链由正式写入／seal／VC-6 动作重放；不能让历史链递归扫描阻塞状态查询。
+    manifest = load_campaign_manifest(campaign_dir, _skip_control_validation=True)
     mode, purpose = _campaign_coordinates(manifest)
+    lease_status = _campaign_lease_status(
+        campaign_dir,
+        campaign_id=str(manifest.get("campaign_id", "")),
+    )
+    lease_stop_receipts = _read_campaign_lease_stop_receipts(
+        campaign_dir,
+        campaign_id=str(manifest.get("campaign_id", "")),
+    )
     if mode == "preflight_only":
         forbidden = [
             name
@@ -9696,6 +18970,8 @@ def campaign_status(
             "active_unsealed_attempts": {"official": [], "candidate": []},
             "failed_attempts": {"official": [], "candidate": []},
             "contamination_records": [],
+            "campaign_lease": lease_status,
+            "campaign_lease_stop_receipts": lease_stop_receipts,
             "next_command": (
                 "P0 结果通过后，以 --campaign-mode formal 和同一 "
                 "--campaign-purpose 创建新的持久 Campaign"
@@ -9709,6 +18985,7 @@ def campaign_status(
                 stage,
                 _replay_machine_receipts=False,
                 _shallow=True,
+                _verified_campaign_manifest=manifest,
             ).get(
                 "status", "unknown"
             )
@@ -9740,6 +19017,7 @@ def campaign_status(
             current_candidate_id,
             _replay_machine_receipts=False,
             _shallow=True,
+            _verified_campaign_manifest=manifest,
         )
         if candidate_stage.get("status") != "complete":
             raise ConfigurationError("候选抓包阶段尚未完整封存。")
@@ -9755,6 +19033,7 @@ def campaign_status(
                     current_candidate_id,
                     _replay_machine_receipts=False,
                     _shallow=True,
+                    _verified_campaign_manifest=manifest,
                 )
             except ConfigurationError as error:
                 if "尚未封存" not in str(error):
@@ -9775,23 +19054,52 @@ def campaign_status(
                     _verify_campaign_binding(
                         campaign_dir, value.get("evidence_seal"), "验收证据封印"
                     )
-    contamination_records = _campaign_contamination_records(campaign_dir)
+    contamination_records = _campaign_contamination_records(
+        campaign_dir,
+        _manifest=manifest,
+    )
     contaminated = bool(contamination_records)
     active_unsealed = {
-        "official": _active_unsealed_attempts(campaign_dir, "official"),
-        "candidate": _active_unsealed_attempts(campaign_dir, "candidate"),
+        "official": _active_unsealed_attempts(
+            campaign_dir,
+            "official",
+            _manifest=manifest,
+        ),
+        "candidate": _active_unsealed_attempts(
+            campaign_dir,
+            "candidate",
+            _manifest=manifest,
+        ),
     }
     failed_attempts = {
-        "official": _failed_capture_attempts(campaign_dir, "official"),
-        "candidate": _failed_capture_attempts(campaign_dir, "candidate"),
+        "official": _failed_capture_attempts(
+            campaign_dir,
+            "official",
+            _manifest=manifest,
+        ),
+        "candidate": _failed_capture_attempts(
+            campaign_dir,
+            "candidate",
+            _manifest=manifest,
+        ),
     }
     official_attempt = (
         None
         if stage_status["capture-official"] == "complete"
-        else _latest_attempt_summary(campaign_dir, "official", None)
+        else _latest_attempt_summary(
+            campaign_dir,
+            "official",
+            None,
+            _manifest=manifest,
+        )
     )
     candidate_attempt = (
-        _latest_attempt_summary(campaign_dir, "candidate", candidate_id)
+        _latest_attempt_summary(
+            campaign_dir,
+            "candidate",
+            candidate_id,
+            _manifest=manifest,
+        )
         if candidate_id is not None and candidate_id not in candidate_states
         else None
     )
@@ -9829,7 +19137,13 @@ def campaign_status(
             status = "candidate_capture_interrupted"
             next_command = "人工审计孤儿预约并新建 Campaign；不得自动重跑"
         elif candidate_attempt["status"] == "awaiting_receipts":
-            if candidate_attempt["seal_preview"]:
+            if candidate_attempt.get("failed_job_ids"):
+                status = "candidate_capture_failed"
+                next_command = (
+                    "存在失败 Job，禁止 seal；使用 resume --rerun-failed，"
+                    "产出侧变化须先建立同版本后继"
+                )
+            elif candidate_attempt["seal_preview"]:
                 status = "candidate_awaiting_seal_approval"
                 next_command = (
                     "capture-candidate seal --approve-seal-sha256 <review_sha256>"
@@ -9916,6 +19230,8 @@ def campaign_status(
         "active_unsealed_attempts": active_unsealed,
         "failed_attempts": failed_attempts,
         "contamination_records": contamination_records,
+        "campaign_lease": lease_status,
+        "campaign_lease_stop_receipts": lease_stop_receipts,
         "next_command": next_command,
     }
 
@@ -10081,6 +19397,8 @@ def _campaign_jobs(
         if use_approved_scenario is None
         else use_approved_scenario
     )
+    historical_source_spec_binding: HistoricalSourceSpecBinding | None = None
+    execution_scenario_override: dict[str, Any] | None = None
     if approved_target:
         classification = _load_stage_result(campaign_dir, "classify")
         if classification.get("status") != "complete":
@@ -10098,6 +19416,63 @@ def _campaign_jobs(
         ):
             raise ConfigurationError("目标场景清单摘要不一致。")
         arguments.scenario_manifest = scenario_path
+        selected_scenario = _read_json(scenario_path, "Campaign 批准场景清单")
+        selected_binding = _scenario_source_spec_binding(
+            selected_scenario,
+            label="Campaign 批准场景清单",
+        )
+        source_path_text, _, fragment = selected_binding.source_spec.partition("#")
+        current_source = Path(__file__).resolve().parents[2] / source_path_text
+        if current_source.is_file() and not current_source.is_symlink():
+            current_source_sha256 = source_spec_section_sha256(
+                current_source,
+                fragment,
+            )
+            if selected_binding.source_spec_sha256 != current_source_sha256:
+                # 控制刷新后继会逐字保留前序批准场景。只有 Formal 冻结场景
+                # 与当前受管场景除 source_spec.sha256 外完全相同，且当前批准
+                # 场景仍等于 Formal 冻结字节时，恢复读取才可承接历史摘要。
+                # Job 命令、环境、超时或其他任一字段变化都必须失败关闭。
+                if not _target_scenario_source_spec_only_drift(
+                    campaign_dir,
+                    manifest,
+                ):
+                    raise ConfigurationError(
+                        "Campaign 历史场景除 source_spec.sha256 外发生变化。"
+                    )
+                authorized_binding = (
+                    _successor_uses_reclassified_historical_plan_binding(
+                        campaign_dir,
+                        manifest,
+                        {"scenario_manifest": scenario_reference},
+                    )
+                )
+                frozen_reference = manifest.get("inputs", {}).get(
+                    "target_discovery_scenarios"
+                )
+                if not isinstance(frozen_reference, dict):
+                    raise ConfigurationError("Campaign 缺少 Formal target 场景绑定。")
+                _require_file_binding(
+                    frozen_reference,
+                    "Campaign Formal target 场景",
+                )
+                frozen_scenario = _read_json(
+                    _campaign_file(campaign_dir, frozen_reference["path"]),
+                    "Campaign Formal target 场景",
+                )
+                if authorized_binding != selected_binding:
+                    raise ConfigurationError(
+                        "Campaign 批准历史场景未承接受控 Formal 摘要。"
+                    )
+                execution_scenario_override = (
+                    _approved_scenario_with_formal_execution_contract(
+                        campaign_dir,
+                        manifest,
+                        approved=selected_scenario,
+                        formal=frozen_scenario,
+                    )
+                )
+                historical_source_spec_binding = selected_binding
     context = _job_context(arguments)
     uses_frozen_target_scenario = (
         manifest.get("inputs", {}).get("target_discovery_scenarios") is not None
@@ -10111,6 +19486,8 @@ def _campaign_jobs(
             else manifest["baseline_version"]
         ),
         require_bindings=True,
+        historical_source_spec_binding=historical_source_spec_binding,
+        execution_scenario_override=execution_scenario_override,
     )
     if not approved_target:
         jobs.extend(load_extra_jobs(arguments.extra_jobs, context))
@@ -10128,6 +19505,199 @@ def _campaign_jobs(
     return jobs
 
 
+def _official_epoch_allows_classification_tool_drift(
+    manifest: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    expected_tool: Mapping[str, Any],
+    effective_epoch: Mapping[str, Any],
+    *,
+    operation: str | None,
+) -> bool:
+    """仅为已重放的 official epoch 放行分类期评估／控制面修复。"""
+
+    source = effective_epoch.get("source")
+    if operation != "classify" or not isinstance(source, Mapping):
+        return False
+    if not _is_official_sealed_control_epoch_source(source):
+        return False
+    drift = _tool_identity_drift(current_tool, expected_tool)
+    changed_paths = set(drift.get("production", [])) | set(
+        drift.get("evaluation", [])
+    )
+    if not changed_paths:
+        return False
+    disallowed = changed_paths - set(_SEALED_STAGE_RECOVERY_ALLOWED_FILES)
+    if disallowed:
+        raise ConfigurationError(
+            "official epoch 分类期工具变化超出已批准的评估／控制面闭集："
+            + "、".join(sorted(disallowed))
+        )
+    frozen = effective_epoch.get("invariants")
+    if not isinstance(frozen, Mapping):
+        raise ConfigurationError("official epoch 缺少分类期冻结边界。")
+    current = _control_epoch_invariants(
+        manifest,
+        current_tool,
+        required_active_phase="VC-2",
+    )
+    invariant_fields = {
+        "tool_production_sha256",
+        "compose_sha256",
+        "required_active_phase",
+    }
+    if any(frozen.get(field) != current.get(field) for field in invariant_fields):
+        raise ConfigurationError(
+            "official epoch 分类期变化越过产出、compose 或 VC-2 阶段边界。"
+        )
+    return True
+
+
+def _verify_stopped_classification_draft_approval(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    effective_epoch: Mapping[str, Any],
+) -> dict[str, Any]:
+    """只读验证阶段截止前已写入的唯一分类草案。"""
+
+    source = effective_epoch.get("source")
+    if (
+        not isinstance(source, Mapping)
+        or not _is_official_sealed_control_epoch_source(source)
+        or not isinstance(effective_epoch.get("runtime_repair"), Mapping)
+        or effective_epoch.get("boundary") != _control_epoch_zero_boundary()
+    ):
+        raise ConfigurationError(
+            "离线分类批准要求唯一 official epoch、runtime-repair 和全零边界。"
+        )
+
+    classification_root = campaign_dir / "classification"
+    draft_root = classification_root / "draft"
+    result_path = classification_root / "result.json"
+    approved_root = classification_root / "approved"
+    if result_path.exists() or result_path.is_symlink():
+        raise ConfigurationError("离线分类批准前已存在分类结果。")
+    if approved_root.exists() or approved_root.is_symlink():
+        raise ConfigurationError("离线分类批准前已存在批准目录。")
+    if draft_root.is_symlink() or not draft_root.is_dir():
+        raise ConfigurationError("离线分类批准缺少可信的既有 draft。")
+    revisions = list(draft_root.iterdir())
+    if (
+        len(revisions) != 1
+        or revisions[0].is_symlink()
+        or not revisions[0].is_dir()
+    ):
+        raise ConfigurationError("离线分类批准只允许唯一不可覆盖 draft。")
+    draft = revisions[0]
+    expected_files = {
+        "target-rules.json",
+        "rule-migration.json",
+        "scenarios.json",
+        "profile.json",
+        "assertion-profile.json",
+        "draft.json",
+    }
+    actual_files = {path.name for path in draft.iterdir()}
+    if actual_files != expected_files or any(
+        path.is_symlink() or not path.is_file() for path in draft.iterdir()
+    ):
+        raise ConfigurationError("离线分类 draft 文件闭集不完整或含不可信路径。")
+    receipt = _read_json(draft / "draft.json", "离线分类 draft 收据")
+    revision = draft.name
+    revision_match = re.fullmatch(
+        r"(?P<second>\d{8}T\d{6}Z)-(?P<nanosecond>\d{9})",
+        revision,
+    )
+    if (
+        revision_match is None
+        or receipt.get("status") != "draft"
+        or receipt.get("revision") != revision
+        or receipt.get("path") != str(draft)
+    ):
+        raise ConfigurationError("离线分类 draft 身份或时间坐标非法。")
+    try:
+        draft_created_at = datetime.strptime(
+            revision_match.group("second"),
+            "%Y%m%dT%H%M%SZ",
+        ).replace(tzinfo=timezone.utc) + timedelta(
+            microseconds=int(revision_match.group("nanosecond")) // 1_000
+        )
+    except ValueError as error:
+        raise ConfigurationError("离线分类 draft 时间坐标非法。") from error
+
+    candidates_root = campaign_dir / "candidates"
+    if candidates_root.is_symlink() or (
+        candidates_root.exists()
+        and (
+            not candidates_root.is_dir()
+            or any(candidates_root.iterdir())
+        )
+    ):
+        raise ConfigurationError("离线分类批准前已存在 Candidate。")
+
+    controls = effective_epoch.get("successor_controls")
+    timing = controls.get("upgrade_timing") if isinstance(controls, Mapping) else None
+    if not isinstance(timing, Mapping):
+        raise ConfigurationError("离线分类批准缺少 runtime-repair Ledger。")
+    ledger_root, frozen_checkpoint = _sealed_stage_timing_checkpoint(
+        timing,
+        label="离线分类批准",
+    )
+    frozen = frozen_checkpoint.get("summary")
+    try:
+        current = codex_upgrade_timing_ledger.inspect_ledger(ledger_root)
+    except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
+        raise ConfigurationError(f"离线分类批准无法重放 Ledger：{error}") from error
+    identity = {
+        "baseline_version": manifest.get("baseline_version"),
+        "target_version": manifest.get("target_version"),
+        "campaign_purpose": manifest.get("campaign_purpose"),
+    }
+    if (
+        not isinstance(frozen, Mapping)
+        or frozen.get("status") != "active"
+        or frozen.get("active_phase") != "VC-2"
+        or frozen.get("total_live_request_count") != 0
+        or current.get("status") != "stop_required"
+        or current.get("active_phase") != "VC-2"
+        or current.get("total_live_request_count") != 0
+        or any(current.get(field) != value for field, value in identity.items())
+    ):
+        raise ConfigurationError(
+            "离线分类批准要求仅因 VC-2 阶段截止的 stop_required Ledger，且 live=0。"
+        )
+    if (
+        current.get("head_sequence") != frozen.get("head_sequence")
+        or current.get("head_sha256") != frozen.get("head_sha256")
+        or current.get("stage_deadline_at_utc")
+        != frozen.get("stage_deadline_at_utc")
+        or current.get("total_deadline_at_utc")
+        != frozen.get("total_deadline_at_utc")
+    ):
+        raise ConfigurationError("离线分类批准期间 Ledger 新增事件或截止边界漂移。")
+    stage_deadline = _rfc3339_datetime(
+        str(current.get("stage_deadline_at_utc", "")),
+        "离线分类批准 VC-2 截止",
+    )
+    total_deadline = _rfc3339_datetime(
+        str(current.get("total_deadline_at_utc", "")),
+        "离线分类批准总截止",
+    )
+    now = datetime.now(timezone.utc)
+    if now < stage_deadline or now >= total_deadline:
+        raise ConfigurationError("离线分类批准不在阶段到期后、总截止前的窗口内。")
+    if draft_created_at >= stage_deadline:
+        raise ConfigurationError("离线分类 draft 不是在 VC-2 截止前生成。")
+    return {
+        "draft_revision": revision,
+        "draft_created_at_utc": draft_created_at.isoformat(),
+        "stage_deadline_at_utc": current["stage_deadline_at_utc"],
+        "total_deadline_at_utc": current["total_deadline_at_utc"],
+        "ledger_head_sha256": current["head_sha256"],
+        "live_request_count": 0,
+        "boundary": _control_epoch_zero_boundary(),
+    }
+
+
 def _verify_plan_identity(
     campaign_dir: Path,
     manifest: dict[str, Any],
@@ -10137,7 +19707,8 @@ def _verify_plan_identity(
     attempt: Mapping[str, Any] | None = None,
     deadline: incremental_recovery.WallClockDeadline | None = None,
     heartbeat: Any | None = None,
-) -> dict[str, str] | None:
+    allow_stopped_classification_draft_approval: bool = False,
+) -> dict[str, Any] | None:
     # 先重放原 Campaign 的冻结控制事实，但暂不要求旧 Ledger 仍 active。
     # 工具缺陷恢复时旧 Ledger 必须已经 stop_the_line，批准后的 transition
     # 会另行绑定并重放新的 active 控制链；其他路径仍在下方要求旧控制 active。
@@ -10174,6 +19745,81 @@ def _verify_plan_identity(
     if deadline is not None:
         deadline.check("plan-identity:tool-summary")
     expected_tool = manifest["tool_identity"]
+    if allow_stopped_classification_draft_approval:
+        if operation != "classify":
+            raise ConfigurationError("离线 draft 批准仅允许 classify 操作。")
+        effective_epoch = _load_control_epoch_receipt(campaign_dir, manifest)
+        if isinstance(effective_epoch, Mapping):
+            controls = effective_epoch.get("successor_controls")
+            timing = (
+                controls.get("upgrade_timing")
+                if isinstance(controls, Mapping)
+                else None
+            )
+            if isinstance(timing, Mapping):
+                ledger_root, _ = _sealed_stage_timing_checkpoint(
+                    timing,
+                    label="分类批准当前状态",
+                )
+                try:
+                    current_ledger = codex_upgrade_timing_ledger.inspect_ledger(
+                        ledger_root
+                    )
+                except (
+                    OSError,
+                    codex_upgrade_timing_ledger.TimingLedgerError,
+                ) as error:
+                    raise ConfigurationError(
+                        f"分类批准无法检查当前 Ledger：{error}"
+                    ) from error
+                if current_ledger.get("status") == "stop_required":
+                    official_epoch_classification_drift = (
+                        _official_epoch_allows_classification_tool_drift(
+                            manifest,
+                            current_tool,
+                            expected_tool,
+                            effective_epoch,
+                            operation=operation,
+                        )
+                    )
+                    if (
+                        current_tool.get("files_sha256")
+                        != effective_epoch.get("invariants", {}).get(
+                            "tool_files_sha256"
+                        )
+                        and not official_epoch_classification_drift
+                    ):
+                        raise ConfigurationError(
+                            "离线 draft 批准未绑定唯一 official epoch 的当前工具身份。"
+                        )
+                    authorization = (
+                        _verify_stopped_classification_draft_approval(
+                            campaign_dir,
+                            manifest,
+                            effective_epoch,
+                        )
+                    )
+                    if official_epoch_classification_drift:
+                        changed_paths = sorted(
+                            path
+                            for paths in _tool_component_drift(
+                                expected_tool,
+                                current_tool,
+                            ).get("changed_paths", {}).values()
+                            for path in paths
+                        )
+                        _record_evaluation_side_drift(
+                            campaign_dir,
+                            current_tool,
+                            expected_tool,
+                            {"evaluation": changed_paths},
+                        )
+                    if deadline is not None:
+                        deadline.check("plan-identity:complete")
+                    return {
+                        "kind": "stopped_classification_draft_approval",
+                        "authorization": authorization,
+                    }
     if current_tool["files_sha256"] == expected_tool["files_sha256"]:
         _verify_control_receipts(campaign_dir, manifest, require_active=True)
         if deadline is not None:
@@ -10181,6 +19827,119 @@ def _verify_plan_identity(
         return None
     component_drift = _tool_component_drift(expected_tool, current_tool)
     changed_components = set(component_drift.get("changed_components", []))
+    effective_epoch = _load_control_epoch_receipt(campaign_dir, manifest)
+    official_epoch_classification_drift = (
+        isinstance(effective_epoch, Mapping)
+        and _official_epoch_allows_classification_tool_drift(
+            manifest,
+            current_tool,
+            expected_tool,
+            effective_epoch,
+            operation=operation,
+        )
+    )
+    if (
+        effective_epoch is not None
+        and (
+            current_tool.get("files_sha256")
+            == effective_epoch.get("invariants", {}).get("tool_files_sha256")
+            or official_epoch_classification_drift
+        )
+    ):
+        source = effective_epoch.get("source")
+        if not isinstance(source, Mapping):
+            raise ConfigurationError("control epoch 缺少可验证的源闭集。")
+        source_candidate_id = str(source.get("candidate_id", ""))
+        source_attempt_id = str(source.get("attempt_id", ""))
+        if operation == "capture-run":
+            predecessor = manifest.get("predecessor")
+            if (
+                not isinstance(predecessor, Mapping)
+                or not isinstance(attempt, Mapping)
+                or attempt_root is None
+                or attempt.get("phase") != "candidate"
+                or attempt.get("candidate_id") != source_candidate_id
+                or attempt.get("attempt_id") != source_attempt_id
+                or attempt.get("attempt_digest") != source.get("attempt_digest")
+            ):
+                raise ConfigurationError(
+                    "control epoch 恢复执行未绑定原失败 Candidate／attempt。"
+                )
+            expected_source_root = _capture_attempt_path(
+                _control_epoch_source_campaign_dir(campaign_dir, manifest),
+                "candidate",
+                source_candidate_id,
+                source_attempt_id,
+            )
+            try:
+                supplied_source_root = attempt_root.resolve(strict=True)
+            except (OSError, RuntimeError) as error:
+                raise ConfigurationError("control epoch 源 attempt 路径不可信。") from error
+            if supplied_source_root != expected_source_root.resolve(strict=True):
+                raise ConfigurationError("control epoch 源 attempt 路径发生漂移。")
+        elif attempt is not None or attempt_root is not None:
+            if (
+                operation
+                not in {
+                    "capture-candidate-seal",
+                    "compare",
+                    "accept",
+                    "deep-verify",
+                }
+                or not isinstance(attempt, Mapping)
+                or attempt_root is None
+                or attempt.get("campaign_id") != manifest.get("campaign_id")
+                or attempt.get("phase") != "candidate"
+                or attempt.get("candidate_id") != source_candidate_id
+            ):
+                raise ConfigurationError("control epoch 不授权当前阶段或 attempt。")
+            plan = attempt.get("incremental_plan")
+            if (
+                not isinstance(plan, Mapping)
+                or set(plan.get("planned_job_ids", []))
+                != set(source.get("planned_job_ids", []))
+                or set(plan.get("reused_job_ids", []))
+                != set(source.get("reused_job_ids", []))
+                or set(plan.get("executed_job_ids", []))
+                != set(source.get("execute_job_ids", []))
+            ):
+                raise ConfigurationError("control epoch 后继 attempt 的执行闭集发生漂移。")
+        elif operation not in {None, "classify"}:
+            raise ConfigurationError("control epoch 不授权无 attempt 的当前操作。")
+        _verify_control_receipts(campaign_dir, manifest, require_active=True)
+        if official_epoch_classification_drift:
+            changed_paths = sorted(
+                path
+                for paths in component_drift.get("changed_paths", {}).values()
+                for path in paths
+            )
+            _record_evaluation_side_drift(
+                campaign_dir,
+                current_tool,
+                expected_tool,
+                {"evaluation": changed_paths},
+            )
+        if deadline is not None:
+            deadline.check("plan-identity:complete")
+        epoch_path = _control_epoch_path(campaign_dir)
+        return {
+            "kind": "control_epoch",
+            "changed_components": sorted(changed_components),
+            "changed_paths": component_drift.get("changed_paths", {}),
+            "affected_job_ids": list(source.get("execute_job_ids", [])),
+            "control_epoch": {
+                "path": epoch_path.relative_to(campaign_dir).as_posix(),
+                "sha256": file_sha256(epoch_path),
+                "receipt_sha256": effective_epoch.get("receipt_sha256"),
+                "runtime_repair": effective_epoch.get("runtime_repair"),
+            },
+            "from_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(expected_tool)
+            ),
+            "to_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(current_tool)
+            ),
+        }
     # 失败 attempt 或新 attempt 上显式绑定的 transition 是唯一允许绕过旧
     # active Ledger 的路径。transition 自身会重放新 Ledger、ARM64 P0 和
     # 完整 Job 演练；这里不能再要求已经 stop_the_line 的旧 Ledger active。
@@ -10188,6 +19947,11 @@ def _verify_plan_identity(
         operation is not None
         and isinstance(attempt, Mapping)
         and attempt_root is not None
+        # 跨 Campaign 的 v9 abandoned attempt 只是增量来源，不是当前
+        # Campaign 的 evaluation-transition 源；它必须走下面的低风险
+        # capture-run 分支。否则会错误要求前序 attempt 存在当前工具的
+        # transition，并在 reservation 前永久阻断合法恢复。
+        and attempt.get("campaign_id") == manifest.get("campaign_id")
         and (
             attempt.get("evaluation_transition") is not None
             or (
@@ -10321,6 +20085,100 @@ def _verify_plan_identity(
             "无法分级判定，只能整轮重建）。"
         )
     drift = _tool_identity_drift(current_tool, expected_tool)
+    # 候选已经完成全部 Job 且仅等待 Kilo／seal 时，控制面、评估器和编排器的
+    # 修复不会改变既有请求字节。新流程禁止再写 evaluation-transition；在这个
+    # 明确的 metadata-only 边界内只记录评估侧漂移，并继续执行 seal。只要存在
+    # 任何执行、失败、待执行 Job，或已经开始 evidence manifest／seal，就必须
+    # 回到严格 transition 路径，避免把真正的产出变化伪装成廉价修复。
+    metadata_only_seal_repair = False
+    derived_artifacts = (
+        attempt_root / "evidence-manifest.json"
+        if attempt_root is not None
+        else None,
+        attempt_root / "seal-draft.json"
+        if attempt_root is not None
+        else None,
+        attempt_root / "seal-preview.json"
+        if attempt_root is not None
+        else None,
+        attempt_root / "seal-preview-1.json"
+        if attempt_root is not None
+        else None,
+    )
+    source_manifest = (
+        attempt_root / CLASSIFICATION_CANDIDATE_REUSE_SOURCE_MANIFEST_FILENAME
+        if attempt_root is not None
+        else None
+    )
+    metadata_only_derived_artifacts_allowed = (
+        not any(
+            path is not None and (path.exists() or path.is_symlink())
+            for path in derived_artifacts
+        )
+        or (
+            source_manifest is not None
+            and not source_manifest.is_symlink()
+            and source_manifest.is_file()
+        )
+    )
+    if (
+        operation in {"capture-candidate-seal", "compare", "accept", "deep-verify"}
+        and isinstance(attempt, Mapping)
+        and attempt_root is not None
+        and attempt.get("campaign_id") == manifest.get("campaign_id")
+        and attempt.get("phase") == "candidate"
+        and attempt.get("status") == "awaiting_receipts"
+        and attempt.get("evaluation_transition") is None
+        and changed_components
+        and changed_components.issubset({"control", "orchestrator", "evaluator"})
+    ):
+        plan = attempt.get("incremental_plan")
+        results = attempt.get("results")
+        metadata_only_seal_repair = (
+            isinstance(plan, Mapping)
+            and not any(plan.get(field) for field in ("executed_job_ids", "failed_job_ids", "pending_job_ids"))
+            and isinstance(results, list)
+            and bool(results)
+            and all(
+                isinstance(result, Mapping)
+                and result.get("status") == "complete"
+                and result.get("disposition") == "reused"
+                for result in results
+            )
+        and metadata_only_derived_artifacts_allowed
+        )
+    if metadata_only_seal_repair:
+        changed_paths = sorted(
+            path
+            for paths in component_drift.get("changed_paths", {}).values()
+            for path in paths
+        )
+        _verify_control_receipts(
+            campaign_dir,
+            manifest,
+            require_active=True,
+            allow_stopped_metadata_only=True,
+        )
+        _record_evaluation_side_drift(
+            campaign_dir,
+            current_tool,
+            expected_tool,
+            {"evaluation": changed_paths},
+        )
+        if deadline is not None:
+            deadline.check("plan-identity:metadata-only-seal-repair")
+        return {
+            "kind": "metadata_only_seal_repair",
+            "changed_components": sorted(changed_components),
+            "changed_paths": component_drift.get("changed_paths", {}),
+            "affected_job_ids": [],
+            "from_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(expected_tool)
+            ),
+            "to_component_identity_sha256": _fingerprint(
+                _tool_component_bundle(current_tool)
+            ),
+        }
     # status、plan 后的廉价阶段校验也必须能观察纯编排器／评估器漂移；
     # 这里不要求旧 Ledger 继续 active，也不触碰证据正文。带 attempt 的
     # seal／deep-verify 仍走上面的 transition 分支，保留阶段边界。
@@ -10474,12 +20332,13 @@ def _record_evaluation_side_drift(
         raise
 
 
-_PHASE_EVALUATION_HYBRID_FILES = frozenset({"codex_upgrade.py"})
 _PHASE_EVALUATION_OPERATIONS = {
     "official": ("capture-official-seal", "deep-verify"),
     "candidate": ("capture-candidate-seal", "compare", "accept", "deep-verify"),
 }
-MAX_PHASE_EVALUATION_TRANSITIONS = 3
+STANDARD_PHASE_EVALUATION_TRANSITIONS = 3
+TERMINAL_PHASE_EVALUATION_TRANSITION = 4
+MAX_PHASE_EVALUATION_TRANSITIONS = TERMINAL_PHASE_EVALUATION_TRANSITION
 _PHASE_EVALUATION_TRANSITION_FILE_RE = re.compile(
     r"^evaluation-transition(?:-(?P<index>[0-9]{2}))?\.json$"
 )
@@ -10526,7 +20385,7 @@ def _phase_evaluation_transition_index(
     *,
     allocate: bool,
 ) -> int:
-    """选择当前工具的只追加 transition 槽位，并把总数限制为三次。"""
+    """选择当前工具的只追加 transition 槽位；第 4 槽另受终端预检约束。"""
 
     current_sha256 = str(current_tool.get("files_sha256", ""))
     if not SHA256_RE.fullmatch(current_sha256):
@@ -10571,7 +20430,168 @@ def _phase_evaluation_transition_index(
     for index in range(1, MAX_PHASE_EVALUATION_TRANSITIONS + 1):
         if index not in occupied:
             return index
-    raise ConfigurationError("评估 transition 已达到三次上限，必须永久停线。")
+    raise ConfigurationError("评估 transition 已使用终端第 4 槽，必须永久停线。")
+
+
+def _legacy_vc0_phase_recovery_scope(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str | None,
+    candidate_id: str | None,
+    attempt_root: Path | None,
+    attempt: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """验证历史 Formal 已运行 Candidate、但 Ledger 遗留在 VC-0 的窄例外。"""
+
+    if (
+        phase != "candidate"
+        or not isinstance(candidate_id, str)
+        or not SAFE_ID_RE.fullmatch(candidate_id)
+        or not isinstance(attempt_root, Path)
+        or not isinstance(attempt, Mapping)
+        or attempt.get("status") != "failed"
+        or attempt.get("phase") != "candidate"
+        or attempt.get("candidate_id") != candidate_id
+        or attempt.get("campaign_id") != manifest.get("campaign_id")
+        or attempt.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+    ):
+        return None
+    try:
+        resolved_attempt = attempt_root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    matching_attempts = [
+        root
+        for current_phase, current_candidate_id, root in _campaign_attempt_roots(
+            campaign_dir
+        )
+        if current_phase == "candidate" and current_candidate_id == candidate_id
+    ]
+    if len(matching_attempts) != 1:
+        return None
+    try:
+        if matching_attempts[0].resolve(strict=True) != resolved_attempt:
+            return None
+    except (OSError, RuntimeError):
+        return None
+    _, stage_path = _stage_path(campaign_dir, "candidate", candidate_id)
+    if stage_path.exists() or stage_path.is_symlink():
+        return None
+    try:
+        scope = _phase_evaluation_recovery_scope(
+            campaign_dir,
+            manifest,
+            phase="candidate",
+            candidate_id=candidate_id,
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+    except ConfigurationError:
+        return None
+    if not scope.get("execute_job_ids"):
+        return None
+    return scope
+
+
+def _final_execution_epoch_phase_recovery_context(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str | None,
+    candidate_id: str | None,
+    attempt_root: Path | None,
+    attempt: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """验证最终 execution epoch 后唯一的失败 producer 恢复边界。"""
+
+    if (
+        phase != "candidate"
+        or not isinstance(candidate_id, str)
+        or not isinstance(attempt_root, Path)
+        or not isinstance(attempt, Mapping)
+        or attempt.get("status") != "failed"
+        or attempt.get("phase") != "candidate"
+        or attempt.get("candidate_id") != candidate_id
+        or attempt.get("campaign_id") != manifest.get("campaign_id")
+        or attempt.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+    ):
+        return None
+
+    epoch = _load_control_epoch_receipt(campaign_dir, manifest)
+    if not isinstance(epoch, Mapping) or epoch.get("epoch_index") != 2:
+        return None
+    authorization = epoch.get("execution_authorization")
+    scope = (
+        authorization.get("scope")
+        if isinstance(authorization, Mapping)
+        else None
+    )
+    controls = epoch.get("successor_controls")
+    timing = controls.get("upgrade_timing") if isinstance(controls, Mapping) else None
+    arm64 = controls.get("arm64_environment") if isinstance(controls, Mapping) else None
+    plan = attempt.get("incremental_plan")
+    if (
+        epoch.get("status") != "active"
+        or not isinstance(authorization, Mapping)
+        or authorization.get("schema_version")
+        != CONTROL_EPOCH_FINAL_EXECUTION_SCHEMA
+        or authorization.get("mode") != CONTROL_EPOCH_FINAL_EXECUTION_MODE
+        or not isinstance(scope, Mapping)
+        or not isinstance(timing, Mapping)
+        or not isinstance(arm64, Mapping)
+        or not isinstance(plan, Mapping)
+    ):
+        raise ConfigurationError("最终 execution epoch 的 producer 恢复授权不完整。")
+
+    expected_execute = sorted(str(value) for value in scope.get("execute_job_ids", []))
+    expected_reused = sorted(str(value) for value in scope.get("reused_job_ids", []))
+    expected_planned = sorted(str(value) for value in scope.get("planned_job_ids", []))
+    if (
+        expected_execute
+        != ["candidate-compact-mitm", "candidate-core-mitm"]
+        or len(expected_reused) != 7
+        or len(expected_planned) != 9
+        or sorted(str(value) for value in plan.get("planned_job_ids", []))
+        != expected_planned
+        or sorted(str(value) for value in plan.get("executed_job_ids", []))
+        != expected_execute
+        or sorted(str(value) for value in plan.get("failed_job_ids", []))
+        != expected_execute
+        or list(plan.get("pending_job_ids", []))
+        or sorted(str(value) for value in plan.get("reused_job_ids", []))
+        != expected_reused
+    ):
+        raise ConfigurationError(
+            "最终 execution epoch 的失败 attempt 不是固定 2 执行／7 复用闭集。"
+        )
+    if (
+        not _is_rfc3339_timestamp(epoch.get("created_at_utc"))
+        or not _is_rfc3339_timestamp(attempt.get("started_at_utc"))
+        or _rfc3339_datetime(attempt.get("started_at_utc"), "失败 attempt 开始时间")
+        < _rfc3339_datetime(epoch.get("created_at_utc"), "最终 epoch 创建时间")
+    ):
+        raise ConfigurationError("失败 attempt 不是由最终 execution epoch 创建。")
+
+    epoch_path = _control_epoch_path(campaign_dir, 2)
+    return {
+        "predecessor_timing": dict(timing),
+        "predecessor_arm64": dict(arm64),
+        "marker": {
+            "mode": "single-failed-producer-recovery",
+            "epoch_index": 2,
+            "epoch": {
+                "path": epoch_path.relative_to(campaign_dir).as_posix(),
+                "sha256": file_sha256(epoch_path),
+            },
+            "source_attempt_id": str(attempt.get("attempt_id")),
+            "source_attempt_digest": str(attempt.get("attempt_digest")),
+            "execute_job_ids": expected_execute,
+            "reused_job_ids": expected_reused,
+        },
+    }
 
 
 def _phase_recovery_controls_from_arguments(
@@ -10579,6 +20599,11 @@ def _phase_recovery_controls_from_arguments(
     campaign_dir: Path,
     manifest: Mapping[str, Any],
     current_tool: Mapping[str, Any],
+    *,
+    phase: str | None = None,
+    candidate_id: str | None = None,
+    attempt_root: Path | None = None,
+    attempt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """绑定旧停线事实与当前工具的新计时、P0 和完整演练收据。"""
 
@@ -10606,6 +20631,17 @@ def _phase_recovery_controls_from_arguments(
         predecessor_arm, Mapping
     ):
         raise ConfigurationError("原 Formal Campaign 的计时或 ARM64 控制收据不完整。")
+    final_execution_context = _final_execution_epoch_phase_recovery_context(
+        campaign_dir,
+        manifest,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_root=attempt_root,
+        attempt=attempt,
+    )
+    if final_execution_context is not None:
+        predecessor_timing = final_execution_context["predecessor_timing"]
+        predecessor_arm = final_execution_context["predecessor_arm64"]
 
     stop_root = values["predecessor_stop_ledger_dir"]
     stop_receipt = values["predecessor_stop_receipt"]
@@ -10623,11 +20659,27 @@ def _phase_recovery_controls_from_arguments(
     except (OSError, codex_upgrade_timing_ledger.TimingLedgerError) as error:
         raise ConfigurationError(f"原 Campaign 停线 checkpoint 未通过：{error}") from error
     stop_summary = stop_checkpoint.get("summary")
+    stop_phase = stop_summary.get("active_phase") if isinstance(
+        stop_summary, Mapping
+    ) else None
+    legacy_vc0_scope: dict[str, Any] | None = None
+    if stop_phase == codex_upgrade_timing_ledger.PHASE_ORDER[0]:
+        legacy_vc0_scope = _legacy_vc0_phase_recovery_scope(
+            campaign_dir,
+            manifest,
+            phase=phase,
+            candidate_id=candidate_id,
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
     if (
         not isinstance(stop_summary, Mapping)
         or stop_summary.get("status") != "stopped"
-        or stop_summary.get("active_phase")
-        not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+        or (
+            stop_summary.get("active_phase")
+            not in codex_upgrade_timing_ledger.PHASE_ORDER[1:]
+            and legacy_vc0_scope is None
+        )
         or any(
             stop_summary.get(field) != manifest.get(field)
             for field in (
@@ -10640,7 +20692,10 @@ def _phase_recovery_controls_from_arguments(
         or stop_summary.get("evidence_decision")
         != predecessor_timing.get("evidence_decision")
     ):
-        raise ConfigurationError("停线 checkpoint 不是原 Campaign 在 VC-1～VC-6 的事实。")
+        raise ConfigurationError(
+            "停线 checkpoint 不是原 Campaign 在 VC-1～VC-6 的事实，"
+            "也不满足历史 Formal Candidate 的 VC-0 兼容恢复条件。"
+        )
     resolved_stop_root = stop_root.resolve(strict=True)
     try:
         frozen_ledger_root = Path(
@@ -10650,6 +20705,22 @@ def _phase_recovery_controls_from_arguments(
         raise ConfigurationError("原 Campaign 的 Ledger 路径不可信。") from error
     if frozen_ledger_root != resolved_stop_root:
         raise ConfigurationError("停线 checkpoint 与原 Campaign 绑定的 Ledger 不一致。")
+    if final_execution_context is not None:
+        try:
+            current_stop = codex_upgrade_timing_ledger.inspect_ledger(
+                resolved_stop_root
+            )
+        except (
+            OSError,
+            codex_upgrade_timing_ledger.TimingLedgerError,
+        ) as error:
+            raise ConfigurationError("最终 epoch 停线 Ledger 无法读取。") from error
+        if (
+            current_stop.get("status") != "stopped"
+            or current_stop.get("head_sequence") != stop_summary.get("head_sequence")
+            or current_stop.get("head_sha256") != stop_summary.get("head_sha256")
+        ):
+            raise ConfigurationError("最终 epoch 停线 checkpoint 不是当前终态 head。")
 
     recovery_arguments = argparse.Namespace(
         campaign_mode="preflight_only",
@@ -10674,6 +20745,19 @@ def _phase_recovery_controls_from_arguments(
         raise ConfigurationError(
             "恢复 Ledger 必须使用新的目录和 upgrade-id，并保留证据复用决定。"
         )
+    if final_execution_context is not None:
+        recovery_ledger_root = Path(str(recovery_timing["ledger_dir"]))
+        recovery_plan = _read_json(
+            recovery_ledger_root / "ledger.json",
+            "最终 epoch producer 恢复 Ledger",
+        )
+        if (
+            recovery_plan.get("total_budget_minutes") != 180
+            or stop_summary.get("total_live_request_count") != 0
+        ):
+            raise ConfigurationError(
+                "最终 epoch producer 恢复必须使用 180 分钟 Ledger，且前序 live 计数为 0。"
+            )
 
     current_tool_sha256 = str(current_tool.get("files_sha256", ""))
     if not SHA256_RE.fullmatch(current_tool_sha256):
@@ -10713,10 +20797,11 @@ def _phase_recovery_controls_from_arguments(
         rehearsal_root,
         rehearsal_receipt,
         expected_rehearsal_contract,
+        allow_incremental_noop=True,
     )
 
     stop_file = resolved_stop_root / stop_relative
-    return {
+    result = {
         "schema_version": TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA,
         "predecessor": {
             "upgrade_timing": dict(predecessor_timing),
@@ -10742,6 +20827,18 @@ def _phase_recovery_controls_from_arguments(
         "recovery": recovery_controls,
         "current_tool_files_sha256": current_tool_sha256,
     }
+    if legacy_vc0_scope is not None:
+        result["legacy_vc0_recovery"] = {
+            "mode": "formal_candidate_attempt",
+            "source_attempt_id": legacy_vc0_scope["source_attempt_id"],
+            "source_attempt_digest": legacy_vc0_scope["source_attempt_digest"],
+            "execute_job_ids": list(legacy_vc0_scope["execute_job_ids"]),
+        }
+    if final_execution_context is not None:
+        result["final_execution_epoch_recovery"] = final_execution_context[
+            "marker"
+        ]
+    return result
 
 
 def _control_path_from_recovery_binding(
@@ -10772,16 +20869,35 @@ def _validate_phase_recovery_controls(
     manifest: Mapping[str, Any],
     payload: Any,
     current_tool: Mapping[str, Any],
+    *,
+    phase: str | None = None,
+    candidate_id: str | None = None,
+    attempt_root: Path | None = None,
+    attempt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """从 transition 内的路径重建恢复控制链并要求逐字段一致。"""
 
-    if not isinstance(payload, Mapping) or set(payload) != {
+    if not isinstance(payload, Mapping) or set(payload) not in ({
         "schema_version",
         "predecessor",
         "stop_checkpoint",
         "recovery",
         "current_tool_files_sha256",
-    }:
+    }, {
+        "schema_version",
+        "predecessor",
+        "stop_checkpoint",
+        "recovery",
+        "current_tool_files_sha256",
+        "legacy_vc0_recovery",
+    }, {
+        "schema_version",
+        "predecessor",
+        "stop_checkpoint",
+        "recovery",
+        "current_tool_files_sha256",
+        "final_execution_epoch_recovery",
+    }):
         raise ConfigurationError("评估 transition 的恢复控制结构非法。")
     if payload.get("schema_version") != TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA:
         raise ConfigurationError("评估 transition 的恢复控制版本不受支持。")
@@ -10824,10 +20940,177 @@ def _validate_phase_recovery_controls(
         campaign_dir,
         manifest,
         current_tool,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_root=attempt_root,
+        attempt=attempt,
     )
     if dict(payload) != expected:
         raise ConfigurationError("评估 transition 的恢复控制身份或摘要漂移。")
     return expected
+
+
+def _validate_frozen_phase_recovery_controls(
+    payload: Any,
+    *,
+    attempt: Mapping[str, Any],
+    transition: Mapping[str, Any],
+    recovery_scope: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """只校验历史恢复控制的冻结结构，不重放其当前运行状态。"""
+
+    allowed_fields = (
+        {
+            "schema_version",
+            "predecessor",
+            "stop_checkpoint",
+            "recovery",
+            "current_tool_files_sha256",
+        },
+        {
+            "schema_version",
+            "predecessor",
+            "stop_checkpoint",
+            "recovery",
+            "current_tool_files_sha256",
+            "legacy_vc0_recovery",
+        },
+        {
+            "schema_version",
+            "predecessor",
+            "stop_checkpoint",
+            "recovery",
+            "current_tool_files_sha256",
+            "final_execution_epoch_recovery",
+        },
+    )
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) not in allowed_fields
+        or payload.get("schema_version")
+        != TOOL_EVALUATION_RECOVERY_CONTROLS_SCHEMA
+        or not SHA256_RE.fullmatch(
+            str(payload.get("current_tool_files_sha256", ""))
+        )
+    ):
+        raise ConfigurationError("历史评估 transition 的冻结恢复控制结构非法。")
+
+    predecessor = payload.get("predecessor")
+    recovery = payload.get("recovery")
+    stop = payload.get("stop_checkpoint")
+    if (
+        not isinstance(predecessor, Mapping)
+        or set(predecessor) != {"upgrade_timing", "arm64_environment"}
+        or not isinstance(recovery, Mapping)
+        or set(recovery)
+        != {"upgrade_timing", "arm64_environment", "job_rehearsal"}
+        or not isinstance(stop, Mapping)
+    ):
+        raise ConfigurationError("历史评估 transition 的冻结控制绑定不闭合。")
+
+    bindings = (
+        (predecessor.get("upgrade_timing"), "ledger_dir", "历史前序 Ledger"),
+        (predecessor.get("arm64_environment"), "evidence_root", "历史前序 ARM64 P0"),
+        (stop, "ledger_dir", "历史停线 checkpoint"),
+        (recovery.get("upgrade_timing"), "ledger_dir", "历史恢复 Ledger"),
+        (recovery.get("arm64_environment"), "evidence_root", "历史恢复 ARM64 P0"),
+        (recovery.get("job_rehearsal"), "evidence_root", "历史恢复 Job 演练"),
+    )
+    for value, root_field, label in bindings:
+        root, _ = _control_path_from_recovery_binding(
+            value,
+            root_field=root_field,
+            label=label,
+        )
+        if not root.is_absolute():
+            raise ConfigurationError(f"{label}根目录不是绝对路径。")
+
+    predecessor_timing = predecessor["upgrade_timing"]
+    recovery_timing = recovery["upgrade_timing"]
+    assert isinstance(predecessor_timing, Mapping)
+    assert isinstance(recovery_timing, Mapping)
+    required_stop_fields = {
+        "ledger_dir",
+        "receipt",
+        "upgrade_id",
+        "evidence_decision",
+        "active_phase",
+        "head_sequence",
+        "head_sha256",
+        "total_elapsed_seconds",
+        "total_live_request_count",
+    }
+    if (
+        set(stop) != required_stop_fields
+        or stop.get("ledger_dir") != predecessor_timing.get("ledger_dir")
+        or stop.get("upgrade_id") != predecessor_timing.get("upgrade_id")
+        or stop.get("evidence_decision")
+        != predecessor_timing.get("evidence_decision")
+        or stop.get("active_phase") not in codex_upgrade_timing_ledger.PHASE_ORDER
+        or not isinstance(stop.get("head_sequence"), int)
+        or isinstance(stop.get("head_sequence"), bool)
+        or int(stop["head_sequence"]) < 1
+        or not SHA256_RE.fullmatch(str(stop.get("head_sha256", "")))
+        or not isinstance(stop.get("total_elapsed_seconds"), int)
+        or isinstance(stop.get("total_elapsed_seconds"), bool)
+        or int(stop["total_elapsed_seconds"]) < 0
+        or not isinstance(stop.get("total_live_request_count"), int)
+        or isinstance(stop.get("total_live_request_count"), bool)
+        or int(stop["total_live_request_count"]) < 0
+        or recovery_timing.get("ledger_dir") == predecessor_timing.get("ledger_dir")
+        or recovery_timing.get("upgrade_id") == predecessor_timing.get("upgrade_id")
+        or recovery_timing.get("evidence_decision")
+        != predecessor_timing.get("evidence_decision")
+    ):
+        raise ConfigurationError("历史评估 transition 的冻结 Ledger 关系非法。")
+
+    scope_execute = (
+        list(recovery_scope.get("execute_job_ids", []))
+        if isinstance(recovery_scope, Mapping)
+        else []
+    )
+    legacy = payload.get("legacy_vc0_recovery")
+    if legacy is not None and legacy != {
+        "mode": "formal_candidate_attempt",
+        "source_attempt_id": attempt.get("attempt_id"),
+        "source_attempt_digest": attempt.get("attempt_digest"),
+        "execute_job_ids": scope_execute,
+    }:
+        raise ConfigurationError("历史评估 transition 的 VC-0 恢复标记非法。")
+
+    final_epoch = payload.get("final_execution_epoch_recovery")
+    if final_epoch is not None:
+        epoch_binding = (
+            final_epoch.get("epoch") if isinstance(final_epoch, Mapping) else None
+        )
+        if (
+            not isinstance(final_epoch, Mapping)
+            or set(final_epoch)
+            != {
+                "mode",
+                "epoch_index",
+                "epoch",
+                "source_attempt_id",
+                "source_attempt_digest",
+                "execute_job_ids",
+                "reused_job_ids",
+            }
+            or final_epoch.get("mode") != "single-failed-producer-recovery"
+            or final_epoch.get("epoch_index") != 2
+            or final_epoch.get("source_attempt_id") != attempt.get("attempt_id")
+            or final_epoch.get("source_attempt_digest")
+            != attempt.get("attempt_digest")
+            or final_epoch.get("execute_job_ids") != scope_execute
+            or final_epoch.get("reused_job_ids")
+            != list(
+                recovery_scope.get("completed_job_ids", [])
+                if isinstance(recovery_scope, Mapping)
+                else []
+            )
+        ):
+            raise ConfigurationError("历史评估 transition 的最终 epoch 恢复标记非法。")
+        _require_file_binding(epoch_binding, "历史最终 execution epoch")
+    return dict(payload)
 
 
 def _tool_entry_index(identity: Mapping[str, Any]) -> dict[str, str]:
@@ -10861,11 +21144,144 @@ def _phase_evaluation_changed_files(
                 "classification": (
                     "phase_scoped_hybrid"
                     if path in _PHASE_EVALUATION_HYBRID_FILES
-                    else "evaluation"
+                    else (
+                        "evaluation"
+                        if path in _EVALUATION_SIDE_FILES
+                        or path in _WATCHDOG_ONLY_TOOL_FILES
+                        else "failed_job_production"
+                    )
                 ),
             }
         )
     return changed
+
+
+def _phase_evaluation_failed_job_production_changes(
+    drift: Mapping[str, list[str]],
+    *,
+    phase: str,
+    attempt: Mapping[str, Any],
+    recovery_scope: Mapping[str, Any] | None,
+) -> set[str]:
+    """仅放行完全落入冻结失败闭集的已登记产出侧变化。"""
+
+    production_paths = set(drift.get("production", [])) - set(
+        _PHASE_EVALUATION_HYBRID_FILES
+    )
+    if not production_paths:
+        return set()
+    if (
+        phase != "candidate"
+        or attempt.get("status") != "failed"
+        or not isinstance(recovery_scope, Mapping)
+    ):
+        raise ConfigurationError(
+            "评估 transition 包含产出侧变化，且不属于失败 Candidate 闭集恢复。"
+        )
+    unknown_paths = production_paths - set(
+        RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS
+    )
+    if unknown_paths:
+        raise ConfigurationError(
+            "评估 transition 包含未登记的产出侧变化："
+            + "、".join(sorted(unknown_paths))
+        )
+    execute_ids = set(recovery_scope.get("execute_job_ids", []))
+    completed_ids = set(recovery_scope.get("completed_job_ids", []))
+    affected_ids = {
+        job_id
+        for path in production_paths
+        for job_id in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS[path]
+    }
+    if (
+        not execute_ids
+        or not affected_ids
+        or not affected_ids.issubset(execute_ids)
+        or affected_ids.intersection(completed_ids)
+    ):
+        raise ConfigurationError(
+            "评估 transition 的产出侧变化超出冻结失败／待执行 Job 闭集。"
+        )
+    return production_paths
+
+
+def _authorize_phase_recovery_production_paths(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+    recovery_scope: Mapping[str, Any],
+) -> set[str]:
+    """在复用历史结果前验证 transition，并返回可排除的精确产出文件。"""
+
+    expected_tool = manifest.get("tool_identity")
+    if not isinstance(expected_tool, Mapping):
+        raise ConfigurationError("Campaign 缺少可分级的工具身份。")
+    drift = _tool_identity_drift(current_tool, expected_tool)
+    allowed_paths = _phase_evaluation_failed_job_production_changes(
+        drift,
+        phase=phase,
+        attempt=attempt,
+        recovery_scope=recovery_scope,
+    )
+    if allowed_paths:
+        _load_phase_evaluation_transition(
+            campaign_dir,
+            manifest,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            operation="capture-run",
+            current_tool=current_tool,
+            drift=drift,
+        )
+    return allowed_paths
+
+
+def _phase_recovery_exact_affected_job_ids(
+    production_paths: Iterable[str],
+    *,
+    planned_job_ids: Iterable[str],
+    recovery_scope: Mapping[str, Any],
+) -> set[str]:
+    """把已批准的产出文件变化收窄为冻结恢复闭集内的精确 Job。
+
+    transition 已逐文件验证产出侧变化后，早期组件级影响结果不再可信：
+    一个 ``relay`` 组件可能同时服务多个互不相干的 Job。这里必须重新从
+    文件白名单计算，并用结果替换粗粒度集合，不能与其取并集。
+    """
+
+    paths = {str(path) for path in production_paths}
+    unknown_paths = paths - set(RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS)
+    if unknown_paths:
+        raise ConfigurationError(
+            "恢复 transition 包含没有 Job 映射的产出文件："
+            + "、".join(sorted(unknown_paths))
+        )
+    affected = {
+        job_id
+        for path in paths
+        for job_id in RUNTIME_SUCCESSOR_CHANGED_TOOL_PATH_JOB_IDS[path]
+    }
+    planned = {str(job_id) for job_id in planned_job_ids}
+    execute = {
+        str(job_id) for job_id in recovery_scope.get("execute_job_ids", [])
+    }
+    completed = {
+        str(job_id) for job_id in recovery_scope.get("completed_job_ids", [])
+    }
+    if (
+        not affected.issubset(planned)
+        or not affected.issubset(execute)
+        or affected.intersection(completed)
+    ):
+        raise ConfigurationError(
+            "恢复 transition 的精确产出文件映射超出冻结 recovery_scope。"
+        )
+    return affected
 
 
 def _phase_evaluation_environment_boundary(
@@ -11016,6 +21432,284 @@ def _phase_evaluation_environment_boundary(
     )
 
 
+def _phase_evaluation_pre_job_environment_boundary(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    *,
+    planned_job_ids: set[str],
+    checkpoint_path: Path,
+) -> str:
+    """校验首个 Job 前失败的严格边界，不读取任何抓包正文。
+
+    该特例不会复用 Job 结果；它只证明运行停在 ``attempt:reserved``、没有
+    Job／日志／checkpoint 产物，并绑定唯一 after 探针。目录枚举和小文件
+    读取均有固定上限，不能退化为对历史证据树的递归扫描。
+    """
+
+    def directory_names(path: Path, label: str, *, maximum: int) -> list[str]:
+        if path.is_symlink() or not path.is_dir():
+            raise ConfigurationError(f"首个 Job 前失败的 {label} 不存在或不可信。")
+        names: list[str] = []
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if len(names) >= maximum:
+                    raise ConfigurationError(f"首个 Job 前失败的 {label} 超出有界目录上限。")
+                names.append(entry.name)
+        return sorted(names)
+
+    _validate_attempt_incremental_fields(attempt, planned_job_ids)
+    plan = attempt.get("incremental_plan")
+    if (
+        attempt.get("results") != []
+        or not isinstance(plan, Mapping)
+        or plan.get("planned_job_ids") != sorted(planned_job_ids)
+        or plan.get("pending_job_ids") != sorted(planned_job_ids)
+        or any(
+            plan.get(name) != []
+            for name in (
+                "changed_components",
+                "affected_job_ids",
+                "reused_job_ids",
+                "executed_job_ids",
+                "failed_job_ids",
+            )
+        )
+        or attempt.get("continuity") is not None
+    ):
+        raise ConfigurationError("首个 Job 前失败的增量计划不是全量 pending 闭集。")
+
+    execution_error = attempt.get("execution_error")
+    restoration_error = attempt.get("restoration_error")
+    if (
+        not isinstance(execution_error, Mapping)
+        or not isinstance(execution_error.get("type"), str)
+        or not execution_error.get("type")
+        or not isinstance(execution_error.get("message"), str)
+        or not execution_error.get("message")
+        or not isinstance(restoration_error, Mapping)
+    ):
+        raise ConfigurationError("首个 Job 前失败缺少执行或恢复失败事实。")
+
+    checkpoint = attempt.get("job_checkpoint")
+    watchdog = attempt.get("watchdog")
+    if (
+        not isinstance(checkpoint, Mapping)
+        or checkpoint.get("record_count") != 0
+        or checkpoint.get("last_sequence") is not None
+        or checkpoint.get("last_sha256") is not None
+        or not isinstance(watchdog, Mapping)
+        or watchdog.get("last_completed_job_id") is not None
+        or watchdog.get("timeout_checkpoint") is not None
+    ):
+        raise ConfigurationError("首个 Job 前失败的 checkpoint 或 watchdog 不是空边界。")
+    if directory_names(checkpoint_path, "checkpoint 目录", maximum=1):
+        raise ConfigurationError("首个 Job 前失败的 checkpoint 目录不为空。")
+
+    _validate_attempt_watchdog_bindings(
+        campaign_dir,
+        attempt_root,
+        attempt,
+        planned_job_ids=planned_job_ids,
+    )
+    heartbeat_path = _resolve_attempt_binding(
+        campaign_dir,
+        attempt_root,
+        watchdog.get("heartbeat"),
+        label="首个 Job 前失败 watchdog heartbeat",
+        expected_name="watchdog-heartbeat.json",
+    )
+    assert heartbeat_path is not None
+    heartbeat = _read_json(heartbeat_path, "首个 Job 前失败 watchdog heartbeat")
+    if (
+        heartbeat.get("operation") != "attempt:reserved"
+        or heartbeat.get("last_completed_job_id") is not None
+    ):
+        raise ConfigurationError("首个 Job 前失败的 heartbeat 已进入 Job 或其它操作。")
+
+    if attempt_root.is_symlink() or not attempt_root.is_dir():
+        raise ConfigurationError("首个 Job 前失败的 attempt 根不存在或不可信。")
+    evidence_root = attempt_root / "evidence"
+    log_root = attempt_root / "logs"
+    for path, label in ((evidence_root, "evidence 目录"), (log_root, "logs 目录")):
+        _reject_symlink_components(path, attempt_root, f"首个 Job 前失败 {label}")
+        if path.is_symlink() or not path.is_dir():
+            raise ConfigurationError(f"首个 Job 前失败的 {label} 不存在或不可信。")
+    expected_evidence_roots = [
+        str(evidence_root.resolve(strict=True)),
+        str(log_root.resolve(strict=True)),
+    ]
+    if attempt.get("evidence_roots") != expected_evidence_roots:
+        raise ConfigurationError("首个 Job 前失败的证据根不是固定空运行边界。")
+    if directory_names(log_root, "logs 目录", maximum=1):
+        raise ConfigurationError("首个 Job 前失败的 logs 目录不为空。")
+    if any(
+        name.startswith("job-") and name.endswith(".json")
+        for name in directory_names(attempt_root, "attempt 根目录", maximum=32)
+    ):
+        raise ConfigurationError("首个 Job 前失败却存在 Job 收据。")
+
+    environment = attempt.get("environment")
+    expected_environment_fields = {
+        "evidence_root",
+        "before_probe",
+        "after_probe",
+        "restoration_report",
+        "arm64_before_receipt",
+        "arm64_after_receipt",
+    }
+    if (
+        not isinstance(environment, Mapping)
+        or set(environment) != expected_environment_fields
+        or environment.get("evidence_root") != expected_evidence_roots[0]
+        or any(
+            environment.get(name) is not None
+            for name in (
+                "before_probe",
+                "restoration_report",
+                "arm64_before_receipt",
+                "arm64_after_receipt",
+            )
+        )
+    ):
+        raise ConfigurationError("首个 Job 前失败的环境边界不闭合。")
+
+    after_binding = environment.get("after_probe")
+    if (
+        not isinstance(after_binding, Mapping)
+        or set(after_binding) != {"path", "sha256", "bytes"}
+        or after_binding.get("path") != "environment/after/probe-manifest.json"
+        or not SHA256_RE.fullmatch(str(after_binding.get("sha256", "")))
+        or not isinstance(after_binding.get("bytes"), int)
+        or isinstance(after_binding.get("bytes"), bool)
+        or not 0 < int(after_binding.get("bytes", 0)) <= 1024 * 1024
+    ):
+        raise ConfigurationError("首个 Job 前失败缺少可信 after 探针绑定。")
+
+    environment_root = evidence_root / "environment"
+    receipts_root = evidence_root / "receipts"
+    after_root = environment_root / "after"
+    arm64_before_root = environment_root / "arm64-before"
+    arm64_after_root = environment_root / "arm64-after"
+    if directory_names(evidence_root, "evidence 目录", maximum=3) != [
+        "environment",
+        "receipts",
+    ]:
+        raise ConfigurationError("首个 Job 前失败的 evidence 目录存在额外产物。")
+    if directory_names(environment_root, "environment 目录", maximum=4) != [
+        "after",
+        "arm64-after",
+        "arm64-before",
+    ]:
+        raise ConfigurationError("首个 Job 前失败的 environment 目录存在额外阶段。")
+    for path, label in (
+        (receipts_root, "receipts 目录"),
+        (arm64_before_root, "arm64-before 目录"),
+        (arm64_after_root, "arm64-after 目录"),
+    ):
+        if directory_names(path, label, maximum=1):
+            raise ConfigurationError(f"首个 Job 前失败的 {label} 不为空。")
+
+    after_path = evidence_root / str(after_binding["path"])
+    if (
+        after_path.is_symlink()
+        or not after_path.is_file()
+        or after_path.stat().st_size != after_binding["bytes"]
+        or file_sha256(after_path) != after_binding["sha256"]
+    ):
+        raise ConfigurationError("首个 Job 前失败的 after 探针摘要漂移。")
+    probe = _read_json(after_path, "首个 Job 前失败 after 探针")
+    configuration = manifest.get("configuration")
+    expected_targets = (
+        {
+            "service": configuration.get("service_container"),
+            "keeper": configuration.get("keeper_container"),
+            "postgres": configuration.get("postgres_container"),
+            "redis": configuration.get("redis_container"),
+            "capture": configuration.get("capture_container"),
+        }
+        if isinstance(configuration, Mapping)
+        else None
+    )
+    snapshots = probe.get("snapshots")
+    if (
+        set(probe)
+        != {
+            "observed_at_utc",
+            "phase",
+            "schema_version",
+            "selected_account_id",
+            "selected_key_id",
+            "snapshots",
+            "targets",
+        }
+        or probe.get("schema_version")
+        != codex_upgrade_environment_probe.PROBE_MANIFEST_SCHEMA
+        or probe.get("phase") != "after"
+        or not _is_rfc3339_timestamp(probe.get("observed_at_utc"))
+        or not isinstance(configuration, Mapping)
+        or probe.get("selected_account_id") != configuration.get("codex_account_id")
+        or probe.get("selected_key_id") != configuration.get("api_key_id")
+        or probe.get("targets") != expected_targets
+        or not isinstance(snapshots, list)
+        or len(snapshots) != len(ENVIRONMENT_STATE_FILES)
+    ):
+        raise ConfigurationError("首个 Job 前失败的 after 探针身份不完整。")
+
+    snapshot_bindings: dict[str, dict[str, Any]] = {}
+    expected_after_names = {"probe-manifest.json"}
+    for snapshot in snapshots:
+        if not isinstance(snapshot, Mapping):
+            raise ConfigurationError("首个 Job 前失败的 after 快照绑定非法。")
+        kind = snapshot.get("kind")
+        expected_name = ENVIRONMENT_STATE_FILES.get(str(kind))
+        if (
+            set(snapshot) != {"bytes", "comparison", "kind", "path", "sha256"}
+            or expected_name is None
+            or snapshot.get("path") != expected_name
+            or str(kind) in snapshot_bindings
+            or not isinstance(snapshot.get("comparison"), Mapping)
+            or not isinstance(snapshot.get("bytes"), int)
+            or isinstance(snapshot.get("bytes"), bool)
+            or not 0 < int(snapshot.get("bytes", 0)) <= 1024 * 1024
+            or not SHA256_RE.fullmatch(str(snapshot.get("sha256", "")))
+        ):
+            raise ConfigurationError("首个 Job 前失败的 after 快照绑定非法。")
+        snapshot_path = after_root / expected_name
+        if (
+            snapshot_path.is_symlink()
+            or not snapshot_path.is_file()
+            or snapshot_path.stat().st_size != snapshot["bytes"]
+            or file_sha256(snapshot_path) != snapshot["sha256"]
+        ):
+            raise ConfigurationError("首个 Job 前失败的 after 快照摘要漂移。")
+        expected_after_names.add(expected_name)
+        snapshot_bindings[str(kind)] = dict(snapshot)
+    if set(snapshot_bindings) != set(ENVIRONMENT_STATE_FILES):
+        raise ConfigurationError("首个 Job 前失败的 after 快照种类不完整。")
+    if set(directory_names(after_root, "after 目录", maximum=8)) != expected_after_names:
+        raise ConfigurationError("首个 Job 前失败的 after 目录存在额外产物。")
+
+    return _fingerprint(
+        {
+            "source_mode": "pre_job_failure",
+            "evidence_root": expected_evidence_roots[0],
+            "after_probe": dict(after_binding),
+            "snapshots": [snapshot_bindings[kind] for kind in sorted(snapshot_bindings)],
+            "watchdog_heartbeat": dict(watchdog["heartbeat"]),
+            "checkpoint": {
+                "path": checkpoint.get("path"),
+                "record_count": 0,
+                "last_sequence": None,
+                "last_sha256": None,
+            },
+            "execution_error": dict(execution_error),
+            "restoration_error": dict(restoration_error),
+        }
+    )
+
+
 def _phase_evaluation_recovery_scope(
     campaign_dir: Path,
     manifest: Mapping[str, Any],
@@ -11024,15 +21718,20 @@ def _phase_evaluation_recovery_scope(
     candidate_id: str | None,
     attempt_root: Path,
     attempt: Mapping[str, Any],
+    allow_empty: bool = False,
+    allow_awaiting_failures: bool = False,
 ) -> dict[str, Any]:
     """建立失败 attempt 的确定性重跑闭集。
 
-    只有至少一个 Job 已完成、至少一个 Job 需要补跑，且 checkpoint 与环境
-    收据均可重放时才允许建立 transition。返回值会写入 transition 摘要，
-    使下一轮不能扩大执行范围。
+    普通 partial attempt 只有至少一个 Job 已完成时才允许恢复；首个 Job 前
+    失败则必须满足严格空边界，并把全部冻结 Job 纳入执行闭集。返回值会写入
+    transition 摘要，使下一轮不能扩大执行范围。
     """
 
-    if attempt.get("status") != "failed":
+    source_status = attempt.get("status")
+    if source_status != "failed" and not (
+        allow_awaiting_failures and source_status == "awaiting_receipts"
+    ):
         raise ConfigurationError("只有 failed attempt 可以建立恢复 transition。")
     if (
         attempt.get("phase") != phase
@@ -11051,6 +21750,7 @@ def _phase_evaluation_recovery_scope(
         attempt_root,
         phase=phase,
         candidate_id=candidate_id,
+        _manifest=manifest,
     )
     planned_rows = reservation.get("planned_jobs")
     if not isinstance(planned_rows, list) or not planned_rows:
@@ -11090,13 +21790,57 @@ def _phase_evaluation_recovery_scope(
     )
     pending_ids = sorted(set(planned) - set(result_by_id))
     execute_ids = sorted(set(failed_ids) | set(pending_ids))
-    if not completed_ids:
+    if source_status == "awaiting_receipts":
+        if phase != "candidate" or not failed_ids:
+            raise ConfigurationError(
+                "awaiting_receipts 只有包含失败 Candidate Job 时才能作为后继恢复源。"
+            )
+        if any(
+            bool(result_by_id[job_id].get("required")) for job_id in failed_ids
+        ):
+            raise ConfigurationError(
+                "awaiting_receipts 的失败项必须全部是可选 Job。"
+            )
+        client_after = (
+            attempt_root
+            / "evidence"
+            / "environment"
+            / "client-after"
+            / "probe-manifest.json"
+        )
+        client_receipt = (
+            attempt_root
+            / "evidence"
+            / "receipts"
+            / "client-restoration-report.json"
+        )
+        seal_files = [
+            path
+            for pattern in ("seal-draft*.json", "seal-preview*.json")
+            for path in attempt_root.glob(pattern)
+        ]
+        if client_after.exists() or client_receipt.exists() or seal_files:
+            raise ConfigurationError(
+                "awaiting_receipts 已进入 Kilo／seal 边界，禁止改作产出工具后继恢复源。"
+            )
+    pre_job_failure = (
+        not completed_ids
+        and not failed_ids
+        and not result_by_id
+        and pending_ids == sorted(planned)
+    )
+    if not completed_ids and not pre_job_failure:
         raise ConfigurationError("失败 attempt 没有已完成 Job，禁止原地 transition。")
-    if not execute_ids:
+    if not execute_ids and not allow_empty:
         raise ConfigurationError("失败 attempt 没有可重跑 Job，禁止建立 transition。")
 
     checkpoint = attempt.get("job_checkpoint")
-    if not isinstance(checkpoint, Mapping) or int(checkpoint.get("record_count", 0)) <= 0:
+    if not isinstance(checkpoint, Mapping) or (
+        pre_job_failure
+        and int(checkpoint.get("record_count", -1)) != 0
+        or not pre_job_failure
+        and int(checkpoint.get("record_count", 0)) <= 0
+    ):
         raise ConfigurationError("失败 attempt 缺少可重放 Job checkpoint。")
     checkpoint_path = _resolve_attempt_binding(
         campaign_dir,
@@ -11122,12 +21866,24 @@ def _phase_evaluation_recovery_scope(
         planned_job_ids=set(planned),
         strict_context=True,
     )
-    environment_boundary_sha256 = _phase_evaluation_environment_boundary(
-        campaign_dir,
-        attempt_root,
-        attempt,
-    )
-    return {
+    if pre_job_failure:
+        environment_boundary_sha256 = (
+            _phase_evaluation_pre_job_environment_boundary(
+                campaign_dir,
+                manifest,
+                attempt_root,
+                attempt,
+                planned_job_ids=set(planned),
+                checkpoint_path=checkpoint_path,
+            )
+        )
+    else:
+        environment_boundary_sha256 = _phase_evaluation_environment_boundary(
+            campaign_dir,
+            attempt_root,
+            attempt,
+        )
+    scope = {
         "schema_version": "codex-upgrade-failed-attempt-scope/v1",
         "source_attempt_id": str(attempt["attempt_id"]),
         "source_attempt_digest": str(attempt["attempt_digest"]),
@@ -11145,6 +21901,115 @@ def _phase_evaluation_recovery_scope(
         },
         "environment_boundary_sha256": environment_boundary_sha256,
     }
+    if pre_job_failure:
+        scope["source_mode"] = "pre_job_failure"
+    return scope
+
+
+def _validate_recovery_scope_plan(
+    campaign_dir: Path,
+    *,
+    phase: str,
+    candidate_id: str | None,
+    source_root: Path,
+    scope: Mapping[str, Any],
+    planned_jobs: Iterable[Job],
+    allow_empty: bool = False,
+) -> tuple[set[str], set[str]]:
+    """把 transition 的冻结计划与当前 Job 定义逐项对齐。
+
+    ``recovery_scope`` 是恢复执行集合的唯一事实源。当前工具摘要、廉价
+    影响分析或重新展开场景都不能自行扩大／缩小该集合；同时仍要确认当前
+    Job 的 execution_sha256 与源 reservation 一致，避免把修改后的命令套在
+    历史证据上。
+    """
+
+    def ids(name: str) -> set[str]:
+        values = scope.get(name)
+        if (
+            not isinstance(values, list)
+            or values != sorted(set(values))
+            or not all(
+                isinstance(value, str) and SAFE_ID_RE.fullmatch(value)
+                for value in values
+            )
+        ):
+            raise ConfigurationError(f"恢复 transition 的 {name} 非法。")
+        return {str(value) for value in values}
+
+    # ``planned_jobs`` 可能由场景展开器返回生成器；恢复校验需要在同一份
+    # 冻结计划上先做集合校验、再逐项验证摘要，不能因重复迭代而重新展开。
+    planned_jobs = list(planned_jobs)
+
+    planned_ids = ids("planned_job_ids")
+    completed_ids = ids("completed_job_ids")
+    failed_ids = ids("failed_job_ids")
+    pending_ids = ids("pending_job_ids")
+    execute_ids = ids("execute_job_ids")
+    if (
+        not planned_ids
+        or (not execute_ids and not allow_empty)
+        or completed_ids & execute_ids
+        or completed_ids & pending_ids
+        or failed_ids & completed_ids
+        or failed_ids & pending_ids
+        or failed_ids | pending_ids != execute_ids
+        or completed_ids | execute_ids != planned_ids
+    ):
+        raise ConfigurationError("恢复 transition 的 Job 闭集不一致。")
+
+    source_reservation = _load_capture_reservation(
+        campaign_dir,
+        source_root,
+        phase=phase,
+        candidate_id=candidate_id,
+    )
+    source_plan: dict[str, str] = {}
+    for row in source_reservation.get("planned_jobs", []):
+        if not isinstance(row, Mapping):
+            raise ConfigurationError("失败 source attempt 的 Job 计划非法。")
+        job_id = row.get("id")
+        execution_sha256 = row.get("execution_sha256")
+        if (
+            not isinstance(job_id, str)
+            or not SAFE_ID_RE.fullmatch(job_id)
+            or not isinstance(execution_sha256, str)
+            or not SHA256_RE.fullmatch(execution_sha256)
+            or job_id in source_plan
+        ):
+            raise ConfigurationError("失败 source attempt 的 Job 计划身份非法。")
+        source_plan[job_id] = execution_sha256
+    current_plan = {
+        job.job_id: _job_execution_sha256(job) for job in planned_jobs
+    }
+    if set(current_plan) != set(source_plan) or set(current_plan) != planned_ids:
+        raise ConfigurationError(
+            "恢复 transition 的冻结 Job 定义与当前计划不一致；禁止改用当前摘要重算。"
+        )
+
+    # 历史 Campaign 可能由旧版 ``_safe_plan`` 写出：其 Job 投影不含
+    # ``environment`` 等完整执行字段；同时受管 producer 工作树也可能已迁移。
+    # 这种情况下不能直接比较当前摘要，但只能放行已由封闭迁移规则逐字证明的
+    # 坐标变化。其它任何差异仍 fail-close，且不改写历史 reservation。
+    frozen_manifest: Mapping[str, Any] | None = None
+    for job in planned_jobs:
+        recorded_sha256 = source_plan[job.job_id]
+        current_sha256 = current_plan[job.job_id]
+        if current_sha256 == recorded_sha256:
+            continue
+        if frozen_manifest is None:
+            frozen_manifest = load_campaign_manifest(campaign_dir)
+        frozen_job = _frozen_job_definition(frozen_manifest, job.job_id)
+        if not _relocated_job_execution_matches(
+            job,
+            recorded_sha256,
+            frozen_job,
+        ):
+            raise ConfigurationError(
+                "恢复 transition 的冻结 Job 定义与当前计划不一致；"
+                "仅允许受管工作树路径迁移。"
+            )
+    return completed_ids, execute_ids
 
 
 def _phase_evaluation_transition_source(
@@ -11223,6 +22088,7 @@ def _phase_evaluation_recovery_successor_operations(
     successor_root: Path,
     successor_attempt: Mapping[str, Any],
     transition: Mapping[str, Any],
+    current_tool: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
     """验证失败 attempt 的补跑闭集，并返回后继可用的离线操作。
 
@@ -11370,6 +22236,55 @@ def _phase_evaluation_recovery_successor_operations(
             output.pop(key, None)
         return output
 
+    current_jobs: dict[str, Job] | None = None
+
+    def _matches_source_or_authorized_rebase(
+        source_result: Mapping[str, Any],
+        successor_result: Mapping[str, Any],
+    ) -> bool:
+        """接受逐字复用，或接受绑定当前工具身份的确定性元数据重算。"""
+
+        nonlocal current_jobs
+        source_without_reuse = _without_reuse_metadata(source_result)
+        successor_without_reuse = _without_reuse_metadata(successor_result)
+        if successor_without_reuse == source_without_reuse:
+            return True
+        if current_tool is None:
+            return False
+        if current_jobs is None:
+            identity = successor_attempt.get("identity")
+            if not isinstance(identity, Mapping):
+                raise ConfigurationError("恢复后继 attempt 缺少不可变身份。")
+            if phase == "candidate":
+                jobs = _campaign_jobs(
+                    campaign_dir,
+                    dict(manifest),
+                    "candidate",
+                    candidate_id=candidate_id,
+                    runtime_image=str(identity.get("image_reference", "")),
+                    profile_id=str(identity.get("profile_id", "")),
+                    profile_digest=str(identity.get("profile_digest", "")),
+                    build_id=str(identity.get("build_id", "")),
+                    deployed_version=str(identity.get("deployed_version", "")),
+                    candidate_image_id=str(identity.get("image_id", "")),
+                    source_tree_sha256=str(identity.get("source_tree_sha256", "")),
+                    candidate_purpose=str(identity.get("candidate_purpose", "")),
+                )
+            else:
+                jobs = _campaign_jobs(campaign_dir, dict(manifest), "official")
+            current_jobs = {job.job_id: job for job in jobs}
+        job = current_jobs.get(str(source_result.get("id")))
+        identity = successor_attempt.get("identity")
+        if job is None or not isinstance(identity, Mapping):
+            return False
+        expected = _rebase_reused_result(
+            source_result,
+            job,
+            identity=identity,
+            tool_identity=current_tool,
+        )
+        return successor_without_reuse == _without_reuse_metadata(expected)
+
     for job_id in completed_ids:
         source_result = source_results[job_id]
         successor_result = successor_results[job_id]
@@ -11378,8 +22293,10 @@ def _phase_evaluation_recovery_successor_operations(
             or successor_result.get("disposition") != "reused"
             or successor_result.get("carried_from_attempt") != source_root.name
             or successor_result.get("source_receipt") != expected_source_receipt
-            or _without_reuse_metadata(successor_result)
-            != _without_reuse_metadata(source_result)
+            or not _matches_source_or_authorized_rebase(
+                source_result,
+                successor_result,
+            )
         ):
             raise ConfigurationError(
                 f"恢复后继 attempt 未只读承接已完成 Job：{job_id}"
@@ -11446,6 +22363,456 @@ def _phase_evaluation_recovery_successor_operations(
     return tuple(_PHASE_EVALUATION_OPERATIONS[phase])
 
 
+_TERMINAL_TRANSITION_REQUIRED_OPERATIONS = {
+    "isolation-clone",
+    "isolation-transition-03-preview",
+    "isolation-transition-03-approve",
+    "isolation-seal-preview",
+    "isolation-seal-approve",
+    "isolation-compare",
+    "isolation-accept",
+}
+
+
+def _terminal_transition_file_binding(
+    root: Path,
+    path: Path,
+    *,
+    label: str,
+) -> dict[str, str]:
+    """生成终端预检使用的根内只读文件绑定。"""
+
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError(f"{label}不存在或不可信。")
+    try:
+        relative = path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ConfigurationError(f"{label}不在受管根目录内。") from error
+    return {"path": relative.as_posix(), "sha256": file_sha256(path)}
+
+
+def _terminal_transition_attempt_inventory(campaign_dir: Path) -> str:
+    """摘要化 attempt 内不可变执行事实，排除本轮新增的离线封存文件。"""
+
+    entries: list[dict[str, Any]] = []
+    attempt_roots: list[Path] = []
+    official_attempts = campaign_dir / "official" / "attempts"
+    if official_attempts.is_dir() and not official_attempts.is_symlink():
+        attempt_roots.extend(
+            path
+            for path in official_attempts.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        )
+    candidates_root = campaign_dir / "candidates"
+    if candidates_root.is_dir() and not candidates_root.is_symlink():
+        for candidate_root in candidates_root.iterdir():
+            attempts = candidate_root / "attempts"
+            if attempts.is_dir() and not attempts.is_symlink():
+                attempt_roots.extend(
+                    path
+                    for path in attempts.iterdir()
+                    if path.is_dir() and not path.is_symlink()
+                )
+    for root in sorted(attempt_roots):
+        relative_root = root.relative_to(campaign_dir).as_posix()
+        entries.append({"path": relative_root + "/", "bytes": 0, "sha256": None})
+        for path in sorted(root.iterdir()):
+            if path.is_symlink():
+                raise ConfigurationError("终端预检 attempt 顶层含符号链接。")
+            if not path.is_file() or not (
+                path.name in {"attempt.json", "reservation.json"}
+                or path.name.startswith("job-") and path.name.endswith(".json")
+            ):
+                continue
+            entries.append(
+                {
+                    "path": path.relative_to(campaign_dir).as_posix(),
+                    "bytes": path.stat().st_size,
+                    "sha256": file_sha256(path),
+                }
+            )
+    if not entries:
+        raise ConfigurationError("终端预检缺少可比较的 attempt 执行事实。")
+    return _fingerprint({"entries": entries})
+
+
+def _terminal_transition_supervisor_audit(run_dir: Path) -> dict[str, Any]:
+    """重放隔离全链父监督器，并要求七个动作均成功且无审计缺口。"""
+
+    audit = _control_replacement_supervisor_audit(run_dir)
+    if audit.get("summary", {}).get("state") != "stopped":
+        raise ConfigurationError("终端预检父监督器必须正常 stopped。")
+    events_path = run_dir / "events.ndjson"
+    try:
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ConfigurationError("终端预检父监督器事件无法读取。") from error
+    completed = {
+        str(event.get("operation", "")).split(":", 1)[-1]
+        for event in events
+        if isinstance(event, Mapping)
+        and event.get("event_type") == "action-finished"
+        and event.get("status") == "passed"
+    }
+    missing = sorted(_TERMINAL_TRANSITION_REQUIRED_OPERATIONS - completed)
+    if missing:
+        raise ConfigurationError(
+            "终端预检父监督器缺少已通过动作：" + "、".join(missing)
+        )
+    return audit
+
+
+def _terminal_transition_preflight_facts(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    successor_attempt_id: str,
+    isolated_campaign_dir: Path,
+    supervisor_run_dir: Path,
+    current_tool: Mapping[str, Any],
+) -> dict[str, Any]:
+    """重放正式源、第 3 槽、隔离全链和父监督器，返回闭合预检事实。"""
+
+    if (
+        phase != "candidate"
+        or not isinstance(candidate_id, str)
+        or not SAFE_ID_RE.fullmatch(candidate_id)
+        or attempt.get("status") != "failed"
+    ):
+        raise ConfigurationError("终端第 4 槽只适用于 failed Candidate source attempt。")
+    if not SAFE_ID_RE.fullmatch(successor_attempt_id):
+        raise ConfigurationError("终端预检 successor attempt-id 非法。")
+    formal_transition_path = _evaluation_transition_path(
+        attempt_root,
+        STANDARD_PHASE_EVALUATION_TRANSITIONS,
+    )
+    _historical_phase_evaluation_transition_frozen_state(
+        campaign_dir,
+        manifest,
+        attempt_root=attempt_root,
+        attempt=attempt,
+        transition_index=STANDARD_PHASE_EVALUATION_TRANSITIONS,
+    )
+    formal_transition = _read_json(
+        formal_transition_path,
+        "正式 Campaign transition-03",
+    )
+
+    try:
+        isolated_root = isolated_campaign_dir.resolve(strict=True)
+        formal_root = campaign_dir.resolve(strict=True)
+        supervisor_root = supervisor_run_dir.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ConfigurationError("终端预检目录不存在。") from error
+    if (
+        isolated_campaign_dir.is_symlink()
+        or not isolated_campaign_dir.is_dir()
+        or isolated_root == formal_root
+        or supervisor_run_dir.is_symlink()
+        or not supervisor_run_dir.is_dir()
+    ):
+        raise ConfigurationError("终端预检隔离副本或监督器目录不可信。")
+    try:
+        isolated_root.relative_to(supervisor_root / "evidence")
+    except ValueError as error:
+        raise ConfigurationError("终端预检隔离副本不在父监督器 evidence 内。") from error
+
+    isolated_manifest = _require_formal_campaign(isolated_root)
+    if (
+        file_sha256(isolated_root / "campaign.json")
+        != file_sha256(formal_root / "campaign.json")
+        or _fingerprint(isolated_manifest) != _fingerprint(manifest)
+    ):
+        raise ConfigurationError("终端预检隔离副本的 Campaign 清单漂移。")
+    isolated_source_root, isolated_source = _load_capture_attempt(
+        isolated_root,
+        phase,
+        candidate_id,
+        str(attempt.get("attempt_id", "")),
+    )
+    formal_successor_root, formal_successor = _load_capture_attempt(
+        formal_root,
+        phase,
+        candidate_id,
+        successor_attempt_id,
+    )
+    isolated_successor_root, isolated_successor = _load_capture_attempt(
+        isolated_root,
+        phase,
+        candidate_id,
+        successor_attempt_id,
+    )
+    if (
+        file_sha256(attempt_root / "attempt.json")
+        != file_sha256(isolated_source_root / "attempt.json")
+        or file_sha256(formal_successor_root / "attempt.json")
+        != file_sha256(isolated_successor_root / "attempt.json")
+        or _fingerprint(isolated_source) != _fingerprint(attempt)
+        or _fingerprint(isolated_successor) != _fingerprint(formal_successor)
+        or _terminal_transition_attempt_inventory(formal_root)
+        != _terminal_transition_attempt_inventory(isolated_root)
+    ):
+        raise ConfigurationError("终端预检隔离副本改写了 attempt、Job 或预约事实。")
+
+    isolated_transition = _validate_phase_evaluation_transition(
+        isolated_root,
+        isolated_manifest,
+        attempt_root=isolated_source_root,
+        attempt=isolated_source,
+        current_tool=current_tool,
+        transition_index=STANDARD_PHASE_EVALUATION_TRANSITIONS,
+    )
+    candidate = _load_stage_result(
+        isolated_root,
+        "capture-candidate",
+        candidate_id,
+    )
+    comparison = _load_stage_result(isolated_root, "compare", candidate_id)
+    acceptance = _load_stage_result(isolated_root, "accept", candidate_id)
+    status = campaign_status(isolated_root, candidate_id)
+    expected_transition_binding = _terminal_transition_file_binding(
+        isolated_root,
+        _evaluation_transition_path(
+            isolated_source_root,
+            STANDARD_PHASE_EVALUATION_TRANSITIONS,
+        ),
+        label="隔离 transition-03",
+    )
+    expected_attempt_binding = _terminal_transition_file_binding(
+        isolated_root,
+        isolated_successor_root / "attempt.json",
+        label="隔离 successor attempt",
+    )
+    seal_preview_path = _seal_preview_path(
+        isolated_successor_root,
+        STANDARD_PHASE_EVALUATION_TRANSITIONS,
+    )
+    if (
+        candidate.get("status") != "complete"
+        or candidate.get("evaluation_transition") != expected_transition_binding
+        or candidate.get("attempt") != expected_attempt_binding
+        or candidate.get("seal_preview")
+        != _terminal_transition_file_binding(
+            isolated_root,
+            seal_preview_path,
+            label="隔离 seal-preview-03",
+        )
+        or comparison.get("status") != "complete"
+        or comparison.get("offline_only") is not True
+        or acceptance.get("status") != "complete"
+        or acceptance.get("accepted") is not True
+        or acceptance.get("production_state") != "accepted_not_activated"
+        or status.get("status") != "ready"
+    ):
+        raise ConfigurationError("终端预检隔离副本未完整通过 seal／compare／accept。")
+
+    supervisor_audit = _terminal_transition_supervisor_audit(supervisor_root)
+    return {
+        "formal_campaign": {
+            "campaign_id": manifest.get("campaign_id"),
+            "campaign_manifest_sha256": file_sha256(formal_root / "campaign.json"),
+        },
+        "phase": phase,
+        "candidate_id": candidate_id,
+        "source_attempt": {
+            "attempt_id": attempt.get("attempt_id"),
+            "attempt_digest": attempt.get("attempt_digest"),
+        },
+        "source_transition": {
+            **_terminal_transition_file_binding(
+                formal_root,
+                formal_transition_path,
+                label="正式 transition-03",
+            ),
+            "transition_index": STANDARD_PHASE_EVALUATION_TRANSITIONS,
+            "transition_digest": formal_transition.get("transition_digest"),
+        },
+        "candidate_tool": {
+            "files_sha256": current_tool.get("files_sha256"),
+            "production_sha256": current_tool.get("production_sha256"),
+            "evaluation_sha256": current_tool.get("evaluation_sha256"),
+        },
+        "isolated_validation": {
+            "campaign_dir": str(isolated_root),
+            "campaign_manifest_sha256": file_sha256(
+                isolated_root / "campaign.json"
+            ),
+            "source_attempt_sha256": file_sha256(
+                isolated_source_root / "attempt.json"
+            ),
+            "successor_attempt_id": successor_attempt_id,
+            "successor_attempt_sha256": file_sha256(
+                isolated_successor_root / "attempt.json"
+            ),
+            "immutable_attempt_files_sha256": (
+                _terminal_transition_attempt_inventory(isolated_root)
+            ),
+            "transition": {
+                **expected_transition_binding,
+                "transition_index": STANDARD_PHASE_EVALUATION_TRANSITIONS,
+                "transition_digest": isolated_transition.get("transition_digest"),
+            },
+            "seal_preview": _terminal_transition_file_binding(
+                isolated_root,
+                seal_preview_path,
+                label="隔离 seal-preview-03",
+            ),
+            "candidate_result": _terminal_transition_file_binding(
+                isolated_root,
+                _stage_path(isolated_root, "capture-candidate", candidate_id)[1],
+                label="隔离 Candidate 阶段收据",
+            ),
+            "comparison_result": _terminal_transition_file_binding(
+                isolated_root,
+                _stage_path(isolated_root, "compare", candidate_id)[1],
+                label="隔离 compare 收据",
+            ),
+            "acceptance_result": _terminal_transition_file_binding(
+                isolated_root,
+                _stage_path(isolated_root, "accept", candidate_id)[1],
+                label="隔离 accept 收据",
+            ),
+            "successor_projection": {"changed_fields": []},
+            "status": "ready",
+        },
+        "supervisor_audit": supervisor_audit,
+        "executed_job_count": 0,
+        "live_request_count": 0,
+        "raw_evidence_scanned_bytes": 0,
+    }
+
+
+def create_terminal_transition_preflight(
+    arguments: argparse.Namespace,
+) -> dict[str, Any]:
+    """签发终端第 4 槽预检；只读重放正式与隔离 Campaign。"""
+
+    campaign_dir = arguments.campaign_dir
+    manifest = _require_formal_campaign(campaign_dir)
+    phase = arguments.phase
+    candidate_id = arguments.candidate_id if phase == "candidate" else None
+    if phase != "candidate" or not candidate_id:
+        raise ConfigurationError("终端 transition 预检只支持 Candidate phase。")
+    attempt_root, attempt = _load_capture_attempt(
+        campaign_dir,
+        phase,
+        candidate_id,
+        arguments.attempt_id,
+    )
+    current_tool = _tool_identity(include_git=False)
+    facts = _terminal_transition_preflight_facts(
+        campaign_dir,
+        manifest,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_root=attempt_root,
+        attempt=attempt,
+        successor_attempt_id=arguments.successor_attempt_id,
+        isolated_campaign_dir=arguments.isolated_campaign_dir,
+        supervisor_run_dir=arguments.supervisor_run_dir,
+        current_tool=current_tool,
+    )
+    core = {
+        "schema_version": TOOL_EVALUATION_TERMINAL_PREFLIGHT_SCHEMA,
+        "created_at_utc": _utc_now(),
+        **facts,
+    }
+    payload = {**core, "receipt_sha256": _fingerprint(core)}
+    _secure_write_json_once(arguments.output, payload)
+    return {
+        "status": "passed",
+        "receipt": str(arguments.output),
+        "receipt_sha256": payload["receipt_sha256"],
+        "executed_job_count": 0,
+        "live_request_count": 0,
+        "raw_evidence_scanned_bytes": 0,
+    }
+
+
+def _validate_terminal_transition_preflight_receipt(
+    receipt_path: Path | None,
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    phase: str,
+    candidate_id: str | None,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    current_tool: Mapping[str, Any],
+) -> dict[str, str]:
+    """重放一次性终端预检收据，并返回 transition 可冻结的外部绑定。"""
+
+    if receipt_path is None or receipt_path.is_symlink() or not receipt_path.is_file():
+        raise ConfigurationError("终端第 4 槽缺少隔离全链预检收据。")
+    receipt = _read_json(receipt_path, "终端 transition 预检收据")
+    expected_fields = {
+        "schema_version",
+        "created_at_utc",
+        "formal_campaign",
+        "phase",
+        "candidate_id",
+        "source_attempt",
+        "source_transition",
+        "candidate_tool",
+        "isolated_validation",
+        "supervisor_audit",
+        "executed_job_count",
+        "live_request_count",
+        "raw_evidence_scanned_bytes",
+        "receipt_sha256",
+    }
+    unsigned = dict(receipt)
+    digest = unsigned.pop("receipt_sha256", None)
+    if (
+        set(receipt) != expected_fields
+        or receipt.get("schema_version")
+        != TOOL_EVALUATION_TERMINAL_PREFLIGHT_SCHEMA
+        or not _is_rfc3339_timestamp(receipt.get("created_at_utc"))
+        or digest != _fingerprint(unsigned)
+        or receipt.get("executed_job_count") != 0
+        or receipt.get("live_request_count") != 0
+        or receipt.get("raw_evidence_scanned_bytes") != 0
+    ):
+        raise ConfigurationError("终端 transition 预检收据结构、自摘要或计数非法。")
+    isolated = receipt.get("isolated_validation")
+    if not isinstance(isolated, Mapping):
+        raise ConfigurationError("终端 transition 预检缺少隔离验证事实。")
+    successor_attempt_id = isolated.get("successor_attempt_id")
+    isolated_campaign_dir = isolated.get("campaign_dir")
+    supervisor = receipt.get("supervisor_audit")
+    if (
+        not isinstance(successor_attempt_id, str)
+        or not isinstance(isolated_campaign_dir, str)
+        or not isinstance(supervisor, Mapping)
+        or not isinstance(supervisor.get("run_dir"), str)
+    ):
+        raise ConfigurationError("终端 transition 预检坐标非法。")
+    facts = _terminal_transition_preflight_facts(
+        campaign_dir,
+        manifest,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_root=attempt_root,
+        attempt=attempt,
+        successor_attempt_id=successor_attempt_id,
+        isolated_campaign_dir=Path(isolated_campaign_dir),
+        supervisor_run_dir=Path(str(supervisor["run_dir"])),
+        current_tool=current_tool,
+    )
+    for key, value in facts.items():
+        if receipt.get(key) != value:
+            raise ConfigurationError(f"终端 transition 预检事实漂移：{key}")
+    return {"path": str(receipt_path.resolve(strict=True)), "sha256": file_sha256(receipt_path)}
+
+
 def _build_phase_evaluation_transition_preview(
     campaign_dir: Path,
     manifest: Mapping[str, Any],
@@ -11456,6 +22823,10 @@ def _build_phase_evaluation_transition_preview(
     attempt: Mapping[str, Any],
     current_tool: Mapping[str, Any],
     recovery_controls: Mapping[str, Any],
+    transition_index: int = 1,
+    frozen_recovery_scope: Mapping[str, Any] | None = None,
+    reuse_frozen_recovery_scope: bool = False,
+    terminal_preflight: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     expected_tool = manifest.get("tool_identity")
     if not isinstance(expected_tool, Mapping):
@@ -11463,38 +22834,52 @@ def _build_phase_evaluation_transition_preview(
     drift = _tool_identity_drift(current_tool, expected_tool)
     changed = _phase_evaluation_changed_files(expected_tool, current_tool)
     changed_paths = {item["path"] for item in changed}
-    allowed_paths = set(_EVALUATION_SIDE_FILES) | set(
-        _PHASE_EVALUATION_HYBRID_FILES
-    )
     if (
         current_tool.get("files_sha256") == expected_tool.get("files_sha256")
         or not changed
     ):
         raise ConfigurationError("当前工具与 Campaign 冻结身份一致，无需 transition。")
-    if (
-        set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES)
-        or changed_paths - allowed_paths
-    ):
-        raise ConfigurationError(
-            "评估 transition 包含产出侧变化，禁止原地续作："
-            + "、".join(sorted(changed_paths - allowed_paths or drift["production"]))
-        )
     if phase not in _PHASE_EVALUATION_OPERATIONS:
         raise ConfigurationError("评估 transition phase 非法。")
     recovery_scope: dict[str, Any] | None = None
     if attempt.get("status") == "failed":
-        # 失败 attempt 只允许在所有小型控制收据完整、checkpoint 可重放且
-        # 至少有一个已完成 Job 时原地恢复；具体执行闭集写入 transition 摘要。
-        recovery_scope = _phase_evaluation_recovery_scope(
-            campaign_dir,
-            manifest,
-            phase=phase,
-            candidate_id=candidate_id,
-            attempt_root=attempt_root,
-            attempt=attempt,
-        )
+        if reuse_frozen_recovery_scope:
+            recovery_scope = _validate_historical_recovery_scope(
+                frozen_recovery_scope,
+                attempt,
+            )
+        else:
+            # 首槽只允许在所有小型控制收据完整、checkpoint 可重放且至少有
+            # 一个已完成 Job 时原地恢复；具体执行闭集写入 transition 摘要。
+            recovery_scope = _phase_evaluation_recovery_scope(
+                campaign_dir,
+                manifest,
+                phase=phase,
+                candidate_id=candidate_id,
+                attempt_root=attempt_root,
+                attempt=attempt,
+            )
     elif attempt.get("status") != "awaiting_receipts":
         raise ConfigurationError("评估 transition 只允许 awaiting_receipts 或可恢复的 failed attempt。")
+    elif reuse_frozen_recovery_scope and frozen_recovery_scope is not None:
+        raise ConfigurationError("非失败 transition 不得继承 recovery_scope。")
+    allowed_production_paths = _phase_evaluation_failed_job_production_changes(
+        drift,
+        phase=phase,
+        attempt=attempt,
+        recovery_scope=recovery_scope,
+    )
+    allowed_paths = (
+        set(_EVALUATION_SIDE_FILES)
+        | set(_WATCHDOG_ONLY_TOOL_FILES)
+        | set(_PHASE_EVALUATION_HYBRID_FILES)
+        | allowed_production_paths
+    )
+    if changed_paths - allowed_paths:
+        raise ConfigurationError(
+            "评估 transition 包含未分类的工具变化："
+            + "、".join(sorted(changed_paths - allowed_paths))
+        )
     if (
         attempt.get("phase") != phase
         or attempt.get("candidate_id") != candidate_id
@@ -11503,7 +22888,10 @@ def _build_phase_evaluation_transition_preview(
         != file_sha256(campaign_dir / "campaign.json")
     ):
         raise ConfigurationError("评估 transition 与 Campaign／attempt 身份不一致。")
-    transition_path = _evaluation_transition_path(attempt_root).resolve(strict=False)
+    transition_path = _evaluation_transition_path(
+        attempt_root,
+        transition_index,
+    ).resolve(strict=False)
     for raw_root in attempt.get("evidence_roots", []):
         root = Path(str(raw_root)).resolve(strict=False)
         if transition_path == root or transition_path.is_relative_to(root):
@@ -11539,11 +22927,199 @@ def _build_phase_evaluation_transition_preview(
     }
     if recovery_scope is not None:
         core["recovery_scope"] = recovery_scope
+    if transition_index == TERMINAL_PHASE_EVALUATION_TRANSITION:
+        if terminal_preflight is None:
+            raise ConfigurationError("终端第 4 槽缺少隔离全链预检绑定。")
+        _require_file_binding(dict(terminal_preflight), "终端 transition 预检")
+        core["terminal_preflight"] = dict(terminal_preflight)
+    elif terminal_preflight is not None:
+        raise ConfigurationError("普通 transition 不得绑定终端预检收据。")
     return {
         **core,
         "status": "approval_required",
         "review_sha256": _fingerprint(core),
     }
+
+
+def _historical_phase_evaluation_transition_frozen_state(
+    campaign_dir: Path,
+    manifest: Mapping[str, Any],
+    *,
+    attempt_root: Path,
+    attempt: Mapping[str, Any],
+    transition_index: int,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """重放已批准 transition 的小型冻结事实，不检查控制的当前状态。"""
+
+    if transition_index < 1 or transition_index > MAX_PHASE_EVALUATION_TRANSITIONS:
+        raise ConfigurationError("历史评估 transition 序号非法。")
+    path = _evaluation_transition_path(attempt_root, transition_index)
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError("替代 transition 缺少紧邻的上一已批准槽位。")
+    receipt = _read_json(path, "历史评估 transition")
+    unsigned = dict(receipt)
+    digest = unsigned.pop("transition_digest", None)
+    expected_fields = {
+        "schema_version",
+        "approved_at_utc",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "phase",
+        "candidate_id",
+        "attempt_id",
+        "attempt_digest",
+        "evidence_boundary_sha256",
+        "from_tool_files_sha256",
+        "to_tool_files_sha256",
+        "from_production_sha256",
+        "to_production_sha256",
+        "from_evaluation_sha256",
+        "to_evaluation_sha256",
+        "changed_files",
+        "allowed_operations",
+        "recovery_controls",
+        "preview",
+        "review_sha256",
+        "raw_evidence_scanned_bytes",
+        "status",
+        "transition_digest",
+    }
+    if transition_index == TERMINAL_PHASE_EVALUATION_TRANSITION:
+        expected_fields.add("terminal_preflight")
+    if attempt.get("status") == "failed":
+        expected_fields.add("recovery_scope")
+    expected_tool = manifest.get("tool_identity")
+    expected_boundary = _fingerprint(
+        {
+            "attempt_digest": attempt.get("attempt_digest"),
+            "evidence_roots": attempt.get("evidence_roots"),
+        }
+    )
+    if (
+        set(receipt) != expected_fields
+        or receipt.get("schema_version") != TOOL_EVALUATION_TRANSITION_SCHEMA
+        or receipt.get("status") != "approved"
+        or not _is_rfc3339_timestamp(receipt.get("approved_at_utc"))
+        or digest != _fingerprint(unsigned)
+        or not isinstance(expected_tool, Mapping)
+        or receipt.get("campaign_id") != manifest.get("campaign_id")
+        or receipt.get("campaign_manifest_sha256")
+        != file_sha256(campaign_dir / "campaign.json")
+        or receipt.get("phase") != attempt.get("phase")
+        or receipt.get("candidate_id") != attempt.get("candidate_id")
+        or receipt.get("attempt_id") != attempt.get("attempt_id")
+        or receipt.get("attempt_digest") != attempt.get("attempt_digest")
+        or receipt.get("evidence_boundary_sha256") != expected_boundary
+        or receipt.get("from_tool_files_sha256")
+        != expected_tool.get("files_sha256")
+        or receipt.get("from_production_sha256")
+        != expected_tool.get("production_sha256")
+        or receipt.get("from_evaluation_sha256")
+        != expected_tool.get("evaluation_sha256")
+        or not SHA256_RE.fullmatch(str(receipt.get("to_tool_files_sha256", "")))
+        or not SHA256_RE.fullmatch(str(receipt.get("to_production_sha256", "")))
+        or not SHA256_RE.fullmatch(str(receipt.get("to_evaluation_sha256", "")))
+        or receipt.get("allowed_operations")
+        != list(
+            _phase_evaluation_allowed_operations(
+                str(attempt.get("phase")),
+                attempt.get("status"),
+            )
+        )
+        or receipt.get("raw_evidence_scanned_bytes") != 0
+    ):
+        raise ConfigurationError("历史评估 transition 身份或自摘要非法。")
+
+    changed = receipt.get("changed_files")
+    before = _tool_entry_index(expected_tool)
+    if (
+        not isinstance(changed, list)
+        or not changed
+        or [item.get("path") for item in changed if isinstance(item, Mapping)]
+        != sorted(
+            {
+                str(item.get("path"))
+                for item in changed
+                if isinstance(item, Mapping)
+            }
+        )
+    ):
+        raise ConfigurationError("历史评估 transition 的工具变化清单非法。")
+    for item in changed:
+        if (
+            not isinstance(item, Mapping)
+            or set(item)
+            != {"path", "from_sha256", "to_sha256", "classification"}
+            or not isinstance(item.get("path"), str)
+            or item.get("from_sha256") != before.get(str(item["path"]))
+            or (
+                item.get("to_sha256") is not None
+                and not SHA256_RE.fullmatch(str(item.get("to_sha256")))
+            )
+            or item.get("classification")
+            not in {"evaluation", "phase_scoped_hybrid", "failed_job_production"}
+        ):
+            raise ConfigurationError("历史评估 transition 的工具变化绑定非法。")
+
+    preview_binding = receipt.get("preview")
+    _require_file_binding(preview_binding, "历史评估 transition 预览")
+    assert isinstance(preview_binding, Mapping)
+    preview_path = _campaign_file(campaign_dir, str(preview_binding["path"]))
+    if (
+        preview_path
+        != _evaluation_transition_preview_path(attempt_root, transition_index)
+        or preview_path.is_symlink()
+        or not preview_path.is_file()
+        or file_sha256(preview_path) != preview_binding["sha256"]
+    ):
+        raise ConfigurationError("历史评估 transition 预览绑定漂移。")
+    preview = _read_json(preview_path, "历史评估 transition 预览")
+    preview_core = {
+        key: value
+        for key, value in preview.items()
+        if key not in {"status", "review_sha256"}
+    }
+    receipt_projection = {
+        key: value
+        for key, value in receipt.items()
+        if key
+        not in {
+            "schema_version",
+            "approved_at_utc",
+            "preview",
+            "status",
+            "transition_digest",
+        }
+    }
+    preview_projection = {
+        key: value
+        for key, value in preview.items()
+        if key not in {"schema_version", "campaign_mode", "campaign_purpose", "status"}
+    }
+    if (
+        preview.get("schema_version")
+        != TOOL_EVALUATION_TRANSITION_PREVIEW_SCHEMA
+        or preview.get("status") != "approval_required"
+        or preview.get("campaign_mode") != manifest.get("campaign_mode")
+        or preview.get("campaign_purpose") != manifest.get("campaign_purpose")
+        or preview.get("review_sha256") != _fingerprint(preview_core)
+        or receipt_projection != preview_projection
+    ):
+        raise ConfigurationError("历史评估 transition 与批准预览不一致。")
+
+    scope_value = receipt.get("recovery_scope")
+    recovery_scope = (
+        _validate_historical_recovery_scope(scope_value, attempt)
+        if attempt.get("status") == "failed"
+        else None
+    )
+    recovery_controls = _validate_frozen_phase_recovery_controls(
+        receipt.get("recovery_controls"),
+        attempt=attempt,
+        transition=receipt,
+        recovery_scope=recovery_scope,
+    )
+    return recovery_controls, recovery_scope
 
 
 def _validate_phase_evaluation_transition(
@@ -11595,6 +23171,8 @@ def _validate_phase_evaluation_transition(
         "status",
         "transition_digest",
     }
+    if transition_index == TERMINAL_PHASE_EVALUATION_TRANSITION:
+        expected_fields.add("terminal_preflight")
     if attempt.get("status") == "failed":
         expected_fields.add("recovery_scope")
     if (
@@ -11618,12 +23196,69 @@ def _validate_phase_evaluation_transition(
     preview = _read_json(preview_path, "评估工具 transition 预览")
     phase = str(attempt.get("phase"))
     candidate_id = attempt.get("candidate_id")
-    recovery_controls = _validate_phase_recovery_controls(
-        campaign_dir,
-        manifest,
-        preview.get("recovery_controls"),
-        current_tool,
-    )
+    terminal_preflight: dict[str, str] | None = None
+    if transition_index == 1:
+        recovery_controls = _validate_phase_recovery_controls(
+            campaign_dir,
+            manifest,
+            preview.get("recovery_controls"),
+            current_tool,
+            phase=phase,
+            candidate_id=(str(candidate_id) if candidate_id is not None else None),
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+        frozen_recovery_scope = None
+        reuse_frozen_recovery_scope = False
+    else:
+        recovery_scope_value = preview.get("recovery_scope")
+        frozen_recovery_scope = (
+            _validate_historical_recovery_scope(recovery_scope_value, attempt)
+            if attempt.get("status") == "failed"
+            else None
+        )
+        recovery_controls = _validate_frozen_phase_recovery_controls(
+            preview.get("recovery_controls"),
+            attempt=attempt,
+            transition=preview,
+            recovery_scope=frozen_recovery_scope,
+        )
+        reuse_frozen_recovery_scope = True
+        if transition_index > 1:
+            previous_controls, previous_scope = (
+                _historical_phase_evaluation_transition_frozen_state(
+                    campaign_dir,
+                    manifest,
+                    attempt_root=attempt_root,
+                    attempt=attempt,
+                    transition_index=transition_index - 1,
+                )
+            )
+            if (
+                recovery_controls != previous_controls
+                or frozen_recovery_scope != previous_scope
+            ):
+                raise ConfigurationError(
+                    "替代 transition 未原样继承上一槽冻结控制与恢复闭集。"
+                )
+        if transition_index == TERMINAL_PHASE_EVALUATION_TRANSITION:
+            preflight_value = preview.get("terminal_preflight")
+            _require_file_binding(preflight_value, "终端 transition 预检")
+            assert isinstance(preflight_value, Mapping)
+            terminal_preflight = _validate_terminal_transition_preflight_receipt(
+                Path(str(preflight_value["path"])),
+                campaign_dir,
+                manifest,
+                phase=phase,
+                candidate_id=(
+                    str(candidate_id) if candidate_id is not None else None
+                ),
+                attempt_root=attempt_root,
+                attempt=attempt,
+                current_tool=current_tool,
+            )
+            if terminal_preflight != dict(preflight_value):
+                raise ConfigurationError("终端 transition 预检文件绑定漂移。")
     expected_preview = _build_phase_evaluation_transition_preview(
         campaign_dir,
         manifest,
@@ -11633,6 +23268,10 @@ def _validate_phase_evaluation_transition(
         attempt=attempt,
         current_tool=current_tool,
         recovery_controls=recovery_controls,
+        transition_index=transition_index,
+        frozen_recovery_scope=frozen_recovery_scope,
+        reuse_frozen_recovery_scope=reuse_frozen_recovery_scope,
+        terminal_preflight=terminal_preflight,
     )
     projected = {
         key: value
@@ -11675,8 +23314,6 @@ def _load_phase_evaluation_transition(
     current_tool: Mapping[str, Any],
     drift: Mapping[str, list[str]],
 ) -> dict[str, str]:
-    if set(drift["production"]) - set(_PHASE_EVALUATION_HYBRID_FILES):
-        raise ConfigurationError("评估 transition 不能放行产出侧工具漂移。")
     source_root, source_attempt, bound_path, bound_index = (
         _phase_evaluation_transition_source(
             campaign_dir,
@@ -11695,8 +23332,23 @@ def _load_phase_evaluation_transition(
         current_tool,
         allocate=False,
     )
+    uses_replacement_transition = False
     if bound_index is not None and transition_index != bound_index:
-        raise ConfigurationError("attempt 评估 transition 当前工具摘要不匹配绑定槽位。")
+        # successor 的 attempt.json 是不可变事实，只能继续保留创建它时使用的
+        # transition 作为来源锚点。若之后仅修复评估侧并在同一失败 source
+        # attempt 追加了更高序号的替代 transition，已完成闭集的 successor
+        # 应直接使用当前工具摘要对应的新槽位做离线 seal，不能重写 attempt，
+        # 更不能再次执行已经完成的 Job。
+        if not (
+            bound_path is not None
+            and source_attempt.get("status") == "failed"
+            and attempt.get("status") == "awaiting_receipts"
+            and transition_index > bound_index
+        ):
+            raise ConfigurationError(
+                "attempt 评估 transition 当前工具摘要不匹配绑定槽位。"
+            )
+        uses_replacement_transition = True
     receipt = _validate_phase_evaluation_transition(
         campaign_dir,
         manifest,
@@ -11704,6 +23356,15 @@ def _load_phase_evaluation_transition(
         attempt=source_attempt,
         current_tool=current_tool,
         transition_index=transition_index,
+    )
+    recovery_scope = receipt.get("recovery_scope")
+    _phase_evaluation_failed_job_production_changes(
+        drift,
+        phase=str(source_attempt.get("phase", "")),
+        attempt=source_attempt,
+        recovery_scope=(
+            recovery_scope if isinstance(recovery_scope, Mapping) else None
+        ),
     )
     allowed_operations = set(receipt.get("allowed_operations", []))
     if source_attempt.get("status") == "failed" and bound_path is not None:
@@ -11725,16 +23386,45 @@ def _load_phase_evaluation_transition(
                 successor_root=attempt_root,
                 successor_attempt=attempt,
                 transition=receipt,
+                current_tool=current_tool,
             )
         )
     if operation not in allowed_operations:
         raise ConfigurationError(f"评估 transition 未授权当前操作：{operation}")
     path = _evaluation_transition_path(source_root, transition_index)
-    if bound_path is not None and path.resolve(strict=True) != bound_path.resolve(strict=True):
+    if (
+        bound_path is not None
+        and not uses_replacement_transition
+        and path.resolve(strict=True) != bound_path.resolve(strict=True)
+    ):
         raise ConfigurationError("attempt 评估 transition 绑定路径漂移。")
     return {
         "path": path.relative_to(campaign_dir).as_posix(),
         "sha256": file_sha256(path),
+    }
+
+
+def _stage_evaluation_transition_binding(
+    tool_impact: Mapping[str, Any] | None,
+) -> dict[str, str] | None:
+    """把计划身份校验结果收口为阶段收据允许的 transition 文件绑定。
+
+    ``_verify_plan_identity`` 在恢复 attempt 上返回带影响闭集的包装对象，
+    而阶段收据只允许保存不可变的 ``path``／``sha256``。直接把包装对象写入
+    stage 会在批准 seal 时被 Schema 拒绝；这里与 run 路径使用同一收口规则。
+    """
+
+    if tool_impact is None:
+        return None
+    bound: Any = tool_impact.get("evaluation_transition")
+    if bound is None and set(tool_impact) == {"path", "sha256"}:
+        bound = tool_impact
+    if bound is None:
+        return None
+    _require_file_binding(bound, "评估工具 transition")
+    return {
+        "path": str(bound["path"]),
+        "sha256": str(bound["sha256"]),
     }
 
 
@@ -11755,18 +23445,61 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
         candidate_id,
         arguments.attempt_id,
     )
-    current_tool = _tool_identity(include_git=False)
-    recovery_controls = _phase_recovery_controls_from_arguments(
-        arguments,
+    _bind_active_lease_attempt(
         campaign_dir,
-        manifest,
-        current_tool,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_id=attempt.get("attempt_id"),
     )
+    current_tool = _tool_identity(include_git=False)
     transition_index = _phase_evaluation_transition_index(
         attempt_root,
         current_tool,
         allocate=True,
     )
+    terminal_preflight_path = getattr(
+        arguments,
+        "terminal_transition_preflight_receipt",
+        None,
+    )
+    terminal_preflight: dict[str, str] | None = None
+    if transition_index == TERMINAL_PHASE_EVALUATION_TRANSITION:
+        terminal_preflight = _validate_terminal_transition_preflight_receipt(
+            terminal_preflight_path,
+            campaign_dir,
+            manifest,
+            phase=phase,
+            candidate_id=candidate_id,
+            attempt_root=attempt_root,
+            attempt=attempt,
+            current_tool=current_tool,
+        )
+    elif terminal_preflight_path is not None:
+        raise ConfigurationError("第 1～3 槽不得提供终端 transition 预检收据。")
+    if transition_index == 1:
+        recovery_controls = _phase_recovery_controls_from_arguments(
+            arguments,
+            campaign_dir,
+            manifest,
+            current_tool,
+            phase=phase,
+            candidate_id=candidate_id,
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+        frozen_recovery_scope = None
+        reuse_frozen_recovery_scope = False
+    else:
+        recovery_controls, frozen_recovery_scope = (
+            _historical_phase_evaluation_transition_frozen_state(
+                campaign_dir,
+                manifest,
+                attempt_root=attempt_root,
+                attempt=attempt,
+                transition_index=transition_index - 1,
+            )
+        )
+        reuse_frozen_recovery_scope = True
     preview = _build_phase_evaluation_transition_preview(
         campaign_dir,
         manifest,
@@ -11776,6 +23509,10 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
         attempt=attempt,
         current_tool=current_tool,
         recovery_controls=recovery_controls,
+        transition_index=transition_index,
+        frozen_recovery_scope=frozen_recovery_scope,
+        reuse_frozen_recovery_scope=reuse_frozen_recovery_scope,
+        terminal_preflight=terminal_preflight,
     )
     preview_path = _evaluation_transition_preview_path(
         attempt_root,
@@ -11844,6 +23581,8 @@ def create_phase_evaluation_transition(arguments: argparse.Namespace) -> dict[st
             # 失败源 attempt 的 transition 必须把冻结的失败／未完成闭集
             # 原样写入批准收据；后继 attempt 只能按这份不可变摘要补跑。
             core["recovery_scope"] = preview["recovery_scope"]
+        if "terminal_preflight" in preview:
+            core["terminal_preflight"] = preview["terminal_preflight"]
         receipt = {**core, "transition_digest": _fingerprint(core)}
         _write_or_verify_json(receipt_path, receipt)
         receipt = _validate_phase_evaluation_transition(
@@ -11921,26 +23660,16 @@ def _container_image_id(
 ) -> str | None:
     try:
         command = ["docker", "inspect", "--format", "{{.Image}}", container]
-        if deadline is not None:
-            result = incremental_recovery.run_bounded_subprocess(
-                command,
-                timeout=30,
-                deadline=deadline,
-                operation=f"docker:inspect:{container}",
-                check=True,
-                capture_output=True,
-                text=True,
-                heartbeat=heartbeat,
-            )
-        else:
-            result = subprocess.run(
-                command,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=30,
-            )
+        result = _run_external_command(
+            command,
+            timeout_seconds=30,
+            deadline=deadline,
+            operation=f"docker:inspect:{container}",
+            check=True,
+            capture_output=True,
+            text=True,
+            heartbeat=heartbeat,
+        )
     except incremental_recovery.WallClockTimeoutError:
         raise
     except (OSError, subprocess.SubprocessError):
@@ -11966,26 +23695,16 @@ def _image_repo_digests(
             "{{json .RepoDigests}}",
             image_id,
         ]
-        if deadline is not None:
-            result = incremental_recovery.run_bounded_subprocess(
-                command,
-                timeout=30,
-                deadline=deadline,
-                operation=f"docker:image-inspect:{image_id}",
-                check=True,
-                capture_output=True,
-                text=True,
-                heartbeat=heartbeat,
-            )
-        else:
-            result = subprocess.run(
-                command,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=30,
-            )
+        result = _run_external_command(
+            command,
+            timeout_seconds=30,
+            deadline=deadline,
+            operation=f"docker:image-inspect:{image_id}",
+            check=True,
+            capture_output=True,
+            text=True,
+            heartbeat=heartbeat,
+        )
         payload = json.loads(result.stdout)
     except incremental_recovery.WallClockTimeoutError:
         raise
@@ -12116,26 +23835,16 @@ def _verify_official_binaries(
                 container_probe,
                 binary,
             ]
-            if deadline is not None:
-                result = incremental_recovery.run_bounded_subprocess(
-                    command,
-                    timeout=60,
-                    deadline=deadline,
-                    operation=f"official-binary:{name}",
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    heartbeat=heartbeat,
-                )
-            else:
-                result = subprocess.run(
-                    command,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=60,
-                )
+            result = _run_external_command(
+                command,
+                timeout_seconds=60,
+                deadline=deadline,
+                operation=f"official-binary:{name}",
+                check=True,
+                capture_output=True,
+                text=True,
+                heartbeat=heartbeat,
+            )
             payload = json.loads(result.stdout)
         except incremental_recovery.WallClockTimeoutError:
             raise
@@ -12171,26 +23880,16 @@ def _verify_official_binaries(
         )
     try:
         command = [str(host_relay), "--version"]
-        if deadline is not None:
-            host_version = incremental_recovery.run_bounded_subprocess(
-                command,
-                timeout=30,
-                deadline=deadline,
-                operation="official-binary:host-relay",
-                check=True,
-                capture_output=True,
-                text=True,
-                heartbeat=heartbeat,
-            )
-        else:
-            host_version = subprocess.run(
-                command,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=30,
-            )
+        host_version = _run_external_command(
+            command,
+            timeout_seconds=30,
+            deadline=deadline,
+            operation="official-binary:host-relay",
+            check=True,
+            capture_output=True,
+            text=True,
+            heartbeat=heartbeat,
+        )
     except incremental_recovery.WallClockTimeoutError:
         raise
     except (OSError, subprocess.SubprocessError) as error:
@@ -12237,26 +23936,16 @@ def _verify_official_binaries(
                 helper_probe,
                 helper,
             ]
-            if deadline is not None:
-                result = incremental_recovery.run_bounded_subprocess(
-                    command,
-                    timeout=60,
-                    deadline=deadline,
-                    operation=f"official-helper:{name}",
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    heartbeat=heartbeat,
-                )
-            else:
-                result = subprocess.run(
-                    command,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=60,
-                )
+            result = _run_external_command(
+                command,
+                timeout_seconds=60,
+                deadline=deadline,
+                operation=f"official-helper:{name}",
+                check=True,
+                capture_output=True,
+                text=True,
+                heartbeat=heartbeat,
+            )
             payload = json.loads(result.stdout)
         except incremental_recovery.WallClockTimeoutError:
             raise
@@ -12772,6 +24461,8 @@ def _load_capture_reservation(
     *,
     phase: str,
     candidate_id: str | None,
+    _manifest: Mapping[str, Any] | None = None,
+    _historical_manifest_controls: bool = False,
 ) -> dict[str, Any]:
     """读取 attempt 原子发布前即存在的不可变预约收据。"""
 
@@ -12799,9 +24490,17 @@ def _load_capture_reservation(
     digest = payload.get("reservation_digest")
     unsigned = dict(payload)
     unsigned.pop("reservation_digest", None)
-    manifest = load_campaign_manifest(campaign_dir)
+    manifest = (
+        dict(_manifest)
+        if isinstance(_manifest, Mapping)
+        else load_campaign_manifest(
+            campaign_dir,
+            _control_epoch_bootstrap=_historical_manifest_controls,
+        )
+    )
     if (
-        set(payload) != required
+        not set(payload).issubset(required | {"campaign_lease"})
+        or not required.issubset(set(payload))
         or payload.get("schema_version") != CAPTURE_RESERVATION_SCHEMA
         or payload.get("campaign_id") != manifest["campaign_id"]
         or payload.get("campaign_mode") != manifest["campaign_mode"]
@@ -12821,6 +24520,16 @@ def _load_capture_reservation(
         or _fingerprint(unsigned) != digest
     ):
         raise ConfigurationError("抓包预约身份或摘要不一致。")
+    lease_binding = payload.get("campaign_lease")
+    if lease_binding is not None:
+        if (
+            not isinstance(lease_binding, Mapping)
+            or set(lease_binding) != {"path", "owner_nonce", "deadline_at_utc"}
+            or lease_binding.get("path") != CAMPAIGN_LEASE_FILENAME
+            or not SHA256_RE.fullmatch(str(lease_binding.get("owner_nonce", "")))
+            or not _is_rfc3339_timestamp(lease_binding.get("deadline_at_utc"))
+        ):
+            raise ConfigurationError("抓包预约 Campaign lease 绑定非法。")
     planned_jobs = payload.get("planned_jobs")
     if not isinstance(planned_jobs, list) or not planned_jobs:
         raise ConfigurationError("抓包预约缺少计划任务。")
@@ -12851,7 +24560,7 @@ def _tool_component_digest_map(
     try:
         bundle = _tool_component_bundle(identity)
         if canonical:
-            bundle = _canonicalize_watchdog_component_bundle(bundle)
+            bundle = _canonicalize_tool_component_bundle(bundle)
     except (ConfigurationError, incremental_recovery.IncrementalRecoveryError):
         return None
     components = bundle.get("components")
@@ -12876,8 +24585,15 @@ def _historical_result_metadata_matches(
     execution_sha256: str,
     *,
     current_tool: Mapping[str, Any],
+    allowed_high_risk_path_changes: Iterable[str] = (),
+    validated_current_production_sha256: str | None = None,
 ) -> bool:
-    """校验旧结果的增量元数据仍属于同一 Job／工具依赖闭集。"""
+    """校验旧结果的增量元数据仍属于同一 Job／工具依赖闭集。
+
+    评估器／编排器属于低风险组件：它们可以改变结果键，但不能改变已经
+    生成的请求字节。历史结果因此先按冻结工具的原始或规范化组件摘要验真，
+    再由调用方重绑到当前键；产出侧组件仍要求规范化摘要逐字相同。
+    """
 
     if result.get("execution_sha256") != execution_sha256:
         return False
@@ -12902,6 +24618,24 @@ def _historical_result_metadata_matches(
         return False
     if not isinstance(current_tool, Mapping):
         return False
+    allowed_high_risk_paths = {
+        str(path) for path in allowed_high_risk_path_changes
+    }
+    if any(
+        not path
+        or path.startswith("/")
+        or "\\" in path
+        or any(part in {"", ".", ".."} for part in PurePosixPath(path).parts)
+        for path in allowed_high_risk_paths
+    ):
+        return False
+    allowed_high_risk = {
+        _tool_component_for_path(path) for path in allowed_high_risk_paths
+    }
+    if not allowed_high_risk.issubset(
+        {"producer", "relay", "runtime", "shared", "scenario"}
+    ):
+        return False
     historical_raw = _tool_component_digest_map(frozen_tool)
     historical_canonical = _tool_component_digest_map(frozen_tool, canonical=True)
     current_raw = _tool_component_digest_map(current_tool)
@@ -12911,31 +24645,92 @@ def _historical_result_metadata_matches(
         for value in recorded_digests.values()
     ):
         return False
-    if not all(
-        name in (historical_raw or {})
-        and name in (historical_canonical or {})
-        and name in (current_raw or {})
-        and name in (current_canonical or {})
-        # 原始摘要可能因为组件重新归类而不同；真正不变的判据是历史与
-        # 当前的规范化摘要相同，同时旧收据的摘要必须确实来自历史原始
-        # 或规范化视图。这样只放宽归类变化，不会吞掉 producer 字节变化。
-        and historical_canonical[name] == current_canonical[name]
-        and str(recorded_digests[name])
-        in {
+    for name in names:
+        if not all(
+            name in values
+            for values in (
+                historical_raw or {},
+                historical_canonical or {},
+                current_raw or {},
+                current_canonical or {},
+            )
+        ):
+            return False
+        # 旧组件摘要可能因评估文件从 shared 移入 evaluator 而变化；只要
+        # 收据中的值确实来自冻结身份，便可在当前 attempt 重绑。高风险组件
+        # 仍必须逐字保持规范化摘要，防止把真实 producer 改动放行。
+        if (
+            name not in _LOW_RISK_TOOL_COMPONENTS
+            and name not in allowed_high_risk
+            and historical_canonical[name] != current_canonical[name]
+        ):
+            return False
+        if str(recorded_digests[name]) not in {
             historical_raw[name],
             historical_canonical[name],
-        }
-        for name in names
-    ):
+        }:
+            return False
+    # 全局产出摘要只作审计。调用方已经用逐文件反向依赖表证明这里排除的路径
+    # 不影响当前 Job；未登记路径在进入本函数前停线，不能退化为全量重跑。
+    try:
+        excluded_production_paths = set(_PHASE_EVALUATION_HYBRID_FILES)
+        excluded_production_paths.update(allowed_high_risk_paths)
+        if validated_current_production_sha256 is not None:
+            if (
+                not SHA256_RE.fullmatch(validated_current_production_sha256)
+                or _tool_identity_side_digest_excluding(
+                    current_tool,
+                    "production",
+                    _PHASE_EVALUATION_HYBRID_FILES,
+                )
+                != validated_current_production_sha256
+            ):
+                return False
+        elif _tool_identity_side_digest_excluding(
+            frozen_tool or {},
+            "production",
+            excluded_production_paths,
+        ) != _tool_identity_side_digest_excluding(
+            current_tool,
+            "production",
+            excluded_production_paths,
+        ):
+            return False
+    except (ConfigurationError, incremental_recovery.IncrementalRecoveryError):
         return False
-    dependency_rows = [
-        {
-            "id": f"tool:{name}",
-            "status": "passed",
-            "result_sha256": str(recorded_digests[name]),
-        }
-        for name in names
-    ]
+    recorded_dependency_files = result.get("tool_dependency_files")
+    if recorded_dependency_files is not None:
+        if not isinstance(recorded_dependency_files, Mapping):
+            return False
+        try:
+            frozen_files = _tool_entry_digest_map(frozen_tool or {})
+            current_files = _tool_entry_digest_map(current_tool)
+        except ConfigurationError:
+            return False
+        if any(
+            frozen_files.get(str(path)) != digest
+            or current_files.get(str(path)) != digest
+            for path, digest in recorded_dependency_files.items()
+        ):
+            return False
+        dependency_rows = [
+            {
+                "id": "tool-file:"
+                + hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:24],
+                "status": "passed",
+                "result_sha256": str(digest),
+            }
+            for path, digest in sorted(recorded_dependency_files.items())
+        ]
+    else:
+        dependency_rows = [
+            {
+                "id": f"tool:{name}",
+                "status": "passed",
+                "result_sha256": str(recorded_digests[name]),
+            }
+            for name in names
+        ]
     try:
         dependency_sha256 = incremental_recovery.dependency_digest(dependency_rows)
         environment_sha256 = _fingerprint(
@@ -12983,6 +24778,7 @@ def _rebase_reused_result(
             "execution_sha256": incremental["input_sha256"],
             "tool_components": incremental["components"],
             "tool_component_digests": incremental["component_digests"],
+            "tool_dependency_files": incremental["tool_dependency_files"],
             "input_sha256": incremental["input_sha256"],
             "environment_sha256": incremental["environment_sha256"],
             "dependency_sha256": incremental["dependency_sha256"],
@@ -13001,12 +24797,15 @@ def _reserve_capture_attempt(
     jobs: list[Job],
     allow_failed_rerun: bool = False,
     deadline: incremental_recovery.WallClockDeadline | None = None,
+    lease: CampaignLease | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """在跨进程锁内原子发布预约，关闭 check-then-create 与空目录窗口。"""
 
     relative = _capture_attempt_relative(phase, candidate_id)
     if deadline is not None:
         deadline.check("attempt:reserve:start")
+    if lease is not None:
+        lease.check("attempt:reserve:start")
     with _campaign_lock(campaign_dir, deadline=deadline):
         _reject_contaminated_campaign(campaign_dir)
         canonical = "capture-official" if phase == "official" else "capture-candidate"
@@ -13041,6 +24840,10 @@ def _reserve_capture_attempt(
             time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             + f"-{secrets.token_hex(8)}"
         )
+        if lease is not None:
+            # 先绑定计划中的 attempt-id，再发布 reservation；这样即使发布过程
+            # 被中断，持久 lease 仍能指出当前命令正在创建哪个 attempt。
+            lease.bind_attempt(attempt_id)
         final_root = attempts_root / attempt_id
         if final_root.exists() or final_root.is_symlink():
             raise ConfigurationError("随机 attempt-id 发生冲突。")
@@ -13078,6 +24881,17 @@ def _reserve_capture_attempt(
                 for job in jobs
             ],
         }
+        if lease is not None:
+            if not lease.acquired:
+                raise ConfigurationError("reservation 缺少 active Campaign lease。")
+            lease_payload = lease.payload
+            if lease_payload.get("campaign_id") != manifest.get("campaign_id"):
+                raise ConfigurationError("reservation 与 Campaign lease 身份不一致。")
+            reservation["campaign_lease"] = {
+                "path": CAMPAIGN_LEASE_FILENAME,
+                "owner_nonce": str(lease_payload["owner_nonce"]),
+                "deadline_at_utc": str(lease_payload["deadline_at_utc"]),
+            }
         reservation["reservation_digest"] = _fingerprint(reservation)
 
         temporary_root = Path(
@@ -13122,6 +24936,16 @@ def _prior_complete_results(
     identity: dict[str, Any],
     tool_identity: Mapping[str, Any] | None = None,
     affected_job_ids: Iterable[str] = (),
+    expected_reuse_job_ids: Iterable[str] | None = None,
+    source_attempt_id: str | None = None,
+    source_campaign_dir: Path | None = None,
+    source_candidate_id: str | None = None,
+    source_receipt_binding: Mapping[str, Any] | None = None,
+    allowed_high_risk_path_changes: Iterable[str] = (),
+    validated_current_production_sha256: str | None = None,
+    allowed_source_statuses: Iterable[str] = ("failed",),
+    allow_unbound_cross_campaign_preview: bool = False,
+    source_tool_identity: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """承接可复用结果，只返回未受影响且已经通过的 Job。
 
@@ -13130,17 +24954,93 @@ def _prior_complete_results(
     Job 进入下一轮，已经通过且依赖未变的结果保持只读复用。
     """
 
-    attempts_root = campaign_dir / relative / "attempts"
+    history_campaign_dir = (
+        source_campaign_dir.resolve(strict=True)
+        if source_campaign_dir is not None
+        else campaign_dir.resolve(strict=True)
+    )
+    history_candidate_id = (
+        source_candidate_id if source_campaign_dir is not None else candidate_id
+    )
+    history_relative = _capture_attempt_relative(phase, history_candidate_id)
+    attempts_root = history_campaign_dir / history_relative / "attempts"
     if not attempts_root.is_dir() or attempts_root.is_symlink():
         raise ConfigurationError("--rerun-failed 找不到先前失败 attempt。")
     expected_jobs = {job.job_id: job for job in jobs}
+    expected_reuse = (
+        {str(item) for item in expected_reuse_job_ids}
+        if expected_reuse_job_ids is not None
+        else None
+    )
+    if expected_reuse is not None and not expected_reuse.issubset(expected_jobs):
+        raise ConfigurationError("恢复闭集包含当前计划之外的已完成 Job。")
+    if validated_current_production_sha256 is not None and (
+        expected_reuse is None
+        or not SHA256_RE.fullmatch(validated_current_production_sha256)
+    ):
+        raise ConfigurationError("恢复闭集的当前产出侧身份非法。")
     # 这些身份只读取一次：恢复规划必须基于同一份冻结 Campaign 和同一份
     # 当前工具摘要，不能在遍历多个历史 attempt 时出现坐标漂移。
-    frozen_manifest = load_campaign_manifest(campaign_dir)
+    cross_campaign_source = history_campaign_dir != campaign_dir.resolve(strict=True)
+    if allow_unbound_cross_campaign_preview and (
+        not cross_campaign_source
+        or source_attempt_id is None
+        or expected_reuse is None
+        or source_receipt_binding is not None
+    ):
+        raise ConfigurationError("无绑定跨 Campaign 复用只允许严格预览模式。")
+    if (
+        cross_campaign_source
+        and source_receipt_binding is None
+        and not allow_unbound_cross_campaign_preview
+    ):
+        raise ConfigurationError("跨 Campaign 复用缺少当前 Campaign 来源 transition。")
+    trusted_source_transition = False
+    if source_receipt_binding is not None:
+        if (
+            set(source_receipt_binding) != {"path", "sha256", "bytes"}
+            or not isinstance(source_receipt_binding.get("path"), str)
+            or Path(str(source_receipt_binding["path"])).is_absolute()
+            or not SHA256_RE.fullmatch(str(source_receipt_binding.get("sha256", "")))
+            or not isinstance(source_receipt_binding.get("bytes"), int)
+            or isinstance(source_receipt_binding.get("bytes"), bool)
+            or int(source_receipt_binding["bytes"]) <= 0
+        ):
+            raise ConfigurationError("跨 Campaign 复用来源绑定非法。")
+        source_binding_path = _campaign_file(
+            campaign_dir, str(source_receipt_binding["path"])
+        )
+        if (
+            source_binding_path.is_symlink()
+            or not source_binding_path.is_file()
+            or file_sha256(source_binding_path) != source_receipt_binding["sha256"]
+            or source_binding_path.stat().st_size != source_receipt_binding["bytes"]
+        ):
+            raise ConfigurationError("跨 Campaign 复用来源绑定漂移。")
+        trusted_source_transition = True
+    explicit_historical_source = (
+        cross_campaign_source
+        and source_attempt_id is not None
+        and (allow_unbound_cross_campaign_preview or trusted_source_transition)
+    )
+    if source_tool_identity is not None and not explicit_historical_source:
+        raise ConfigurationError(
+            "来源 attempt 工具身份只允许用于严格跨 Campaign 预览或已绑定来源 transition。"
+        )
+    historical_source_controls = explicit_historical_source
+    frozen_manifest = load_campaign_manifest(
+        history_campaign_dir,
+        _control_epoch_bootstrap=historical_source_controls,
+    )
+    current_manifest = load_campaign_manifest(campaign_dir)
     current_tool = tool_identity or _tool_identity(include_git=False)
     if not isinstance(current_tool, Mapping):
         raise ConfigurationError("当前工具身份不是对象，拒绝增量恢复。")
-    frozen_tool = frozen_manifest.get("tool_identity")
+    frozen_tool = (
+        source_tool_identity
+        if source_tool_identity is not None
+        else frozen_manifest.get("tool_identity")
+    )
     frozen_tool_files_sha256 = (
         frozen_tool.get("files_sha256")
         if isinstance(frozen_tool, Mapping)
@@ -13149,21 +25049,48 @@ def _prior_complete_results(
     global_tool_unchanged = (
         current_tool.get("files_sha256") == frozen_tool_files_sha256
     )
-    for attempt, _ in _ordered_capture_attempts(
-        campaign_dir,
-        phase,
-        candidate_id,
+    changed_production_paths: list[str] = []
+    path_job_map: dict[str, set[str]] = {}
+    if isinstance(frozen_tool, Mapping):
+        (
+            exact_affected_job_ids,
+            changed_production_paths,
+            unmapped_production_paths,
+        ) = _exact_tool_path_impact(jobs, frozen_tool, current_tool)
+        if unmapped_production_paths:
+            raise ConfigurationError(
+                "历史结果复用发现未登记的产出侧工具变化："
+                + "、".join(unmapped_production_paths)
+                + "；禁止扩大为全量重跑。"
+            )
+        path_job_map = _tool_path_job_map(jobs, frozen_tool, current_tool)
+    else:
+        exact_affected_job_ids = []
+    allowed_statuses = {str(value) for value in allowed_source_statuses}
+    if not allowed_statuses or not allowed_statuses.issubset(
+        {"failed", "awaiting_receipts"}
     ):
+        raise ConfigurationError("增量恢复源 attempt 状态白名单非法。")
+    authorized_runtime_transition_ids: frozenset[str] | None = None
+    for attempt, _ in _ordered_capture_attempts(
+        history_campaign_dir,
+        phase,
+        history_candidate_id,
+        _historical_manifest_controls=historical_source_controls,
+    ):
+        if source_attempt_id is not None and attempt.name != source_attempt_id:
+            continue
         receipt = attempt / "attempt.json"
         if not receipt.is_file() or receipt.is_symlink():
             continue
         _, payload = _load_capture_attempt(
-            campaign_dir,
+            history_campaign_dir,
             phase,
-            candidate_id,
+            history_candidate_id,
             attempt.name,
+            _historical_manifest_controls=historical_source_controls,
         )
-        if payload.get("status") != "failed":
+        if payload.get("status") not in allowed_statuses:
             continue
         if _fingerprint(payload.get("identity")) != _fingerprint(identity):
             raise ConfigurationError(
@@ -13175,6 +25102,7 @@ def _prior_complete_results(
             continue
         completed = []
         affected = set(str(item) for item in affected_job_ids)
+        affected.update(exact_affected_job_ids)
         for item in results:
             if not isinstance(item, dict) or item.get("status") != "complete":
                 continue
@@ -13191,28 +25119,86 @@ def _prior_complete_results(
                 # 时才允许承接；任何脚本、参数、环境或证据根变化都继续
                 # 走原有的 fail-close 漂移错误。
                 frozen_job = _frozen_job_definition(frozen_manifest, job_id)
-                if not _relocated_job_execution_matches(
-                    expected_job,
-                    recorded_execution_sha256,
-                    frozen_job,
+                coordinate_matches = (
+                    _successor_job_execution_matches(
+                        expected_job,
+                        recorded_execution_sha256,
+                        frozen_job,
+                        current_campaign_id=str(current_manifest["campaign_id"]),
+                        predecessor_campaign_id=str(
+                            frozen_manifest["campaign_id"]
+                        ),
+                        current_candidate_id=candidate_id,
+                        predecessor_candidate_id=history_candidate_id,
+                    )
+                    if cross_campaign_source
+                    else _relocated_job_execution_matches(
+                        expected_job,
+                        recorded_execution_sha256,
+                        frozen_job,
+                    )
+                )
+                if (
+                    not coordinate_matches
+                    and cross_campaign_source
+                    and job_id in LEGACY_DEFAULT_CODEX_BIN_JOB_SCRIPTS
                 ):
+                    if authorized_runtime_transition_ids is None:
+                        authorized_runtime_transition_ids = (
+                            _bound_runtime_scenario_transition_job_ids(
+                                history_campaign_dir,
+                                frozen_manifest,
+                            )
+                        )
+                    coordinate_matches = (
+                        _legacy_default_codex_bin_execution_matches(
+                            expected_job,
+                            recorded_execution_sha256,
+                            frozen_manifest,
+                            item,
+                            authorized_job_ids=(
+                                authorized_runtime_transition_ids
+                            ),
+                            current_campaign_id=str(
+                                current_manifest["campaign_id"]
+                            ),
+                            predecessor_campaign_id=str(
+                                frozen_manifest["campaign_id"]
+                            ),
+                            current_candidate_id=candidate_id,
+                            predecessor_candidate_id=history_candidate_id,
+                        )
+                    )
+                if not coordinate_matches:
                     raise ConfigurationError("先前失败 attempt 的已完成任务定义漂移。")
                 relocated = True
             # 组件身份存在时做精确的 Job 级命中；旧 attempt 只在工具树
             # 完全不变时兼容承接，避免把旧代码产出的结果误当成新代码结果。
-            if job_id in affected:
+            if expected_reuse is not None and job_id not in expected_reuse:
+                # recovery_scope 是唯一事实源；其它“受影响”推导不能把闭集
+                # 外的结果带入本轮。
+                continue
+            if expected_reuse is None and job_id in affected:
                 continue
             expected_incremental = _job_incremental_metadata(
                 expected_job, identity=identity, tool_identity=current_tool
             )
+            unrelated_changed_paths = {
+                path
+                for path in changed_production_paths
+                if job_id not in path_job_map.get(path, set())
+            }
+            permitted_rebase_paths = set(allowed_high_risk_path_changes)
+            permitted_rebase_paths.update(unrelated_changed_paths)
             recorded_key = item.get("incremental_result_key")
+            needs_rebase = False
             if recorded_key is None:
                 if not global_tool_unchanged:
                     continue
-            elif relocated:
-                # 路径迁移会改变 execution_sha256，因而也会改变历史 input
-                # 与 result key。先用历史执行摘要和当前工具身份校验旧结果，
-                # 通过后再在新 attempt 中重绑当前摘要。
+            elif relocated or recorded_key != expected_incremental["result_key"]:
+                # 路径迁移、组件重新归类或低风险评估修复都会改变当前键。
+                # 先按冻结身份验证历史键，成功后只在新 attempt 中重绑当前
+                # execution／component／result key，绝不回写历史收据。
                 if not _historical_result_metadata_matches(
                     item,
                     expected_job,
@@ -13220,10 +25206,40 @@ def _prior_complete_results(
                     frozen_tool if isinstance(frozen_tool, Mapping) else None,
                     str(recorded_execution_sha256),
                     current_tool=current_tool,
+                    allowed_high_risk_path_changes=(
+                        permitted_rebase_paths
+                    ),
+                    validated_current_production_sha256=(
+                        validated_current_production_sha256
+                    ),
                 ):
                     continue
-            elif recorded_key != expected_incremental["result_key"]:
-                continue
+                needs_rebase = True
+            else:
+                # 当前键命中时仍保留轻量元数据校验；缺少旧字段的历史收据
+                # 走兼容路径，由全局摘要相等性负责保护。
+                if {
+                    "tool_components",
+                    "tool_component_digests",
+                    "input_sha256",
+                    "environment_sha256",
+                    "dependency_sha256",
+                }.issubset(item):
+                    if not _historical_result_metadata_matches(
+                        item,
+                        expected_job,
+                        identity,
+                        frozen_tool if isinstance(frozen_tool, Mapping) else None,
+                        str(recorded_execution_sha256),
+                        current_tool=current_tool,
+                        allowed_high_risk_path_changes=(
+                            permitted_rebase_paths
+                        ),
+                        validated_current_production_sha256=(
+                            validated_current_production_sha256
+                        ),
+                    ):
+                        continue
             reused_item = (
                 _rebase_reused_result(
                     item,
@@ -13231,7 +25247,7 @@ def _prior_complete_results(
                     identity=identity,
                     tool_identity=current_tool,
                 )
-                if relocated
+                if relocated or needs_rebase
                 else dict(item)
             )
             completed.append(reused_item)
@@ -13244,11 +25260,21 @@ def _prior_complete_results(
         for item in completed:
             item["carried_from_attempt"] = attempt.name
             item["disposition"] = "reused"
-            item["source_receipt"] = {
-                "path": receipt.relative_to(campaign_dir).as_posix(),
-                "sha256": file_sha256(receipt),
-                "bytes": receipt.stat().st_size,
-            }
+            if source_receipt_binding is not None:
+                item["source_receipt"] = dict(source_receipt_binding)
+            elif not allow_unbound_cross_campaign_preview:
+                item["source_receipt"] = {
+                    "path": receipt.relative_to(campaign_dir).as_posix(),
+                    "sha256": file_sha256(receipt),
+                    "bytes": receipt.stat().st_size,
+                }
+        if expected_reuse is not None:
+            actual_reuse = {str(item["id"]) for item in completed}
+            if actual_reuse != expected_reuse:
+                raise ConfigurationError(
+                    "恢复 transition 的已完成 Job 无法安全复用："
+                    f"expected={sorted(expected_reuse)}, actual={sorted(actual_reuse)}"
+                )
         return completed
     raise ConfigurationError("--rerun-failed 找不到同身份失败 attempt。")
 
@@ -13275,6 +25301,9 @@ def _verify_environment_continuity(
     relative: Path,
     carried_attempt_ids: set[str],
     before_manifest: Mapping[str, Any],
+    *,
+    source_campaign_dir: Path | None = None,
+    source_relative: Path | None = None,
 ) -> dict[str, Any] | None:
     """证明被承接 attempt 的收尾环境与本轮起始环境一致。
 
@@ -13288,9 +25317,15 @@ def _verify_environment_continuity(
     if len(carried_attempt_ids) != 1:
         raise ConfigurationError("承接结果必须全部来自同一个先前 attempt。")
     source_attempt = next(iter(carried_attempt_ids))
+    history_campaign_dir = (
+        source_campaign_dir.resolve(strict=True)
+        if source_campaign_dir is not None
+        else campaign_dir.resolve(strict=True)
+    )
+    history_relative = source_relative if source_relative is not None else relative
     after_path = (
-        campaign_dir
-        / relative
+        history_campaign_dir
+        / history_relative
         / "attempts"
         / source_attempt
         / "evidence"
@@ -13449,6 +25484,70 @@ def _validate_attempt_incremental_fields(
             or _PHASE_EVALUATION_TRANSITION_FILE_RE.fullmatch(parsed.name) is None
         ):
             raise ConfigurationError("attempt 评估工具 transition 路径非法。")
+    candidate_reuse_transition = payload.get(
+        "classification_candidate_reuse_transition"
+    )
+    if candidate_reuse_transition is not None:
+        _require_file_binding(
+            candidate_reuse_transition,
+            "attempt 分类 Candidate 复用 transition",
+        )
+        if (
+            candidate_reuse_transition.get("path")
+            != CLASSIFICATION_CANDIDATE_REUSE_TRANSITION_FILENAME
+        ):
+            raise ConfigurationError("attempt 分类 Candidate 复用 transition 路径非法。")
+        environment = payload.get("environment")
+        expected_environment_fields = {
+            "evidence_root",
+            "before_probe",
+            "after_probe",
+            "restoration_report",
+            "arm64_before_receipt",
+            "arm64_after_receipt",
+        }
+        result_ids = {
+            str(item.get("id"))
+            for item in results
+            if isinstance(item, Mapping) and item.get("id")
+        }
+        if (
+            payload.get("phase") != "candidate"
+            or payload.get("status") != "awaiting_receipts"
+            or payload.get("execution_error") is not None
+            or payload.get("restoration_error") is not None
+            or not isinstance(environment, Mapping)
+            or set(environment) != expected_environment_fields
+            or not isinstance(environment.get("evidence_root"), str)
+            or not Path(str(environment["evidence_root"])).is_absolute()
+            or any(
+                environment.get(name) is not None
+                for name in expected_environment_fields - {"evidence_root"}
+            )
+            or not isinstance(plan, Mapping)
+            or set(plan.get("planned_job_ids", []))
+            != CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS
+            or set(plan.get("reused_job_ids", []))
+            != CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS
+            or any(
+                plan.get(name) != []
+                for name in (
+                    "affected_job_ids",
+                    "executed_job_ids",
+                    "failed_job_ids",
+                    "pending_job_ids",
+                )
+            )
+            or result_ids != CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS
+            or any(
+                not isinstance(item, Mapping)
+                or item.get("status") != "complete"
+                or item.get("disposition") != "reused"
+                or not isinstance(item.get("source_receipt"), Mapping)
+                for item in results
+            )
+        ):
+            raise ConfigurationError("metadata-only attempt 的零执行边界不闭合。")
     _validate_attempt_watchdog_fields(payload, planned_job_ids)
 
 
@@ -13512,27 +25611,39 @@ def _load_capture_attempt(
     phase: str,
     candidate_id: str | None,
     attempt_id: str,
+    *,
+    _historical_manifest_controls: bool = False,
+    _verified_campaign_manifest: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """读取并重验 run 阶段的不可变 attempt。"""
 
-    _require_formal_campaign(campaign_dir)
+    manifest = (
+        dict(_verified_campaign_manifest)
+        if isinstance(_verified_campaign_manifest, Mapping)
+        else load_campaign_manifest(
+            campaign_dir,
+            _control_epoch_bootstrap=_historical_manifest_controls,
+        )
+    )
+    _require_formal_campaign(campaign_dir, manifest)
     attempt_root = _capture_attempt_path(
         campaign_dir, phase, candidate_id, attempt_id
     )
     path = attempt_root / "attempt.json"
     _reject_symlink_components(path, campaign_dir, "抓包 attempt 收据")
     payload = _read_json(path, "抓包 attempt 收据")
+    identity = payload.get("identity")
     reservation = _load_capture_reservation(
         campaign_dir,
         attempt_root,
         phase=phase,
         candidate_id=candidate_id,
+        _manifest=manifest,
     )
     expected_digest = payload.get("attempt_digest")
     unsigned = dict(payload)
     unsigned.pop("attempt_digest", None)
     expected_candidate = candidate_id if phase == "candidate" else None
-    manifest = load_campaign_manifest(campaign_dir)
     if (
         payload.get("schema_version") != CAPTURE_ATTEMPT_SCHEMA
         or payload.get("campaign_id") != manifest["campaign_id"]
@@ -13552,7 +25663,8 @@ def _load_capture_attempt(
         or payload.get("run_nonce") != reservation.get("run_nonce")
         or payload.get("started_at_utc") != reservation.get("started_at_utc")
         or not _is_rfc3339_timestamp(payload.get("completed_at_utc"))
-        or _fingerprint(payload.get("identity"))
+        or not isinstance(identity, Mapping)
+        or _fingerprint(identity)
         != reservation.get("identity_sha256")
         or payload.get("reservation")
         != {
@@ -13597,12 +25709,27 @@ def _load_capture_attempt(
             or file_sha256(transition_path) != evaluation_transition["sha256"]
         ):
             raise ConfigurationError("attempt 评估工具 transition 文件丢失或摘要漂移。")
+    candidate_reuse_transition = payload.get(
+        "classification_candidate_reuse_transition"
+    )
+    if candidate_reuse_transition is not None:
+        if phase != "candidate" or not isinstance(candidate_id, str):
+            raise ConfigurationError("分类 Candidate 复用 transition 只能绑定候选 attempt。")
+        _load_classification_candidate_reuse_transition(
+            campaign_dir,
+            manifest,
+            candidate_reuse_transition,
+            candidate_id=candidate_id,
+            identity=identity,
+        )
     return attempt_root, payload
 
 
 def _active_unsealed_attempts(
     campaign_dir: Path,
     phase: str,
+    *,
+    _manifest: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """列出未完成预约或未被阶段结果绑定的 attempt。"""
 
@@ -13629,10 +25756,16 @@ def _active_unsealed_attempts(
         if result_path.exists() or result_path.is_symlink():
             if result_path.is_symlink() or not result_path.is_file():
                 raise ConfigurationError("抓包阶段结果路径不可信。")
+            stage_kwargs: dict[str, Any] = {
+                "_historical_manifest_controls": True,
+            }
+            if _manifest is not None:
+                stage_kwargs["_verified_campaign_manifest"] = _manifest
             stage = _load_stage_result(
                 campaign_dir,
                 "capture-official" if phase == "official" else "capture-candidate",
                 candidate_id,
+                **stage_kwargs,
             )
             attempt_reference = stage.get("attempt")
             if not isinstance(attempt_reference, dict):
@@ -13656,6 +25789,7 @@ def _active_unsealed_attempts(
                 attempt_root,
                 phase=phase,
                 candidate_id=candidate_id,
+                _manifest=_manifest,
             )
             attempt_path = attempt_root / "attempt.json"
             if not attempt_path.exists():
@@ -13670,6 +25804,7 @@ def _active_unsealed_attempts(
                 phase,
                 candidate_id,
                 attempt_root.name,
+                _verified_campaign_manifest=_manifest,
             )
             if (
                 attempt.get("status") == "awaiting_receipts"
@@ -13681,7 +25816,12 @@ def _active_unsealed_attempts(
     return active
 
 
-def _failed_capture_attempts(campaign_dir: Path, phase: str) -> list[str]:
+def _failed_capture_attempts(
+    campaign_dir: Path,
+    phase: str,
+    *,
+    _manifest: Mapping[str, Any] | None = None,
+) -> list[str]:
     """列出尚未通过显式 resume 处理的失败 attempt。"""
 
     failed: list[str] = []
@@ -13695,6 +25835,7 @@ def _failed_capture_attempts(campaign_dir: Path, phase: str) -> list[str]:
             phase,
             candidate_id,
             attempt_root.name,
+            _verified_campaign_manifest=_manifest,
         )
         if attempt.get("status") == "failed":
             failed.append(f"{candidate_id or 'official'}:{attempt_root.name}")
@@ -13708,6 +25849,8 @@ def _candidate_identity_for_run(
     *,
     verify_image: bool = True,
     image_id_override: str | None = None,
+    source_tree_sha256_override: str | None = None,
+    git_commit_override: str | None = None,
     deadline: incremental_recovery.WallClockDeadline | None = None,
     heartbeat: Any | None = None,
 ) -> dict[str, Any]:
@@ -13779,10 +25922,19 @@ def _candidate_identity_for_run(
             "增量计划阶段缺少候选 image ID；请提供 --candidate-image-id，"
             "或绑定可读取的前序失败 attempt。"
         )
+    if source_tree_sha256_override is not None and not SHA256_RE.fullmatch(
+        str(source_tree_sha256_override)
+    ):
+        raise ConfigurationError("候选 source_tree_sha256_override 非法。")
+    if git_commit_override is not None and not SAFE_ID_RE.fullmatch(
+        str(git_commit_override)
+    ):
+        raise ConfigurationError("候选 git_commit_override 非法。")
     result = {
-        "git_commit": _git_commit(source_root),
+        "git_commit": git_commit_override or _git_commit(source_root),
         "source_root": str(source_root.resolve(strict=True)),
-        "source_tree_sha256": _directory_tree_digest(source_root),
+        "source_tree_sha256": source_tree_sha256_override
+        or _directory_tree_digest(source_root),
         "image_reference": arguments.runtime_image,
         "image_digest": "sha256:"
         + arguments.runtime_image.rsplit("sha256:", 1)[-1],
@@ -13997,15 +26149,140 @@ def _finalize_attempt_restoration(
     return output, receipt
 
 
+def _materialize_metadata_only_after_snapshot(
+    source_evidence_root: Path,
+    target_evidence_root: Path,
+    source_environment: Mapping[str, Any],
+) -> None:
+    """把来源 attempt 的 after 快照复制到 metadata-only attempt。
+
+    metadata-only attempt 没有重新执行环境探针，不能把来源快照冒充为本轮
+    探针。这里仅按来源 attempt 的不可变绑定逐文件复制，目标已存在时只接受
+    字节级相同的文件；任何缺失、漂移、额外文件或符号链接都 fail-close。
+    """
+
+    source_after = source_evidence_root / "environment" / "after"
+    target_after = target_evidence_root / "environment" / "after"
+    expected_names = {
+        "probe-manifest.json",
+        *ENVIRONMENT_STATE_FILES.values(),
+    }
+    if source_after.is_symlink() or not source_after.is_dir():
+        raise ConfigurationError("metadata-only 来源 after 目录不存在或不可信。")
+    names = sorted(entry.name for entry in os.scandir(source_after))
+    if names != sorted(expected_names):
+        raise ConfigurationError("metadata-only 来源 after 目录内容不完整或包含额外文件。")
+
+    after_binding = source_environment.get("after_probe")
+    if (
+        not isinstance(after_binding, Mapping)
+        or set(after_binding) != {"path", "sha256", "bytes"}
+        or after_binding.get("path") != "environment/after/probe-manifest.json"
+        or not SHA256_RE.fullmatch(str(after_binding.get("sha256", "")))
+        or not isinstance(after_binding.get("bytes"), int)
+        or isinstance(after_binding.get("bytes"), bool)
+        or int(after_binding.get("bytes", 0)) <= 0
+    ):
+        raise ConfigurationError("metadata-only 来源缺少可信 after 探针绑定。")
+    source_probe = source_after / "probe-manifest.json"
+    if (
+        source_probe.is_symlink()
+        or not source_probe.is_file()
+        or source_probe.stat().st_size != after_binding["bytes"]
+        or file_sha256(source_probe) != after_binding["sha256"]
+    ):
+        raise ConfigurationError("metadata-only 来源 after 探针摘要漂移。")
+    probe = _read_json(source_probe, "metadata-only 来源 after 探针")
+    if probe.get("phase") != "after" or not _is_rfc3339_timestamp(
+        probe.get("observed_at_utc")
+    ):
+        raise ConfigurationError("metadata-only 来源 after 探针身份或时间非法。")
+    snapshots = probe.get("snapshots")
+    if not isinstance(snapshots, list) or len(snapshots) != len(
+        ENVIRONMENT_STATE_FILES
+    ):
+        raise ConfigurationError("metadata-only 来源 after 快照清单不完整。")
+    snapshot_bindings: dict[str, Mapping[str, Any]] = {}
+    for snapshot in snapshots:
+        if (
+            not isinstance(snapshot, Mapping)
+            or set(snapshot)
+            != {"bytes", "comparison", "kind", "path", "sha256"}
+            or not isinstance(snapshot.get("kind"), str)
+            or snapshot["kind"] not in ENVIRONMENT_STATE_FILES
+            or snapshot["kind"] in snapshot_bindings
+            or snapshot.get("path") != ENVIRONMENT_STATE_FILES[snapshot["kind"]]
+            or not isinstance(snapshot.get("bytes"), int)
+            or isinstance(snapshot.get("bytes"), bool)
+            or int(snapshot.get("bytes", 0)) <= 0
+            or not SHA256_RE.fullmatch(str(snapshot.get("sha256", "")))
+        ):
+            raise ConfigurationError("metadata-only 来源 after 快照绑定非法。")
+        snapshot_bindings[str(snapshot["kind"])] = snapshot
+    if set(snapshot_bindings) != set(ENVIRONMENT_STATE_FILES):
+        raise ConfigurationError("metadata-only 来源 after 快照种类不完整。")
+
+    if target_after.exists() or target_after.is_symlink():
+        if target_after.is_symlink() or not target_after.is_dir():
+            raise ConfigurationError("metadata-only 当前 after 目录不可信。")
+    else:
+        ensure_private_directory(target_after, target_evidence_root)
+    for name in sorted(expected_names):
+        source = source_after / name
+        destination = target_after / name
+        if source.is_symlink() or not source.is_file():
+            raise ConfigurationError(f"metadata-only 来源 after 文件不可信：{name}")
+        source_digest = file_sha256(source)
+        source_bytes = source.stat().st_size
+        if name != "probe-manifest.json":
+            kind = next(
+                key for key, value in ENVIRONMENT_STATE_FILES.items() if value == name
+            )
+            snapshot = snapshot_bindings[kind]
+            if (
+                source_bytes != snapshot["bytes"]
+                or source_digest != snapshot["sha256"]
+            ):
+                raise ConfigurationError(
+                    f"metadata-only 来源 after 快照摘要漂移：{name}"
+                )
+        if destination.exists() or destination.is_symlink():
+            if (
+                destination.is_symlink()
+                or not destination.is_file()
+                or destination.stat().st_size != source_bytes
+                or file_sha256(destination) != source_digest
+            ):
+                raise ConfigurationError(
+                    f"metadata-only 当前 after 文件与来源不一致：{name}"
+                )
+            continue
+        _secure_copy_file_once(source, destination)
+
+
 def _candidate_post_client_restoration(
     manifest: dict[str, Any],
     evidence_root: Path,
     candidate_id: str,
+    *,
+    source_evidence_root: Path | None = None,
+    source_environment: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], str, bool]:
     """在 Kilo 两入口完成后，再证明其间没有丢失环境或持久数据。"""
 
+    metadata_only = source_evidence_root is not None
+    if metadata_only:
+        if source_environment is None:
+            raise ConfigurationError("metadata-only seal 缺少来源环境绑定。")
+        _materialize_metadata_only_after_snapshot(
+            source_evidence_root,
+            evidence_root,
+            source_environment,
+        )
     client_after = evidence_root / "environment" / "client-after"
     receipt_path = evidence_root / "receipts" / "client-restoration-report.json"
+    if metadata_only and (client_after.is_symlink() or not client_after.is_dir()):
+        raise ConfigurationError("metadata-only attempt 缺少既有 Kilo 后探针。")
     if receipt_path.exists():
         if receipt_path.is_symlink() or not receipt_path.is_file():
             raise ConfigurationError("Kilo 后恢复收据路径不可信。")
@@ -14026,9 +26303,10 @@ def _candidate_post_client_restoration(
         ):
             raise ConfigurationError("Kilo 后探针清单缺少可信检查点时间。")
         return receipt_path, receipt, str(checkpoint_at), False
-    if client_after.exists() or client_after.is_symlink():
+    if (client_after.exists() or client_after.is_symlink()) and not metadata_only:
         raise ConfigurationError("Kilo 后探针已存在但没有可重放恢复收据。")
-    _probe_capture_environment(manifest, client_after, "after")
+    if not metadata_only:
+        _probe_capture_environment(manifest, client_after, "after")
     receipt_path, receipt = _finalize_attempt_restoration(
         evidence_root,
         phase="candidate",
@@ -14122,8 +26400,40 @@ def _evidence_manifest_checkpoint_path(attempt_root: Path) -> Path:
     return attempt_root / "evidence-manifest.checkpoint.json"
 
 
-def _seal_draft_path(attempt_root: Path) -> Path:
-    return attempt_root / "seal-draft.json"
+def _seal_transition_index(value: Any) -> int:
+    """从阶段绑定中选择 seal 追加槽位；无 transition 时使用首槽。"""
+
+    if value is None:
+        return 1
+    _require_file_binding(value, "评估工具 transition")
+    raw_path = str(value["path"])
+    parsed = PurePosixPath(raw_path)
+    if (
+        parsed.is_absolute()
+        or str(parsed) != raw_path
+        or "\\" in raw_path
+        or any(part in {"", ".", ".."} for part in parsed.parts)
+    ):
+        raise ConfigurationError("评估工具 transition 路径非法，无法选择 seal 槽位。")
+    match = _PHASE_EVALUATION_TRANSITION_FILE_RE.fullmatch(parsed.name)
+    if match is None:
+        raise ConfigurationError("评估工具 transition 文件名非法，无法选择 seal 槽位。")
+    index = int(match.group("index") or "1")
+    if index < 1 or index > MAX_PHASE_EVALUATION_TRANSITIONS:
+        raise ConfigurationError("评估工具 transition 序号非法，无法选择 seal 槽位。")
+    return index
+
+
+def _seal_draft_path(attempt_root: Path, transition_index: int = 1) -> Path:
+    if transition_index == 1:
+        return attempt_root / "seal-draft.json"
+    return attempt_root / f"seal-draft-{transition_index:02d}.json"
+
+
+def _seal_preview_path(attempt_root: Path, transition_index: int = 1) -> Path:
+    if transition_index == 1:
+        return attempt_root / "seal-preview.json"
+    return attempt_root / f"seal-preview-{transition_index:02d}.json"
 
 
 def _secret_environment_names() -> list[str]:
@@ -14149,6 +26459,107 @@ def _load_evidence_manifest(path: Path) -> dict[str, Any]:
         raise ConfigurationError(str(error)) from error
 
 
+def _imported_stage_evidence_manifest_path(
+    campaign_dir: Path,
+    stage_payload: Mapping[str, Any],
+    binding: Mapping[str, Any],
+) -> Path:
+    """沿已验证的导入链定位 official EvidenceManifest 原件。
+
+    导入阶段的投影保留原 manifest 相对路径；该路径属于真正
+    产生 manifest 的祖先 Campaign，不得相对当前 Campaign 重新解析。
+    这里只读重放最多 64 级 predecessor-import 摘要链，不复制
+    manifest，也不读取原始证据正文。
+    """
+
+    if (
+        stage_payload.get("stage") != "capture-official"
+        or not isinstance(stage_payload.get("predecessor_import"), Mapping)
+    ):
+        raise ConfigurationError("EvidenceManifest 只能从 official 导入链解析。")
+    _require_file_binding(binding, "导入 EvidenceManifest")
+    current_dir = campaign_dir.resolve(strict=True)
+    seen: set[Path] = set()
+    for _depth in range(64):
+        if current_dir in seen:
+            raise ConfigurationError("EvidenceManifest 导入链形成循环。")
+        seen.add(current_dir)
+        manifest_path = current_dir / "campaign.json"
+        stage_path = current_dir / "official" / "result.json"
+        if (
+            current_dir.is_symlink()
+            or manifest_path.is_symlink()
+            or not manifest_path.is_file()
+            or stage_path.is_symlink()
+            or not stage_path.is_file()
+        ):
+            raise ConfigurationError("EvidenceManifest 导入链的 Campaign 不可信。")
+        manifest = _read_json(manifest_path, "EvidenceManifest 导入链 Campaign")
+        local_stage = _read_json(stage_path, "EvidenceManifest 导入链 official")
+        unsigned_stage = dict(local_stage)
+        package_digest = unsigned_stage.pop("package_digest", None)
+        if (
+            local_stage.get("stage") != "capture-official"
+            or local_stage.get("campaign_id") != manifest.get("campaign_id")
+            or local_stage.get("campaign_manifest_sha256")
+            != file_sha256(manifest_path)
+            or not SHA256_RE.fullmatch(str(package_digest))
+            or package_digest != _fingerprint(unsigned_stage)
+        ):
+            raise ConfigurationError("EvidenceManifest 导入链的 official 摘要非法。")
+        local_binding = local_stage.get("evidence_manifest")
+        if local_binding is not None:
+            _require_file_binding(local_binding, "EvidenceManifest 原始绑定")
+            if dict(local_binding) != dict(binding):
+                raise ConfigurationError("EvidenceManifest 导入链的原始绑定漂移。")
+            source = _campaign_file(current_dir, str(binding["path"]))
+            if (
+                source.is_symlink()
+                or not source.is_file()
+                or file_sha256(source) != binding["sha256"]
+            ):
+                raise ConfigurationError("EvidenceManifest 导入链的原文件漂移。")
+            return source
+        import_binding = local_stage.get("predecessor_import")
+        _require_file_binding(import_binding, "EvidenceManifest predecessor-import")
+        _verify_predecessor_import_shallow(current_dir, manifest, local_stage)
+        receipt_path = _campaign_file(current_dir, str(import_binding["path"]))
+        receipt = _read_json(receipt_path, "EvidenceManifest predecessor-import")
+        predecessor = receipt.get("predecessor_campaign")
+        if (
+            not isinstance(predecessor, Mapping)
+            or set(predecessor)
+            != {"campaign_dir", "campaign_id", "campaign_manifest_sha256"}
+        ):
+            raise ConfigurationError("EvidenceManifest 导入链缺少前序坐标。")
+        predecessor_dir = Path(str(predecessor["campaign_dir"]))
+        if not predecessor_dir.is_absolute():
+            raise ConfigurationError("EvidenceManifest 导入链前序路径非法。")
+        try:
+            predecessor_dir = predecessor_dir.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            raise ConfigurationError("EvidenceManifest 导入链前序不存在。") from error
+        predecessor_manifest_path = predecessor_dir / "campaign.json"
+        if (
+            predecessor_dir.is_symlink()
+            or predecessor_manifest_path.is_symlink()
+            or not predecessor_manifest_path.is_file()
+        ):
+            raise ConfigurationError("EvidenceManifest 导入链前序不可信。")
+        predecessor_manifest = _read_json(
+            predecessor_manifest_path,
+            "EvidenceManifest 导入链前序 Campaign",
+        )
+        if (
+            predecessor_manifest.get("campaign_id") != predecessor["campaign_id"]
+            or file_sha256(predecessor_manifest_path)
+            != predecessor["campaign_manifest_sha256"]
+        ):
+            raise ConfigurationError("EvidenceManifest 导入链前序摘要漂移。")
+        current_dir = predecessor_dir
+    raise ConfigurationError("EvidenceManifest 导入链超过 64 级上限。")
+
+
 def _stage_evidence_manifest(
     campaign_dir: Path,
     stage_payload: Mapping[str, Any],
@@ -14158,6 +26569,14 @@ def _stage_evidence_manifest(
     binding = stage_payload.get("evidence_manifest")
     _require_file_binding(binding, "EvidenceManifest")
     path = _campaign_file(campaign_dir, str(binding["path"]))
+    if not path.exists() and isinstance(
+        stage_payload.get("predecessor_import"), Mapping
+    ):
+        path = _imported_stage_evidence_manifest_path(
+            campaign_dir,
+            stage_payload,
+            binding,
+        )
     if path.is_symlink() or not path.is_file() or file_sha256(path) != binding["sha256"]:
         raise ConfigurationError("EvidenceManifest 文件绑定漂移。")
     manifest = _load_evidence_manifest(path)
@@ -14200,6 +26619,9 @@ def _seal_draft(
     attempt: Mapping[str, Any],
     stage_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    transition_index = _seal_transition_index(
+        stage_payload.get("evaluation_transition")
+    )
     core: dict[str, Any] = {
         "schema_version": SEAL_DRAFT_SCHEMA,
         "campaign_id": attempt["campaign_id"],
@@ -14212,7 +26634,10 @@ def _seal_draft(
         "stage_payload_sha256": _fingerprint(stage_payload),
     }
     draft = {**core, "draft_digest": _fingerprint(core)}
-    _write_or_verify_json(_seal_draft_path(attempt_root), draft)
+    _write_or_verify_json(
+        _seal_draft_path(attempt_root, transition_index),
+        draft,
+    )
     return draft
 
 
@@ -14223,10 +26648,11 @@ def _load_seal_draft(
     phase: str,
     candidate_id: str | None,
     attempt: Mapping[str, Any],
+    transition_index: int = 1,
 ) -> dict[str, Any]:
-    path = _seal_draft_path(attempt_root)
+    path = _seal_draft_path(attempt_root, transition_index)
     if path.is_symlink() or not path.is_file():
-        raise ConfigurationError("seal 批准缺少冻结 seal-draft.json。")
+        raise ConfigurationError(f"seal 批准缺少当前槽位冻结草案：{path.name}。")
     draft = _read_json(path, "seal 冻结草案")
     unsigned = dict(draft)
     digest = unsigned.pop("draft_digest", None)
@@ -14254,6 +26680,8 @@ def _load_seal_draft(
         or draft.get("campaign_manifest_sha256")
         != file_sha256(campaign_dir / "campaign.json")
         or not isinstance(stage_payload, dict)
+        or _seal_transition_index(stage_payload.get("evaluation_transition"))
+        != transition_index
         or draft.get("stage_payload_sha256") != _fingerprint(stage_payload)
         or digest != _fingerprint(unsigned)
     ):
@@ -14469,6 +26897,12 @@ def deep_verify_campaign(
             candidate_id,
             attempt_id,
         )
+        _bind_active_lease_attempt(
+            campaign_dir,
+            phase="candidate",
+            candidate_id=candidate_id,
+            attempt_id=attempt.get("attempt_id"),
+        )
         evaluation_transition = _verify_plan_identity(
             campaign_dir,
             manifest,
@@ -14476,6 +26910,71 @@ def deep_verify_campaign(
             attempt_root=attempt_root,
             attempt=attempt,
         )
+        if _is_classification_candidate_metadata_only_attempt(attempt):
+            _source_dir, source_root, source_attempt, _transition = (
+                _classification_candidate_reuse_attempt_source(
+                    campaign_dir,
+                    manifest,
+                    attempt,
+                )
+            )
+            source_roots = _deduplicate_evidence_roots(
+                Path(value) for value in source_attempt.get("evidence_roots", [])
+            )
+            historical_manifest_path = _evidence_manifest_path(source_root)
+            local_manifest_path = (
+                attempt_root
+                / CLASSIFICATION_CANDIDATE_REUSE_SOURCE_MANIFEST_FILENAME
+            )
+            selected_path = historical_manifest_path
+            scan = {
+                "full_scan_count": 0,
+                "scanned_bytes": 0,
+                "reused_bytes": 0,
+                "total_bytes": 0,
+                "elapsed_seconds": 0.0,
+            }
+            if historical_manifest_path.is_file() and not historical_manifest_path.is_symlink():
+                source_manifest = _load_evidence_manifest(historical_manifest_path)
+            elif local_manifest_path.is_file() and not local_manifest_path.is_symlink():
+                selected_path = local_manifest_path
+                source_manifest = _load_evidence_manifest(local_manifest_path)
+            else:
+                selected_path = local_manifest_path
+                try:
+                    source_manifest = codex_upgrade_evidence_manifest.build_evidence_manifest(
+                        source_roots,
+                        checkpoint_path=(attempt_root / "source-evidence-manifest.checkpoint.json"),
+                        secret_env_names=_secret_environment_names(),
+                    )
+                except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+                    raise ConfigurationError(str(error)) from error
+                _write_or_verify_json(local_manifest_path, source_manifest)
+                scan = dict(source_manifest["scan"])
+            try:
+                boundary = codex_upgrade_evidence_manifest.verify_manifest_boundary(
+                    source_manifest,
+                    source_roots,
+                )
+            except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+                raise ConfigurationError(str(error)) from error
+            if scan["full_scan_count"] == 0:
+                scan["reused_bytes"] = int(source_manifest["total_bytes"])
+                scan["total_bytes"] = int(source_manifest["total_bytes"])
+            return {
+                "schema_version": "codex-upgrade-deep-verify-result/v1",
+                "status": "passed",
+                "campaign_id": manifest["campaign_id"],
+                "candidate_id": candidate_id,
+                "attempt_id": attempt_id,
+                "source_evidence_manifest": {
+                    "path": str(selected_path),
+                    "sha256": file_sha256(selected_path),
+                    "manifest_digest": source_manifest["manifest_digest"],
+                },
+                "boundary": boundary,
+                **scan,
+            }
     else:
         _verify_plan_identity(campaign_dir, manifest)
 
@@ -14664,6 +27163,11 @@ def _seal_preview(
 ) -> tuple[dict[str, Any], bool]:
     """生成或复核 seal 预览；人工只批准机器事实联合摘要。"""
 
+    transition_index = _seal_transition_index(
+        stage_payload.get("evaluation_transition")
+    )
+    draft_path = _seal_draft_path(attempt_root, transition_index)
+    preview_path = _seal_preview_path(attempt_root, transition_index)
     evidence_manifest = stage_payload.get("evidence_manifest")
     preview_schema = (
         SEAL_PREVIEW_SCHEMA
@@ -14707,7 +27211,7 @@ def _seal_preview(
             {
                 "evidence_manifest_sha256": evidence_manifest["sha256"],
                 "evidence_manifest_digest": manifest["manifest_digest"],
-                "seal_draft_sha256": file_sha256(_seal_draft_path(attempt_root)),
+                "seal_draft_sha256": file_sha256(draft_path),
                 "scan_summary": stage_payload["scan_summary"],
             }
         )
@@ -14728,15 +27232,14 @@ def _seal_preview(
         "status": "approval_required",
         "review_sha256": review_sha256,
     }
-    path = attempt_root / "seal-preview.json"
-    _write_or_verify_json(path, preview)
+    _write_or_verify_json(preview_path, preview)
     if approve_sha256 is None:
         return preview, False
     if not SHA256_RE.fullmatch(approve_sha256):
         raise ConfigurationError("--approve-seal-sha256 格式非法。")
     if approve_sha256 != review_sha256:
         raise ConfigurationError("seal 批准摘要与当前机器事实不一致。")
-    if path.is_symlink() or not path.is_file():
+    if preview_path.is_symlink() or not preview_path.is_file():
         raise ConfigurationError("seal 预览路径不可信。")
     return preview, True
 
@@ -14744,12 +27247,66 @@ def _seal_preview(
 def _run_capture_attempt(
     arguments: argparse.Namespace,
     phase: str,
+    *,
+    _lease: CampaignLease | None = None,
+    _manifest: dict[str, Any] | None = None,
+    _deadline: incremental_recovery.WallClockDeadline | None = None,
 ) -> dict[str, Any]:
     """执行真实抓包，并以独立前后探针自动证明环境恢复。"""
 
-    manifest = _require_formal_campaign(arguments.campaign_dir)
+    # main/resume 已经取得 Campaign lease 时，递归入口必须复用同一 owner；
+    # 再次 acquire 会在同一进程内触发 flock 死锁/误报，并破坏单一 deadline。
+    if _lease is None and _ACTIVE_CAMPAIGN_LEASE is not None:
+        active = _ACTIVE_CAMPAIGN_LEASE
+        expected_candidate = (
+            str(getattr(arguments, "candidate_id", ""))
+            if phase == "candidate"
+            else None
+        )
+        if not _lease_identity_matches(
+            active,
+            arguments.campaign_dir,
+            phase=phase,
+            candidate_id=expected_candidate,
+        ):
+            raise ConfigurationError(
+                "capture attempt 与当前 Campaign lease 的 phase／candidate 不一致。"
+            )
+        _lease = active
+        _manifest = _manifest or _require_formal_campaign(arguments.campaign_dir)
+        _deadline = _deadline or active.deadline
+
+    # 用递归的一层 wrapper 保证整个 CLI invocation（包括计划、reservation、探针、
+    # Job、清理和收据写入）都处于同一个 Campaign lease；无需把数百行主体再缩进，
+    # 也不会因中途 return/no-op 漏掉释放。强制终止时 wrapper 不会运行，留下的
+    # active lease 由下一次命令按 owner PID、heartbeat 和 deadline 判定 stale。
+    if _lease is None:
+        manifest = _manifest or _require_formal_campaign(arguments.campaign_dir)
+        deadline = _deadline or _attempt_deadline(arguments, phase)
+        with CampaignLease(
+            arguments.campaign_dir,
+            phase=phase,
+            candidate_id=(
+                str(getattr(arguments, "candidate_id", ""))
+                if phase == "candidate"
+                else None
+            ),
+            deadline=deadline,
+            command=f"capture-{phase}",
+            allow_stale_recovery=bool(getattr(arguments, "rerun_failed", False)),
+            campaign_id=str(manifest.get("campaign_id", "")),
+        ) as lease:
+            return _run_capture_attempt(
+                arguments,
+                phase,
+                _lease=lease,
+                _manifest=manifest,
+                _deadline=deadline,
+            )
+
+    manifest = _manifest or _require_formal_campaign(arguments.campaign_dir)
     _reject_contaminated_campaign(arguments.campaign_dir)
-    deadline = _attempt_deadline(arguments, phase)
+    deadline = _deadline or _attempt_deadline(arguments, phase)
     seal_only = {
         "attempt_id": getattr(arguments, "attempt_id", None),
         "capture_manifest": getattr(arguments, "capture_manifest", None),
@@ -14775,6 +27332,9 @@ def _run_capture_attempt(
     candidate_id: str | None = None
     identity: dict[str, Any]
     classification: dict[str, Any] | None = None
+    classification_candidate_reuse_context: dict[str, Any] | None = None
+    classification_candidate_reuse_transition: dict[str, Any] | None = None
+    classification_candidate_reuse_transition_binding: dict[str, Any] | None = None
     if phase == "official":
         try:
             _load_stage_result(campaign_dir, "capture-official")
@@ -14811,11 +27371,26 @@ def _run_capture_attempt(
                 "Campaign 存在待封存候选 attempt，必须先完成其 Kilo 后恢复与 seal："
                 f"{active_attempts}"
             )
+        classification_candidate_reuse_context = (
+            _classification_candidate_reuse_source(
+                arguments,
+                campaign_dir,
+                manifest,
+                classification,
+                candidate_id=candidate_id,
+            )
+        )
         # 失败重跑先尝试从前序 attempt 读取候选身份。这样只为判断增量执行集合，
         # 不会调用 Docker；真正仍有 Job 要执行时才重验运行容器。
-        identity_hint = None
-        if getattr(arguments, "rerun_failed", False) and not getattr(
-            arguments, "candidate_image_id", None
+        identity_hint = (
+            classification_candidate_reuse_context["identity"]
+            if classification_candidate_reuse_context is not None
+            else None
+        )
+        if (
+            identity_hint is None
+            and getattr(arguments, "rerun_failed", False)
+            and not getattr(arguments, "candidate_image_id", None)
         ):
             identity_hint = _latest_failed_attempt_identity_hint(
                 campaign_dir,
@@ -14829,6 +27404,16 @@ def _run_capture_attempt(
             verify_image=not bool(getattr(arguments, "rerun_failed", False)),
             image_id_override=(
                 identity_hint.get("image_id")
+                if isinstance(identity_hint, Mapping)
+                else None
+            ),
+            source_tree_sha256_override=(
+                identity_hint.get("source_tree_sha256")
+                if isinstance(identity_hint, Mapping)
+                else None
+            ),
+            git_commit_override=(
+                identity_hint.get("git_commit")
                 if isinstance(identity_hint, Mapping)
                 else None
             ),
@@ -14876,6 +27461,12 @@ def _run_capture_attempt(
     cheap_impact = _cheap_capture_tool_impact(
         manifest, planned_jobs, tool_identity
     )
+    if cheap_impact.get("kind") == "unmapped_production_paths":
+        raise ConfigurationError(
+            "产出侧工具变化缺少逐文件 Job 依赖映射："
+            + "、".join(cheap_impact.get("unmapped_production_paths", []))
+            + "；禁止退化为全量重跑。"
+        )
     affected_job_ids = set(
         str(item) for item in cheap_impact.get("affected_job_ids", [])
     )
@@ -14885,15 +27476,183 @@ def _run_capture_attempt(
     prior_results: list[dict[str, Any]] = []
     recovery_source_root: Path | None = None
     recovery_source_attempt: dict[str, Any] | None = None
-    if getattr(arguments, "rerun_failed", False):
+    recovery_source_campaign_dir: Path | None = None
+    recovery_source_candidate_id: str | None = None
+    recovery_source_receipt: Mapping[str, Any] | None = None
+    runtime_successor_recovery: dict[str, Any] | None = None
+    recovery_scope: dict[str, Any] | None = None
+    recovery_completed_ids: set[str] | None = None
+    recovery_execute_ids: set[str] | None = None
+    phase_recovery_high_risk_paths: set[str] = set()
+    if classification_candidate_reuse_context is not None:
+        preview, _ = _build_classification_candidate_reuse_preview(
+            campaign_dir,
+            manifest,
+            candidate_id=str(candidate_id),
+            identity=identity,
+            planned_jobs=planned_jobs,
+            current_tool=tool_identity,
+            context=classification_candidate_reuse_context,
+        )
+        if getattr(arguments, "preview_recovery", False):
+            return preview
+        (
+            classification_candidate_reuse_transition,
+            classification_candidate_reuse_transition_binding,
+            recovery_source_receipt,
+        ) = _approve_classification_candidate_reuse_transition(
+            campaign_dir,
+            preview,
+            getattr(arguments, "approve_candidate_reuse_sha256", None),
+        )
+        recovery_source_root = classification_candidate_reuse_context[
+            "source_root"
+        ]
+        recovery_source_attempt = classification_candidate_reuse_context[
+            "source_attempt"
+        ]
+        recovery_source_campaign_dir = classification_candidate_reuse_context[
+            "source_campaign_dir"
+        ]
+        recovery_source_candidate_id = str(
+            classification_candidate_reuse_context["source_candidate_id"]
+        )
+        recovery_completed_ids = set(CLASSIFICATION_CANDIDATE_REUSE_JOB_IDS)
+        recovery_execute_ids = set()
+        prior_results = _prior_complete_results(
+            campaign_dir,
+            attempt_relative,
+            jobs,
+            phase=phase,
+            candidate_id=candidate_id,
+            identity=identity,
+            tool_identity=tool_identity,
+            affected_job_ids=(),
+            expected_reuse_job_ids=recovery_completed_ids,
+            source_attempt_id=str(
+                classification_candidate_reuse_context["source_attempt_id"]
+            ),
+            source_campaign_dir=recovery_source_campaign_dir,
+            source_candidate_id=recovery_source_candidate_id,
+            source_receipt_binding=recovery_source_receipt,
+            allowed_high_risk_path_changes=(),
+            allowed_source_statuses=("awaiting_receipts",),
+            source_tool_identity=(
+                _classification_candidate_reuse_source_tool_identity(
+                    recovery_source_attempt,
+                    classification_candidate_reuse_context["source_manifest"],
+                )
+            ),
+        )
+        if {str(item.get("id")) for item in prior_results} != recovery_completed_ids:
+            raise ConfigurationError("分类 Candidate 复用未完整承接固定九项 Job。")
+        jobs = []
+        affected_job_ids = set()
+    if (
+        getattr(arguments, "rerun_failed", False)
+        and classification_candidate_reuse_context is None
+    ):
         source = _latest_failed_attempt_for_identity(
             campaign_dir,
             phase=phase,
             candidate_id=candidate_id,
             identity=identity,
         )
+        if source is None and phase == "candidate" and candidate_id is not None:
+            runtime_successor_recovery = _runtime_successor_recovery_source(
+                campaign_dir,
+                manifest,
+                classification or {},
+                candidate_id=candidate_id,
+                identity=identity,
+                planned_jobs=planned_jobs,
+            )
+            if runtime_successor_recovery is not None:
+                source = (
+                    runtime_successor_recovery["source_root"],
+                    runtime_successor_recovery["source_attempt"],
+                )
+                recovery_source_campaign_dir = runtime_successor_recovery[
+                    "source_campaign_dir"
+                ]
+                recovery_source_candidate_id = runtime_successor_recovery[
+                    "source_candidate_id"
+                ]
+                recovery_source_receipt = runtime_successor_recovery[
+                    "source_receipt"
+                ]
+        if source is None:
+            # 显式 rerun 只能承接一个可验证的失败源；没有源时禁止回退到
+            # 当前计划或全量 Job，避免“失败项为空”被误解释成重新抓包。
+            raise ConfigurationError(
+                "resume --rerun-failed 没有唯一可验证的失败源 attempt；"
+                "禁止重新计算执行集合或全量重跑。"
+            )
         if source is not None:
             recovery_source_root, recovery_source_attempt = source
+            if runtime_successor_recovery is not None:
+                recovery_scope = runtime_successor_recovery["scope"]
+                recovery_completed_ids = set(
+                    recovery_scope["completed_job_ids"]
+                )
+                recovery_execute_ids = set(recovery_scope["execute_job_ids"])
+                # runtime successor 的冻结 scope 是唯一执行事实源；粗粒度组件
+                # 摘要只能提示审计，不能把已通过 Job 再并回执行集合。
+                affected_job_ids = set(recovery_scope["changed_job_ids"])
+                changed_components.add("scenario")
+            else:
+                # 先读取源 attempt 的冻结闭集，再做任何当前工具摘要驱动的
+                # 计划过滤。后续执行集合只能来自这份 scope。
+                allow_awaiting_failures = (
+                    recovery_source_attempt.get("status") == "awaiting_receipts"
+                )
+                recovery_scope = _phase_evaluation_recovery_scope(
+                    campaign_dir,
+                    manifest,
+                    phase=phase,
+                    candidate_id=candidate_id,
+                    attempt_root=recovery_source_root,
+                    attempt=recovery_source_attempt,
+                    allow_awaiting_failures=allow_awaiting_failures,
+                )
+                (
+                    recovery_completed_ids,
+                    recovery_execute_ids,
+                ) = _validate_recovery_scope_plan(
+                    campaign_dir,
+                    phase=phase,
+                    candidate_id=candidate_id,
+                    source_root=recovery_source_root,
+                    scope=recovery_scope,
+                    planned_jobs=planned_jobs,
+                    allow_empty=True,
+                )
+                if recovery_execute_ids:
+                    phase_recovery_high_risk_paths = (
+                        _authorize_phase_recovery_production_paths(
+                            campaign_dir,
+                            manifest,
+                            phase=phase,
+                            candidate_id=candidate_id,
+                            attempt_root=recovery_source_root,
+                            attempt=recovery_source_attempt,
+                            current_tool=tool_identity,
+                            recovery_scope=recovery_scope,
+                        )
+                    )
+                    # transition 已逐文件批准产出变化后，必须丢弃此前由 relay／
+                    # shared 组件推导的粗粒度集合。继续取并集会把已通过 Job
+                    # 错误带入恢复闭集，造成无意义的 Formal Campaign 重建。
+                    affected_job_ids = _phase_recovery_exact_affected_job_ids(
+                        phase_recovery_high_risk_paths,
+                        planned_job_ids=(job.job_id for job in planned_jobs),
+                        recovery_scope=recovery_scope,
+                    )
+                else:
+                    # 冻结执行闭集为空时不得加载工具 transition；继续做工具
+                    # 身份分级既没有执行对象，也会违反 reservation 前立即退出。
+                    phase_recovery_high_risk_paths = set()
+                    affected_job_ids = set()
         prior_results = _prior_complete_results(
             campaign_dir,
             attempt_relative,
@@ -14903,9 +27662,84 @@ def _run_capture_attempt(
             identity=identity,
             tool_identity=tool_identity,
             affected_job_ids=affected_job_ids,
+            expected_reuse_job_ids=recovery_completed_ids,
+            source_attempt_id=(
+                recovery_source_root.name if recovery_source_root is not None else None
+            ),
+            source_campaign_dir=recovery_source_campaign_dir,
+            source_candidate_id=recovery_source_candidate_id,
+            source_receipt_binding=recovery_source_receipt,
+            allowed_high_risk_path_changes=(
+                runtime_successor_recovery[
+                    "allowed_high_risk_path_changes"
+                ]
+                if runtime_successor_recovery is not None
+                else phase_recovery_high_risk_paths
+            ),
+            validated_current_production_sha256=(
+                runtime_successor_recovery.get(
+                    "validated_current_production_sha256"
+                )
+                if runtime_successor_recovery is not None
+                else None
+            ),
+            allowed_source_statuses=(
+                runtime_successor_recovery["allowed_source_statuses"]
+                if runtime_successor_recovery is not None
+                else (
+                    ("failed", "awaiting_receipts")
+                    if recovery_source_attempt is not None
+                    and recovery_source_attempt.get("status")
+                    == "awaiting_receipts"
+                    else ("failed",)
+                )
+            ),
         )
         completed_ids = {item["id"] for item in prior_results}
-        jobs = [job for job in jobs if job.job_id not in completed_ids]
+        if recovery_completed_ids is not None:
+            if completed_ids != recovery_completed_ids:
+                raise ConfigurationError(
+                    "恢复 transition 的已完成 Job 未被完整只读承接。"
+                )
+            assert recovery_execute_ids is not None
+            jobs = [job for job in planned_jobs if job.job_id in recovery_execute_ids]
+        else:
+            jobs = [job for job in jobs if job.job_id not in completed_ids]
+        if not jobs and getattr(arguments, "preview_recovery", False):
+            invalidation = _capture_invalidation_summary(
+                invalidated_job_ids=(),
+                reused_receipt_ids=(
+                    str(item.get("id")) for item in prior_results
+                ),
+                changed_control_paths=(
+                    runtime_successor_recovery.get("changed_control_paths", [])
+                    if runtime_successor_recovery is not None
+                    else ()
+                ),
+                changed_environment_paths=(
+                    runtime_successor_recovery.get(
+                        "changed_environment_paths", []
+                    )
+                    if runtime_successor_recovery is not None
+                    else ()
+                ),
+            )
+            return {
+                "status": "recovery_plan",
+                "phase": phase,
+                "candidate_id": candidate_id,
+                "planned_job_ids": sorted(job.job_id for job in planned_jobs),
+                "execute_job_ids": [],
+                "reused_job_ids": sorted(
+                    str(item.get("id")) for item in prior_results
+                ),
+                "affected_job_ids": [],
+                "failed_job_ids": [],
+                "reservation_exists": False,
+                "live_request_count": 0,
+                "scanned_bytes": 0,
+                **invalidation,
+            }
         if not jobs:
             # 失败项为空时必须在 reservation 前结束；这条路径不要求 live
             # acknowledgement，也不创建 attempt／容器探针／环境快照。
@@ -14923,41 +27757,36 @@ def _run_capture_attempt(
                 deadline=deadline,
             )
 
-    # 从这里开始确实存在需要执行的 Job，才允许进入昂贵前置检查。
-    if not getattr(arguments, "acknowledge_live_requests", False):
-        raise ConfigurationError(
-            "抓包会产生真实请求，必须同时确认 --acknowledge-live-requests。"
-        )
-    if phase == "candidate" and getattr(arguments, "rerun_failed", False):
-        # 计划阶段故意不触碰 Docker；现在确认仍有任务需要执行，再冻结并重验
-        # 当前运行容器身份。任何漂移都停线，不得把新身份混入旧 attempt。
-        verified_identity = _candidate_identity_for_run(
-            arguments,
-            manifest,
-            classification or {},
-            verify_image=True,
-            deadline=deadline,
-        )
-        if verified_identity != identity:
-            raise ConfigurationError("候选运行身份在增量计划与执行前校验之间发生漂移。")
-    # 采集脚本与 relay 从 capture_root 下的副本执行，不是本文件所在的受管树；
-    # 该校验同样不能在 no-op 路径触发。
-    _verify_execution_tree(getattr(arguments, "capture_root", None))
-    if phase == "official":
-        binary_verification = _verify_official_binaries(
-            manifest,
-            deadline=deadline,
-        )
+    if classification_candidate_reuse_context is not None and jobs:
+        raise ConfigurationError("分类 Candidate 复用不得退化为任何 Job 执行。")
 
-    # 完整计划身份校验放在 no-op 之后。它会验证 package、控制收据和工具过渡，
-    # 但不会再影响已经确定的空执行集合。
-    tool_impact = _verify_plan_identity(
-        campaign_dir,
-        manifest,
-        operation="capture-run",
-        attempt_root=recovery_source_root,
-        attempt=recovery_source_attempt,
-        deadline=deadline,
+    # recovery_scope 已冻结执行闭集。廉价影响分析只能作为审计提示，不能
+    # 把已通过 Job 偷偷扩大进本轮；若产出侧变化确实越过闭集，直接停线，
+    # 评估侧变化则交给后面的 transition 校验处理。空集合已经在上面
+    # incremental-noop 短路，因此不会被这条保护误拦截。
+    if recovery_scope is not None and affected_job_ids:
+        execute_scope = recovery_execute_ids or set()
+        if not affected_job_ids.issubset(execute_scope):
+            raise ConfigurationError(
+                "恢复 transition 与工具变化闭集相冲突；请建立新的 Formal Campaign。"
+            )
+
+    # 从这里开始确实存在需要执行的 Job，才允许进入昂贵前置检查。
+    # 完整计划身份校验必须先于任何 Docker／二进制检查。它会验证 package、
+    # 控制收据和工具 transition；若恢复闭集发生漂移，必须在 reservation、
+    # 容器和首个请求之前立即停线。该调用仍位于 no-op 之后，空执行集合不会
+    # 触发完整身份校验。
+    tool_impact = (
+        cheap_impact
+        if classification_candidate_reuse_context is not None
+        else _verify_plan_identity(
+            campaign_dir,
+            manifest,
+            operation="capture-run",
+            attempt_root=recovery_source_root,
+            attempt=recovery_source_attempt,
+            deadline=deadline,
+        )
     )
     evaluation_transition: dict[str, str] | None = None
     if isinstance(tool_impact, Mapping):
@@ -14967,6 +27796,13 @@ def _run_capture_attempt(
         affected_job_ids.update(
             str(item) for item in tool_impact.get("affected_job_ids", [])
         )
+        if recovery_scope is not None:
+            frozen_execute = recovery_execute_ids or set()
+            if not affected_job_ids.issubset(frozen_execute):
+                raise ConfigurationError(
+                    "恢复 transition 的工具影响闭集超出冻结 recovery_scope；"
+                    "不得扩大执行集合。"
+                )
         if tool_impact.get("kind") == "component_drift":
             affected_job_ids.update(
                 _affected_job_ids(
@@ -14986,6 +27822,10 @@ def _run_capture_attempt(
             scope = tool_impact.get("recovery_scope")
             if not isinstance(scope, Mapping):
                 raise ConfigurationError("恢复 transition 缺少失败 Job 闭集。")
+            if recovery_scope is not None and _fingerprint(dict(scope)) != _fingerprint(
+                recovery_scope
+            ):
+                raise ConfigurationError("恢复 transition 的闭集在计划阶段发生漂移。")
             expected_execute = {
                 str(item) for item in scope.get("execute_job_ids", [])
             }
@@ -15005,6 +27845,60 @@ def _run_capture_attempt(
                 )
     else:
         tool_impact = cheap_impact
+    if recovery_scope is not None:
+        # 即使当前工具没有产生 transition（例如只读重放同一摘要），也
+        # 必须再次确认真正进入执行循环的集合没有被任何后续逻辑改写。
+        assert recovery_execute_ids is not None
+        assert recovery_completed_ids is not None
+        if {job.job_id for job in jobs} != recovery_execute_ids:
+            raise ConfigurationError("恢复执行集合偏离源 transition scope。")
+        if {str(item.get("id")) for item in prior_results} != recovery_completed_ids:
+            raise ConfigurationError("恢复复用集合偏离源 transition scope。")
+    if getattr(arguments, "preview_recovery", False):
+        if not getattr(arguments, "rerun_failed", False):
+            raise ConfigurationError("--preview-recovery 必须与 --rerun-failed 同时使用。")
+        invalidation = _capture_invalidation_summary(
+            invalidated_job_ids=(job.job_id for job in jobs),
+            reused_receipt_ids=(
+                str(item.get("id")) for item in prior_results
+            ),
+            changed_control_paths=(
+                runtime_successor_recovery.get("changed_control_paths", [])
+                if runtime_successor_recovery is not None
+                else ()
+            ),
+            changed_environment_paths=(
+                runtime_successor_recovery.get("changed_environment_paths", [])
+                if runtime_successor_recovery is not None
+                else ()
+            ),
+        )
+        return {
+            "status": "recovery_plan",
+            "phase": phase,
+            "candidate_id": candidate_id,
+            "planned_job_ids": sorted(job.job_id for job in planned_jobs),
+            "execute_job_ids": sorted(job.job_id for job in jobs),
+            "reused_job_ids": sorted(
+                str(item.get("id")) for item in prior_results
+            ),
+            "affected_job_ids": sorted(affected_job_ids),
+            "failed_job_ids": sorted(
+                str(item)
+                for item in (recovery_scope or {}).get("failed_job_ids", [])
+            ),
+            "reservation_exists": False,
+            "live_request_count": 0,
+            "scanned_bytes": 0,
+            **invalidation,
+        }
+    if (
+        classification_candidate_reuse_context is None
+        and not getattr(arguments, "acknowledge_live_requests", False)
+    ):
+        raise ConfigurationError(
+            "抓包会产生真实请求，必须同时确认 --acknowledge-live-requests。"
+        )
     incremental_transition: dict[str, Any] | None = None
     if (
         isinstance(tool_impact, Mapping)
@@ -15024,7 +27918,46 @@ def _run_capture_attempt(
             phase=phase,
             planned_job_ids=[job.job_id for job in planned_jobs],
         )
-    if phase == "candidate":
+
+    if (
+        phase == "candidate"
+        and getattr(arguments, "rerun_failed", False)
+        and classification_candidate_reuse_context is None
+    ):
+        # 计划阶段故意不触碰 Docker；只有 scope 与 transition 完全一致后，
+        # 才冻结并重验当前运行容器身份。任何漂移都停线，不得混入旧 attempt。
+        verified_identity = _candidate_identity_for_run(
+            arguments,
+            manifest,
+            classification or {},
+            verify_image=True,
+            source_tree_sha256_override=(
+                str(classification_candidate_reuse_context["identity"][
+                    "source_tree_sha256"
+                ])
+                if classification_candidate_reuse_context is not None
+                else None
+            ),
+            git_commit_override=(
+                str(classification_candidate_reuse_context["identity"]["git_commit"])
+                if classification_candidate_reuse_context is not None
+                else None
+            ),
+            deadline=deadline,
+        )
+        if verified_identity != identity:
+            raise ConfigurationError("候选运行身份在增量计划与执行前校验之间发生漂移。")
+    # 采集脚本与 relay 从 capture_root 下的副本执行，不是本文件所在的受管树；
+    # 该校验同样不能在 no-op 路径触发。它现在也位于 transition 闭集校验之后。
+    if classification_candidate_reuse_context is None:
+        _verify_execution_tree(getattr(arguments, "capture_root", None))
+    if phase == "official":
+        binary_verification = _verify_official_binaries(
+            manifest,
+            deadline=deadline,
+        )
+
+    if phase == "candidate" and jobs:
         # 辅助场景排在多个耗时 Job 之后；凭据缺失或即将过期必须在 reservation
         # 和首个真实请求之前失败，不能等十几分钟后才发现。
         _validate_candidate_admin_credential(planned_jobs)
@@ -15037,6 +27970,7 @@ def _run_capture_attempt(
         jobs=planned_jobs,
         allow_failed_rerun=bool(getattr(arguments, "rerun_failed", False)),
         deadline=deadline,
+        lease=_lease,
     )
     log_root = ensure_private_directory(attempt_root / "logs", campaign_dir)
     evidence_root = ensure_private_directory(
@@ -15093,6 +28027,141 @@ def _run_capture_attempt(
         # watchdog／checkpoint 初始化失败不能留下一个看似可继续的 attempt；
         # 仍进入统一 after 清理，最终以 failed 停线。
         setup_error = error
+    if classification_candidate_reuse_context is not None:
+        if setup_error is not None:
+            raise setup_error
+        if checkpoint_store is None:
+            raise ConfigurationError("metadata-only attempt 缺少 Job checkpoint 存储。")
+        source_evidence_roots = recovery_source_attempt.get("evidence_roots") if isinstance(
+            recovery_source_attempt, Mapping
+        ) else None
+        if (
+            not isinstance(source_evidence_roots, list)
+            or not source_evidence_roots
+            or any(
+                not isinstance(value, str) or not Path(value).is_absolute()
+                for value in source_evidence_roots
+            )
+        ):
+            raise ConfigurationError("metadata-only attempt 的来源证据根不完整。")
+        _write_attempt_heartbeat(
+            heartbeat_path,
+            deadline,
+            operation="attempt:metadata-only-complete",
+            force=True,
+            attempt_root=attempt_root,
+        )
+        checkpoint_records = checkpoint_store.records()
+        checkpoint_summary = {
+            "schema_version": JOB_CHECKPOINT_SCHEMA,
+            "campaign_id": manifest["campaign_id"],
+            "phase": phase,
+            "attempt_id": attempt_root.name,
+            "run_nonce": reservation["run_nonce"],
+            "path": str(
+                checkpoint_store.root.resolve(strict=True).relative_to(
+                    campaign_dir.resolve(strict=True)
+                )
+            ),
+            "record_count": len(checkpoint_records),
+            "last_sequence": checkpoint_records[-1].get("checkpoint_sequence"),
+            "last_sha256": checkpoint_records[-1].get("checkpoint_sha256"),
+        }
+        heartbeat_binding = {
+            "path": str(heartbeat_path.relative_to(campaign_dir)),
+            "sha256": file_sha256(heartbeat_path),
+            "bytes": heartbeat_path.stat().st_size,
+        }
+        planned_ids = sorted(job.job_id for job in planned_jobs)
+        reused_ids = sorted(str(item["id"]) for item in prior_results)
+        plan_core = {
+            "schema_version": incremental_recovery.SCHEMA_VERSION,
+            "planned_job_ids": planned_ids,
+            "changed_components": sorted(changed_components),
+            "affected_job_ids": [],
+            "reused_job_ids": reused_ids,
+            "executed_job_ids": [],
+            "failed_job_ids": [],
+            "pending_job_ids": [],
+        }
+        metadata_evidence_roots = _deduplicate_evidence_roots(
+            [
+                *(Path(value) for value in source_evidence_roots),
+                evidence_root,
+            ],
+            require_nonempty=True,
+        )
+        metadata_environment = {
+            "evidence_root": str(evidence_root.resolve(strict=True)),
+            "before_probe": None,
+            "after_probe": None,
+            "restoration_report": None,
+            "arm64_before_receipt": None,
+            "arm64_after_receipt": None,
+        }
+        metadata_attempt = _write_capture_attempt(
+            campaign_dir,
+            attempt_root,
+            {
+                "campaign_id": manifest["campaign_id"],
+                "phase": phase,
+                "candidate_id": candidate_id,
+                "status": "awaiting_receipts",
+                "tool_components": (
+                    tool_identity.get("components")
+                    if isinstance(tool_identity, Mapping)
+                    else None
+                ),
+                "classification_candidate_reuse_transition": (
+                    classification_candidate_reuse_transition_binding
+                ),
+                "incremental_plan": {
+                    **plan_core,
+                    "plan_sha256": incremental_recovery.digest(plan_core),
+                },
+                "identity": identity,
+                "results": list(prior_results),
+                "evidence_roots": [str(root) for root in metadata_evidence_roots],
+                "environment": metadata_environment,
+                "binary_verification": None,
+                "watchdog": {
+                    "schema_version": WATCHDOG_HEARTBEAT_SCHEMA,
+                    "budget_seconds": deadline.budget_seconds,
+                    "heartbeat_seconds": getattr(
+                        deadline, "heartbeat_seconds", DEFAULT_HEARTBEAT_SECONDS
+                    ),
+                    "elapsed_seconds": round(deadline.elapsed_seconds, 3),
+                    "remaining_seconds": round(deadline.remaining_seconds, 3),
+                    "heartbeat": heartbeat_binding,
+                    "timeout_checkpoint": None,
+                    "last_completed_job_id": None,
+                },
+                "job_checkpoint": checkpoint_summary,
+                "execution_error": None,
+                "restoration_error": None,
+                "next_gate": (
+                    "仅补当前 metadata-only attempt 的运行画像、两种 Kilo 原始 "
+                    "witness 与 seal；禁止重跑九项 Candidate Job。"
+                ),
+            },
+        )
+        return {
+            "status": "awaiting_receipts",
+            "phase": phase,
+            "candidate_id": candidate_id,
+            "attempt_id": attempt_root.name,
+            "attempt": str(attempt_root),
+            "attempt_digest": metadata_attempt["attempt_digest"],
+            "run_nonce": reservation["run_nonce"],
+            "started_at_utc": reservation["started_at_utc"],
+            "environment": metadata_environment,
+            "results": list(prior_results),
+            "incremental_plan": metadata_attempt["incremental_plan"],
+            "reservation_exists": True,
+            "live_request_count": 0,
+            "scanned_bytes": 0,
+            "next_command": "生成运行画像和两份 Kilo 收据后执行 capture-candidate seal。",
+        }
     results: list[dict[str, Any]] = list(prior_results)
     execution_error: BaseException | None = setup_error
     restoration_error: BaseException | None = None
@@ -15147,6 +28216,15 @@ def _run_capture_attempt(
                     if item.get("carried_from_attempt")
                 },
                 before_manifest,
+                source_campaign_dir=recovery_source_campaign_dir,
+                source_relative=(
+                    _capture_attempt_relative(
+                        "candidate", recovery_source_candidate_id
+                    )
+                    if recovery_source_campaign_dir is not None
+                    and recovery_source_candidate_id is not None
+                    else None
+                ),
             )
             scenario_context = ScenarioReceiptContext(
                 campaign_id=str(manifest["campaign_id"]),
@@ -15459,11 +28537,14 @@ def _run_capture_attempt(
             deadline, "last_completed_job_id", None
         ),
     }
+    failed_result_ids = _failed_job_ids(results)
     status = (
         "environment_contaminated"
         if contamination is not None
         else "awaiting_receipts"
-        if required_jobs_ok and restoration_receipt is not None
+        if required_jobs_ok
+        and not failed_result_ids
+        and restoration_receipt is not None
         else "failed"
     )
     attempt = _write_capture_attempt(
@@ -15480,16 +28561,22 @@ def _run_capture_attempt(
                 if isinstance(tool_identity, Mapping)
                 else None
             ),
+            **(
+                {
+                    "classification_candidate_reuse_transition": (
+                        classification_candidate_reuse_transition_binding
+                    )
+                }
+                if classification_candidate_reuse_transition is not None
+                and classification_candidate_reuse_transition_binding is not None
+                else {}
+            ),
             "incremental_tool_transition": incremental_transition,
             "evaluation_transition": evaluation_transition,
             "incremental_plan": {
                 "schema_version": incremental_recovery.SCHEMA_VERSION,
                 "planned_job_ids": sorted(job.job_id for job in planned_jobs),
-                "changed_components": sorted(
-                    tool_impact.get("changed_components", [])
-                    if isinstance(tool_impact, Mapping)
-                    else []
-                ),
+                "changed_components": sorted(changed_components),
                 "affected_job_ids": sorted(affected_job_ids),
                 "reused_job_ids": sorted(
                     str(item.get("id"))
@@ -15523,11 +28610,7 @@ def _run_capture_attempt(
                         "planned_job_ids": sorted(
                             job.job_id for job in planned_jobs
                         ),
-                        "changed_components": sorted(
-                            tool_impact.get("changed_components", [])
-                            if isinstance(tool_impact, Mapping)
-                            else []
-                        ),
+                        "changed_components": sorted(changed_components),
                         "affected_job_ids": sorted(affected_job_ids),
                         "reused_job_ids": sorted(
                             str(item.get("id"))
@@ -15584,7 +28667,11 @@ def _run_capture_attempt(
             "next_gate": (
                 "运行 capture manifest finalizer；候选还需完成运行画像与两种 Kilo 原始 witness。"
                 if status == "awaiting_receipts"
-                else None
+                else (
+                    "仅补跑失败 Job：" + "、".join(failed_result_ids)
+                    if failed_result_ids
+                    else None
+                )
             ),
         },
     )
@@ -15629,17 +28716,26 @@ def _approve_frozen_capture_seal(
     attempt_root: Path,
     attempt: dict[str, Any],
     candidate_id: str | None,
+    evaluation_transition: dict[str, str] | None,
 ) -> dict[str, Any]:
     """只重放冻结草案与 stat 边界完成批准，不重新读取证据内容。"""
 
+    transition_index = _seal_transition_index(evaluation_transition)
     draft = _load_seal_draft(
         campaign_dir,
         attempt_root,
         phase=phase,
         candidate_id=candidate_id,
         attempt=attempt,
+        transition_index=transition_index,
     )
     payload = dict(draft["stage_payload"])
+    if (
+        ("evaluation_transition" in payload)
+        != (evaluation_transition is not None)
+        or payload.get("evaluation_transition") != evaluation_transition
+    ):
+        raise ConfigurationError("seal 冻结草案未绑定当前有效 transition。")
     if payload.get("status") != "complete":
         raise ConfigurationError("seal 冻结草案不是可批准的完整阶段。")
     if phase == "candidate":
@@ -15657,9 +28753,10 @@ def _approve_frozen_capture_seal(
     )
     if not approved:
         raise ConfigurationError("seal 批准缺少 --approve-seal-sha256。")
+    preview_path = _seal_preview_path(attempt_root, transition_index)
     payload["seal_preview"] = {
-        "path": str((attempt_root / "seal-preview.json").relative_to(campaign_dir)),
-        "sha256": file_sha256(attempt_root / "seal-preview.json"),
+        "path": str(preview_path.relative_to(campaign_dir)),
+        "sha256": file_sha256(preview_path),
     }
     save_stage_result(
         campaign_dir,
@@ -15834,7 +28931,6 @@ def _seal_capture_attempt(
     """从不可变 attempt 与机器收据构建预览，并经摘要复核后封存阶段。"""
 
     campaign_dir = arguments.campaign_dir
-    _reject_contaminated_campaign(campaign_dir)
     manifest = _require_formal_campaign(campaign_dir)
     attempt_id = getattr(arguments, "attempt_id", None)
     if not attempt_id:
@@ -15843,18 +28939,51 @@ def _seal_capture_attempt(
     attempt_root, attempt = _load_capture_attempt(
         campaign_dir, phase, candidate_id, attempt_id
     )
-    evaluation_transition = _verify_plan_identity(
+    contamination_records = _campaign_contamination_records(campaign_dir)
+    allow_metadata_only_repair = bool(
+        contamination_records
+        and _metadata_only_seal_repair_allowed(
+            campaign_dir,
+            attempt_root,
+            attempt,
+            contamination_records,
+        )
+    )
+    _reject_contaminated_campaign(
+        campaign_dir,
+        allow_metadata_only_repair=allow_metadata_only_repair,
+        attempt_root=attempt_root,
+        attempt=attempt,
+    )
+    failed_result_ids = _failed_job_ids(attempt.get("results"))
+    if failed_result_ids:
+        raise ConfigurationError(
+            "attempt 仍有失败 Job，禁止 seal："
+            + "、".join(failed_result_ids)
+            + "；只能定向补跑失败闭集。"
+        )
+    _bind_active_lease_attempt(
+        campaign_dir,
+        phase=phase,
+        candidate_id=candidate_id,
+        attempt_id=attempt.get("attempt_id"),
+    )
+    tool_impact = _verify_plan_identity(
         campaign_dir,
         manifest,
         operation=f"capture-{phase}-seal",
         attempt_root=attempt_root,
         attempt=attempt,
     )
+    evaluation_transition = _stage_evaluation_transition_binding(tool_impact)
+    seal_transition_index = _seal_transition_index(evaluation_transition)
     if attempt.get("status") != "awaiting_receipts":
         raise ConfigurationError("只有 awaiting_receipts attempt 可以 seal。")
-    if getattr(arguments, "approve_seal_sha256", None) and _seal_draft_path(
-        attempt_root
-    ).is_file():
+    if getattr(arguments, "approve_seal_sha256", None):
+        if not _seal_draft_path(attempt_root, seal_transition_index).is_file():
+            raise ConfigurationError(
+                "seal 批准缺少当前 transition 对应的冻结草案；必须先生成预览。"
+            )
         return _approve_frozen_capture_seal(
             arguments,
             phase=phase,
@@ -15862,6 +28991,7 @@ def _seal_capture_attempt(
             attempt_root=attempt_root,
             attempt=attempt,
             candidate_id=candidate_id,
+            evaluation_transition=evaluation_transition,
         )
     if phase == "official":
         try:
@@ -15937,6 +29067,14 @@ def _seal_capture_attempt(
         )
     _validate_capture_job_results(jobs, attempt.get("results"), phase=phase)
 
+    metadata_source: tuple[Path, Path, dict[str, Any], dict[str, Any]] | None = None
+    if _is_classification_candidate_metadata_only_attempt(attempt):
+        metadata_source = _classification_candidate_reuse_attempt_source(
+            campaign_dir,
+            manifest,
+            attempt,
+        )
+
     roots = _deduplicate_evidence_roots(
         Path(value) for value in attempt.get("evidence_roots", [])
     )
@@ -15967,19 +29105,50 @@ def _seal_capture_attempt(
         or attempt_evidence_root.resolve(strict=True) not in roots
     ):
         raise ConfigurationError("抓包 attempt 的环境证据根未纳入 seal。")
+    restoration_environment = environment
+    restoration_subject_id = attempt_id
+    restoration_evidence_root = attempt_evidence_root
+    metadata_source_evidence_root: Path | None = None
+    if metadata_source is not None:
+        _source_dir, _source_root, source_attempt, _transition = metadata_source
+        if any(
+            environment.get(name) is not None
+            for name in (
+                "before_probe",
+                "after_probe",
+                "restoration_report",
+                "arm64_before_receipt",
+                "arm64_after_receipt",
+            )
+        ):
+            raise ConfigurationError("metadata-only attempt 不得伪造本轮环境探针。")
+        source_environment = source_attempt.get("environment")
+        if not isinstance(source_environment, dict):
+            raise ConfigurationError("metadata-only attempt 来源缺少环境恢复绑定。")
+        restoration_environment = source_environment
+        restoration_subject_id = str(source_attempt.get("attempt_id", ""))
+        restoration_evidence_root = Path(
+            str(source_environment.get("evidence_root", ""))
+        )
+        if (
+            not restoration_evidence_root.is_absolute()
+            or restoration_evidence_root.resolve(strict=True) not in roots
+        ):
+            raise ConfigurationError("metadata-only attempt 来源环境根未纳入 seal。")
+        metadata_source_evidence_root = restoration_evidence_root
     arm64_receipts: dict[str, dict[str, Any]] = {}
     for role, expected_phase in (
         ("arm64_before_receipt", "attempt_before"),
         ("arm64_after_receipt", "attempt_after"),
     ):
-        reference = environment.get(role)
+        reference = restoration_environment.get(role)
         if not isinstance(reference, dict) or set(reference) != {
             "path",
             "sha256",
             "bytes",
         }:
             raise ConfigurationError(f"抓包 attempt 缺少 {role} 绑定。")
-        receipt_path = attempt_evidence_root / str(reference.get("path", ""))
+        receipt_path = restoration_evidence_root / str(reference.get("path", ""))
         if (
             receipt_path.is_symlink()
             or not receipt_path.is_file()
@@ -15999,7 +29168,7 @@ def _seal_capture_attempt(
         if (
             replayed.get("status") != "passed"
             or replayed.get("phase") != expected_phase
-            or replayed.get("subject_id") != attempt_id
+            or replayed.get("subject_id") != restoration_subject_id
         ):
             raise ConfigurationError(f"抓包 attempt 的 {role} 身份不一致。")
         arm64_receipts[role] = replayed
@@ -16012,13 +29181,13 @@ def _seal_capture_attempt(
         )
     ):
         raise ConfigurationError("抓包 attempt 前后 ARM64 环境身份不连续。")
-    restoration_reference = environment.get("restoration_report")
+    restoration_reference = restoration_environment.get("restoration_report")
     if (
         not isinstance(restoration_reference, dict)
         or set(restoration_reference) != {"path", "sha256", "bytes"}
     ):
         raise ConfigurationError("抓包 attempt 缺少机器恢复收据绑定。")
-    restoration_path = attempt_evidence_root / str(
+    restoration_path = restoration_evidence_root / str(
         restoration_reference.get("path", "")
     )
     if (
@@ -16043,7 +29212,12 @@ def _seal_capture_attempt(
     if phase == "candidate":
         try:
             with _campaign_lock(campaign_dir):
-                _reject_contaminated_campaign(campaign_dir)
+                _reject_contaminated_campaign(
+                    campaign_dir,
+                    allow_metadata_only_repair=allow_metadata_only_repair,
+                    attempt_root=attempt_root,
+                    attempt=attempt,
+                )
                 (
                     post_client_path,
                     _,
@@ -16053,6 +29227,12 @@ def _seal_capture_attempt(
                     manifest,
                     attempt_evidence_root,
                     str(candidate_id),
+                    source_evidence_root=metadata_source_evidence_root,
+                    source_environment=(
+                        restoration_environment
+                        if metadata_source_evidence_root is not None
+                        else None
+                    ),
                 )
             if _rfc3339_datetime(
                 client_checkpoint_at, "Kilo 后检查点时间"
@@ -16174,16 +29354,62 @@ def _seal_capture_attempt(
         except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
             raise ConfigurationError(str(error)) from error
     else:
-        try:
-            evidence_manifest = (
-                codex_upgrade_evidence_manifest.build_evidence_manifest(
-                    roots,
+        if metadata_source is not None:
+            _source_dir, source_root, source_attempt, _transition = metadata_source
+            source_roots = _deduplicate_evidence_roots(
+                Path(value) for value in source_attempt.get("evidence_roots", [])
+            )
+            source_manifest_path = _evidence_manifest_path(source_root)
+            if not source_manifest_path.is_file() or source_manifest_path.is_symlink():
+                source_manifest_path = (
+                    attempt_root
+                    / CLASSIFICATION_CANDIDATE_REUSE_SOURCE_MANIFEST_FILENAME
+                )
+            if not source_manifest_path.is_file() or source_manifest_path.is_symlink():
+                raise ConfigurationError(
+                    "metadata-only attempt 来源尚无 EvidenceManifest；必须先显式执行 "
+                    "deep-verify，禁止在 seal 中隐式重扫来源证据。"
+                )
+            source_manifest = _load_evidence_manifest(source_manifest_path)
+            try:
+                codex_upgrade_evidence_manifest.verify_manifest_boundary(
+                    source_manifest,
+                    source_roots,
+                )
+                source_root_set = {path.resolve(strict=True) for path in source_roots}
+                delta_roots = [
+                    path for path in roots if path.resolve(strict=True) not in source_root_set
+                ]
+                if not delta_roots:
+                    raise ConfigurationError(
+                        "metadata-only attempt 缺少本轮 Kilo／断言证据根。"
+                    )
+                delta_manifest = codex_upgrade_evidence_manifest.build_evidence_manifest(
+                    delta_roots,
                     checkpoint_path=_evidence_manifest_checkpoint_path(attempt_root),
                     secret_env_names=_secret_environment_names(),
                 )
-            )
-        except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
-            raise ConfigurationError(str(error)) from error
+                evidence_manifest = codex_upgrade_evidence_manifest.merge_evidence_manifests(
+                    source_manifest,
+                    delta_manifest,
+                )
+                codex_upgrade_evidence_manifest.verify_manifest_boundary(
+                    evidence_manifest,
+                    roots,
+                )
+            except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+                raise ConfigurationError(str(error)) from error
+        else:
+            try:
+                evidence_manifest = (
+                    codex_upgrade_evidence_manifest.build_evidence_manifest(
+                        roots,
+                        checkpoint_path=_evidence_manifest_checkpoint_path(attempt_root),
+                        secret_env_names=_secret_environment_names(),
+                    )
+                )
+            except codex_upgrade_evidence_manifest.EvidenceManifestError as error:
+                raise ConfigurationError(str(error)) from error
         _write_or_verify_json(manifest_path, evidence_manifest)
     evidence_inventory = evidence_manifest["inventory"]
     security = evidence_manifest["security"]
@@ -16249,18 +29475,26 @@ def _seal_capture_attempt(
         approve_sha256=getattr(arguments, "approve_seal_sha256", None),
     )
     if not approved:
+        preview_path = _seal_preview_path(
+            attempt_root,
+            _seal_transition_index(payload.get("evaluation_transition")),
+        )
         return {
             "status": "approval_required",
             "phase": phase,
             "candidate_id": candidate_id,
             "attempt_id": attempt_id,
-            "seal_preview": str(attempt_root / "seal-preview.json"),
+            "seal_preview": str(preview_path),
             "review_sha256": preview["review_sha256"],
             "message": "复核机器 finalizer 事实后，以同一摘要再次执行 seal。",
         }
+    preview_path = _seal_preview_path(
+        attempt_root,
+        _seal_transition_index(payload.get("evaluation_transition")),
+    )
     payload["seal_preview"] = {
-        "path": str((attempt_root / "seal-preview.json").relative_to(campaign_dir)),
-        "sha256": file_sha256(attempt_root / "seal-preview.json"),
+        "path": str(preview_path.relative_to(campaign_dir)),
+        "sha256": file_sha256(preview_path),
     }
     save_stage_result(
         campaign_dir,
@@ -16280,8 +29514,13 @@ def _surface_from_stage(
     stage: str,
     *,
     candidate_id: str | None = None,
+    stage_result: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    result = _load_stage_result(campaign_dir, stage, candidate_id)
+    result = (
+        dict(stage_result)
+        if stage_result is not None
+        else _load_stage_result(campaign_dir, stage, candidate_id)
+    )
     reference = result.get("surface")
     if isinstance(reference, dict):
         path = _campaign_file(campaign_dir, str(reference.get("path", "")))
@@ -16465,10 +29704,15 @@ def _validate_migration_manifest(
 def _classification_differences(
     campaign_dir: Path,
     manifest: dict[str, Any],
+    official: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     source_diff = _analysis_payload(campaign_dir, manifest, "source-diff")
     baseline_surface = _analysis_payload(campaign_dir, manifest, "baseline-surface")
-    official_surface = _surface_from_stage(campaign_dir, "capture-official")
+    official_surface = _surface_from_stage(
+        campaign_dir,
+        "capture-official",
+        stage_result=official,
+    )
     official_diff = compare_surfaces(baseline_surface, official_surface)
     discovery_root = ensure_private_directory(
         campaign_dir / "classification" / "discovery", campaign_dir
@@ -16934,6 +30178,44 @@ def _normalized_json_sha256(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _scenario_job_execution_contract(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """提取全部 Job 中会改变实际执行或封存判定的字段。"""
+
+    jobs = payload.get("capture_jobs")
+    return {
+        "schema_version": payload.get("schema_version"),
+        "codex_version": payload.get("codex_version"),
+        "jobs": [
+            {
+                key: value
+                for key, value in job.items()
+                if key in SCENARIO_JOB_EXECUTION_FIELDS
+            }
+            for job in (jobs if isinstance(jobs, list) else [])
+            if isinstance(job, dict)
+        ],
+    }
+
+
+def _scenario_non_execution_contract(payload: Any) -> Any:
+    """移除 Job 执行字段，仅保留批准分类负责的评估语义。"""
+
+    normalized = json.loads(json.dumps(payload, ensure_ascii=False))
+    if not isinstance(normalized, dict):
+        return normalized
+    jobs = normalized.get("capture_jobs")
+    if not isinstance(jobs, list):
+        return normalized
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        for field in SCENARIO_JOB_EXECUTION_FIELDS - {"id"}:
+            job.pop(field, None)
+    return normalized
+
+
 def _official_scenario_execution_contract(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -16944,24 +30226,15 @@ def _official_scenario_execution_contract(
     完全一致，否则只能新建 Campaign。
     """
 
-    execution_fields = {
-        "id",
-        "phase",
-        "suites",
-        "required",
-        "steps",
-        "evidence_roots",
-        "required_scenario_receipts",
-        "track",
-        "model_id",
-        "expected_use_responses_lite",
-        "required_model_receipt",
-    }
     return {
         "schema_version": payload.get("schema_version"),
         "codex_version": payload.get("codex_version"),
         "official_jobs": [
-            {key: value for key, value in job.items() if key in execution_fields}
+            {
+                key: value
+                for key, value in job.items()
+                if key in SCENARIO_JOB_EXECUTION_FIELDS
+            }
             for job in payload.get("capture_jobs", [])
             if isinstance(job, dict) and job.get("phase") == "official"
         ],
@@ -16993,25 +30266,50 @@ def classify_campaign(
 
     _reject_contaminated_campaign(campaign_dir)
     manifest = _require_formal_campaign(campaign_dir)
-    _verify_plan_identity(campaign_dir, manifest)
-    official = _load_stage_result(campaign_dir, "capture-official")
-    if official.get("status") != "complete":
-        raise ConfigurationError("官方证据尚未完整封存。")
-    source_diff, official_diff = _classification_differences(campaign_dir, manifest)
-    if target_rule_manifest is None and migration_manifest is None:
-        return _write_classification_draft(
-            campaign_dir, manifest, source_diff, official_diff
-        )
-    if (
-        target_rule_manifest is None
-        or migration_manifest is None
-        or scenario_manifest is None
-        or profile_manifest is None
-        or assertion_profile_manifest is None
-    ):
+    approval_inputs = (
+        target_rule_manifest,
+        migration_manifest,
+        scenario_manifest,
+        profile_manifest,
+        assertion_profile_manifest,
+    )
+    approval_mode = approve_manifest_sha256 is not None or any(
+        value is not None for value in approval_inputs
+    )
+    if approval_mode and any(value is None for value in approval_inputs):
         raise ConfigurationError(
             "批准分类必须同时提供目标规则、迁移、场景、运行画像和断言画像清单。"
         )
+    _verify_plan_identity(
+        campaign_dir,
+        manifest,
+        operation="classify",
+        allow_stopped_classification_draft_approval=approval_mode,
+    )
+    official_summary = _load_stage_result(
+        campaign_dir,
+        "capture-official",
+        _shallow=True,
+    )
+    official = _load_stage_result(
+        campaign_dir,
+        "capture-official",
+        _skip_evidence_scan=(
+            official_summary.get("predecessor_import") is not None
+        ),
+    )
+    if official.get("status") != "complete":
+        raise ConfigurationError("官方证据尚未完整封存。")
+    source_diff, official_diff = _classification_differences(
+        campaign_dir,
+        manifest,
+        official,
+    )
+    if not approval_mode:
+        return _write_classification_draft(
+            campaign_dir, manifest, source_diff, official_diff
+        )
+    assert all(value is not None for value in approval_inputs)
     baseline_rules = tuple(manifest["required_rules"])
     target_rules = load_rule_manifest(target_rule_manifest, manifest["target_version"])
     target_payload = _approved_manifest_payload(target_rule_manifest, "目标规则清单")
@@ -17173,6 +30471,1182 @@ def classify_campaign(
     return payload
 
 
+def _canonical_file_binding(
+    campaign_dir: Path,
+    path: Path,
+    label: str,
+    *,
+    maximum_bytes: int = 4 * 1024 * 1024,
+) -> dict[str, Any]:
+    """绑定 Campaign 内的小型普通文件，不扫描其引用的原始证据。"""
+
+    campaign_root = campaign_dir.resolve(strict=True)
+    try:
+        resolved = path.resolve(strict=True)
+        relative = resolved.relative_to(campaign_root).as_posix()
+    except (OSError, ValueError) as error:
+        raise ConfigurationError(f"{label}必须位于当前 Campaign 内。") from error
+    _reject_symlink_components(resolved, campaign_root, label)
+    if not resolved.is_file() or resolved.is_symlink():
+        raise ConfigurationError(f"{label}不是可信普通文件。")
+    size = resolved.stat().st_size
+    if size < 1 or size > maximum_bytes:
+        raise ConfigurationError(f"{label}大小超出小型收据上限。")
+    return {"path": relative, "sha256": file_sha256(resolved), "bytes": size}
+
+
+def _canonical_supervisor_deadline(
+    supervisor_run_dir: Path,
+) -> dict[str, float]:
+    """读取父监督器原始时间锚；重启 run 不得改变该锚或 deadline。"""
+
+    if (
+        not supervisor_run_dir.is_absolute()
+        or supervisor_run_dir.is_symlink()
+        or not supervisor_run_dir.is_dir()
+    ):
+        raise ConfigurationError("--supervisor-run-dir 必须是可信绝对目录。")
+    state_path = supervisor_run_dir / "state.json"
+    if state_path.is_symlink() or not state_path.is_file():
+        raise ConfigurationError("父监督器 state.json 不存在或不可信。")
+    state = _read_json(state_path, "父监督器状态")
+    start = state.get("campaign_started_at_epoch", state.get("started_at_epoch"))
+    end = state.get("deadline_at_epoch")
+    if (
+        isinstance(start, bool)
+        or not isinstance(start, (int, float))
+        or isinstance(end, bool)
+        or not isinstance(end, (int, float))
+        or not math.isfinite(float(start))
+        or not math.isfinite(float(end))
+        or float(start) <= 0
+        or float(end) <= float(start)
+        or state.get("state") != "running"
+    ):
+        raise ConfigurationError("父监督器时间锚、deadline 或状态非法。")
+    return {
+        "started_at_epoch": float(start),
+        "budget_seconds": float(end) - float(start),
+        "deadline_at_epoch": float(end),
+    }
+
+
+def _canonical_legacy_sources(campaign_dir: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    """只读取固定小型旧控制对象，禁止遍历历史证据目录。"""
+
+    candidates = (
+        ("successor", campaign_dir / "predecessor-import.json"),
+        ("evaluation-transition", campaign_dir / "classification-candidate-reuse-transition.json"),
+        ("evaluation-transition", campaign_dir / "tool-evaluation-transition.json"),
+        ("terminal-transition-preflight", campaign_dir / "terminal-transition-preflight.json"),
+    )
+    object_types: list[str] = []
+    references: list[dict[str, Any]] = []
+    for object_type, path in candidates:
+        if path.exists() or path.is_symlink():
+            references.append(
+                _canonical_file_binding(campaign_dir, path, object_type)
+            )
+            object_types.append(object_type)
+    epoch_root = campaign_dir / "control-epochs"
+    if epoch_root.exists():
+        if epoch_root.is_symlink() or not epoch_root.is_dir():
+            raise ConfigurationError("历史 control-epochs 目录不可信。")
+        for path in sorted(epoch_root.glob("*.json"), key=lambda value: value.name):
+            object_type = (
+                "runtime-repair" if "runtime-repair" in path.name else "control-epoch"
+            )
+            references.append(
+                _canonical_file_binding(campaign_dir, path, object_type)
+            )
+            object_types.append(object_type)
+    return sorted(set(object_types)), references
+
+
+def _profile_pointer_parts(pointer: str) -> list[str]:
+    if not isinstance(pointer, str) or not pointer.startswith("/"):
+        raise ConfigurationError("画像补丁 path 必须是 JSON Pointer。")
+    return [
+        part.replace("~1", "/").replace("~0", "~")
+        for part in pointer[1:].split("/")
+    ]
+
+
+def _profile_pointer_value(document: Any, pointer: str) -> Any:
+    current = document
+    for part in _profile_pointer_parts(pointer):
+        if isinstance(current, list):
+            if not part.isdigit() or int(part) >= len(current):
+                raise ConfigurationError(f"画像补丁路径不存在：{pointer}")
+            current = current[int(part)]
+        elif isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            raise ConfigurationError(f"画像补丁路径不存在：{pointer}")
+    return current
+
+
+def _profile_pointer_replace(document: Any, pointer: str, value: Any) -> None:
+    parts = _profile_pointer_parts(pointer)
+    if not parts:
+        raise ConfigurationError("画像补丁不得替换文档根。")
+    parent = document
+    for part in parts[:-1]:
+        if isinstance(parent, list):
+            if not part.isdigit() or int(part) >= len(parent):
+                raise ConfigurationError(f"画像补丁路径不存在：{pointer}")
+            parent = parent[int(part)]
+        elif isinstance(parent, dict) and part in parent:
+            parent = parent[part]
+        else:
+            raise ConfigurationError(f"画像补丁路径不存在：{pointer}")
+    leaf = parts[-1]
+    if isinstance(parent, list):
+        if not leaf.isdigit() or int(leaf) >= len(parent):
+            raise ConfigurationError(f"画像补丁路径不存在：{pointer}")
+        parent[int(leaf)] = json.loads(json.dumps(value, ensure_ascii=False))
+    elif isinstance(parent, dict) and leaf in parent:
+        parent[leaf] = json.loads(json.dumps(value, ensure_ascii=False))
+    else:
+        raise ConfigurationError(f"画像补丁路径不存在：{pointer}")
+
+
+def _profile_diff_paths(before: Any, after: Any, path: tuple[str, ...] = ()) -> list[str]:
+    if type(before) is not type(after):
+        return [_json_pointer(path)]
+    if isinstance(before, dict):
+        return [
+            pointer
+            for key in sorted(set(before) | set(after))
+            for pointer in _profile_diff_paths(
+                before.get(key), after.get(key), (*path, str(key))
+            )
+        ]
+    if isinstance(before, list):
+        if len(before) != len(after):
+            return [_json_pointer(path)]
+        return [
+            pointer
+            for index, (left, right) in enumerate(zip(before, after))
+            for pointer in _profile_diff_paths(left, right, (*path, str(index)))
+        ]
+    return [] if before == after else [_json_pointer(path)]
+
+
+def validate_profile_derivation(
+    *,
+    active_profile_path: Path,
+    target_profile_path: Path,
+    migration_path: Path,
+    patch_manifest_path: Path,
+) -> dict[str, Any]:
+    """证明目标画像等于 active 不可变副本加版本字段和差异规则补丁。"""
+
+    for path, label in (
+        (active_profile_path, "production_active 画像"),
+        (target_profile_path, "目标画像清单"),
+        (migration_path, "规则迁移清单"),
+        (patch_manifest_path, "画像规则补丁清单"),
+    ):
+        if path.is_symlink() or not path.is_file():
+            raise ConfigurationError(f"{label}不是可信普通文件。")
+    active = _read_json(active_profile_path, "production_active 画像")
+    target_manifest = _read_json(target_profile_path, "目标画像清单")
+    target = target_manifest.get("profile_payload")
+    if not isinstance(target, dict):
+        raise ConfigurationError("目标画像清单缺少 profile_payload。")
+    migration = _read_json(migration_path, "规则迁移清单")
+    try:
+        partition = incremental_recovery.canonical_rule_partition(migration)
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(str(error)) from error
+    patch_manifest = _read_json(patch_manifest_path, "画像规则补丁清单")
+    if set(patch_manifest) != {
+        "schema_version",
+        "baseline_version",
+        "target_version",
+        "active_profile_sha256",
+        "rule_patches",
+    } or patch_manifest.get("schema_version") != "codex-upgrade-profile-rule-patches/v1":
+        raise ConfigurationError("画像规则补丁清单字段或 schema_version 非法。")
+    baseline_version = patch_manifest.get("baseline_version")
+    target_version = patch_manifest.get("target_version")
+    if (
+        baseline_version != active.get("Version")
+        or target_version != target.get("Version")
+        or target_version != target_manifest.get("codex_version")
+        or patch_manifest.get("active_profile_sha256")
+        != file_sha256(active_profile_path)
+    ):
+        raise ConfigurationError("画像规则补丁清单版本或 active 摘要不一致。")
+
+    derived, version_paths = _replace_json_string_literal(
+        json.loads(json.dumps(active, ensure_ascii=False)),
+        str(baseline_version),
+        str(target_version),
+    )
+    patches = patch_manifest.get("rule_patches")
+    if not isinstance(patches, list) or not patches:
+        raise ConfigurationError("画像规则补丁清单 rule_patches 不能为空。")
+    rule_paths: dict[str, list[str]] = {}
+    seen_paths: set[str] = set()
+    for index, patch in enumerate(patches, 1):
+        if not isinstance(patch, Mapping) or set(patch) != {
+            "rule_id",
+            "path",
+            "before",
+            "after",
+        }:
+            raise ConfigurationError(f"画像规则补丁 {index} 字段不闭合。")
+        rule_id = patch.get("rule_id")
+        pointer = patch.get("path")
+        if (
+            rule_id not in partition["affected_rule_ids"]
+            or not isinstance(pointer, str)
+            or pointer in seen_paths
+            or pointer in version_paths
+        ):
+            raise ConfigurationError(f"画像规则补丁 {index} 规则或路径非法。")
+        if _profile_pointer_value(derived, pointer) != patch.get("before"):
+            raise ConfigurationError(f"画像规则补丁 {index} before 不匹配 active 副本。")
+        _profile_pointer_replace(derived, pointer, patch.get("after"))
+        seen_paths.add(pointer)
+        rule_paths.setdefault(str(rule_id), []).append(pointer)
+    if set(rule_paths) != set(partition["affected_rule_ids"]):
+        raise ConfigurationError("每条 affected rule 必须至少绑定一个画像路径。")
+    if not isinstance(target.get("Digest"), str) or not SHA256_RE.fullmatch(target["Digest"]):
+        raise ConfigurationError("目标画像 Digest 非法。")
+    derived["Digest"] = target["Digest"]
+    if derived != target:
+        unexpected = _profile_diff_paths(derived, target)
+        raise ConfigurationError(
+            "目标画像不是 active 副本加批准补丁；未映射路径="
+            + ",".join(unexpected[:12])
+        )
+    actual_paths = sorted(set(_profile_diff_paths(active, target)))
+    allowed_paths = sorted({"/Digest", *version_paths, *seen_paths})
+    if actual_paths != allowed_paths:
+        raise ConfigurationError("profile_diff_paths 与版本字段/规则补丁集合不一致。")
+    return {
+        "schema_version": "codex-upgrade-profile-diff/v1",
+        "status": "complete",
+        "active_profile": {
+            "path": str(active_profile_path.resolve(strict=True)),
+            "sha256": file_sha256(active_profile_path),
+        },
+        "target_profile": {
+            "path": str(target_profile_path.resolve(strict=True)),
+            "sha256": file_sha256(target_profile_path),
+            "profile_digest": target["Digest"],
+        },
+        "patch_manifest_sha256": file_sha256(patch_manifest_path),
+        "total_rule_count": partition["total_rule_count"],
+        "affected_rule_ids": partition["affected_rule_ids"],
+        "inherited_rule_ids": partition["inherited_rule_ids"],
+        "profile_diff_paths": actual_paths,
+        "version_identity_paths": sorted({"/Digest", *version_paths}),
+        "rule_field_paths": {
+            rule_id: sorted(paths) for rule_id, paths in sorted(rule_paths.items())
+        },
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+    }
+
+
+def _canonical_import_subject(arguments: argparse.Namespace) -> dict[str, Any]:
+    """从当前小型收据构造一次性导入主题，不复制或扫描原始证据。"""
+
+    campaign_dir = arguments.campaign_dir
+    _validate_existing_campaign_path(campaign_dir)
+    manifest_path = campaign_dir / "campaign.json"
+    manifest = _read_json(manifest_path, "Campaign 清单")
+    if (
+        manifest.get("campaign_mode") != "formal"
+        or manifest.get("campaign_id") is None
+        or manifest.get("baseline_version") is None
+        or manifest.get("target_version") is None
+    ):
+        raise ConfigurationError("canonical 导入只允许完整 Formal Campaign。")
+    if not SAFE_ID_RE.fullmatch(arguments.candidate_id):
+        raise ConfigurationError("--candidate-id 格式非法。")
+    if not SAFE_ID_RE.fullmatch(arguments.attempt_id):
+        raise ConfigurationError("--attempt-id 格式非法。")
+
+    classification_path = campaign_dir / "classification" / "result.json"
+    classification = _read_json(classification_path, "已批准分类结果")
+    migration_reference = classification.get("migration_manifest")
+    if not isinstance(migration_reference, Mapping):
+        raise ConfigurationError("已批准分类缺少规则迁移清单引用。")
+    migration_path = _campaign_file(
+        campaign_dir, str(migration_reference.get("path", ""))
+    )
+    migration_binding = _canonical_file_binding(
+        campaign_dir,
+        migration_path,
+        "规则迁移清单",
+    )
+    if migration_binding["sha256"] != migration_reference.get("sha256"):
+        raise ConfigurationError("规则迁移清单摘要漂移。")
+    migration = _read_json(migration_path, "规则迁移清单")
+    if migration.get("status") != "approved":
+        raise ConfigurationError("规则迁移清单尚未批准。")
+    try:
+        partition = incremental_recovery.canonical_rule_partition(migration)
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(str(error)) from error
+    profile_reference = classification.get("profile_manifest")
+    if not isinstance(profile_reference, Mapping):
+        raise ConfigurationError("已批准分类缺少目标画像引用。")
+    target_profile_path = _campaign_file(
+        campaign_dir, str(profile_reference.get("path", ""))
+    )
+    target_profile_binding = _canonical_file_binding(
+        campaign_dir, target_profile_path, "目标画像清单"
+    )
+    if target_profile_binding["sha256"] != profile_reference.get("sha256"):
+        raise ConfigurationError("目标画像清单摘要漂移。")
+    profile_diff = validate_profile_derivation(
+        active_profile_path=arguments.active_profile,
+        target_profile_path=target_profile_path,
+        migration_path=migration_path,
+        patch_manifest_path=arguments.profile_patch_manifest,
+    )
+
+    attempt_root = (
+        campaign_dir
+        / "candidates"
+        / arguments.candidate_id
+        / "attempts"
+        / arguments.attempt_id
+    )
+    attempt_path = attempt_root / "attempt.json"
+    attempt_binding = _canonical_file_binding(
+        campaign_dir, attempt_path, "Candidate attempt"
+    )
+    attempt = _read_json(attempt_path, "Candidate attempt")
+    if any(
+        attempt.get(field) != expected
+        for field, expected in (
+            ("campaign_id", manifest.get("campaign_id")),
+            ("phase", "candidate"),
+            ("candidate_id", arguments.candidate_id),
+            ("attempt_id", arguments.attempt_id),
+        )
+    ) or attempt.get("status") not in {"awaiting_receipts", "complete"}:
+        raise ConfigurationError("Candidate attempt 身份或状态非法。")
+    incremental_plan = attempt.get("incremental_plan")
+    if not isinstance(incremental_plan, Mapping):
+        raise ConfigurationError("Candidate attempt 缺少增量计划。")
+    planned_job_ids = incremental_plan.get("planned_job_ids")
+    reused_job_ids = incremental_plan.get("reused_job_ids")
+    if (
+        not isinstance(planned_job_ids, list)
+        or not isinstance(reused_job_ids, list)
+        or sorted(planned_job_ids) != sorted(reused_job_ids)
+        or incremental_plan.get("affected_job_ids") != []
+        or incremental_plan.get("failed_job_ids") != []
+        or incremental_plan.get("pending_job_ids") != []
+        or incremental_plan.get("executed_job_ids") != []
+    ):
+        raise ConfigurationError(
+            "历史 Candidate Job 不是零执行全复用，禁止 canonical 导入。"
+        )
+    results = attempt.get("results")
+    if not isinstance(results, list) or len(results) != len(planned_job_ids):
+        raise ConfigurationError("Candidate Job 结果数量不闭合。")
+    result_by_id = {
+        str(item.get("id")): item for item in results if isinstance(item, Mapping)
+    }
+    if set(result_by_id) != set(planned_job_ids):
+        raise ConfigurationError("Candidate Job 结果未精确覆盖计划。")
+
+    items: list[dict[str, Any]] = []
+    for job_id in sorted(planned_job_ids):
+        result = result_by_id[job_id]
+        source = result.get("source_receipt")
+        if (
+            result.get("status") != "complete"
+            or result.get("disposition") != "reused"
+            or not isinstance(source, Mapping)
+        ):
+            raise ConfigurationError(f"Candidate Job 尚不可复用：{job_id}")
+        source_path = _campaign_file(campaign_dir, str(source.get("path", "")))
+        source_binding = _canonical_file_binding(
+            campaign_dir, source_path, f"Candidate Job {job_id} 来源"
+        )
+        if source_binding != dict(source):
+            raise ConfigurationError(f"Candidate Job 来源摘要漂移：{job_id}")
+        result_key = result.get("incremental_result_key")
+        if not SHA256_RE.fullmatch(str(result_key)):
+            raise ConfigurationError(f"Candidate Job result_key 非法：{job_id}")
+        items.append(
+            {
+                "item_id": job_id,
+                "status": "complete",
+                "disposition": "reused",
+                "result_sha256": _fingerprint(result),
+                "result_key": result_key,
+                "source": source_binding,
+                "details": {"kind": "candidate-job"},
+            }
+        )
+
+    kilo_binding = _canonical_file_binding(
+        campaign_dir, arguments.kilo_facts, "Kilo 事实"
+    )
+    kilo = _read_json(arguments.kilo_facts, "Kilo 事实")
+    kilo_identity = kilo.get("identity")
+    observations = kilo.get("observations")
+    if (
+        not isinstance(kilo_identity, Mapping)
+        or not isinstance(observations, Mapping)
+        or kilo_identity.get("campaign_id") != manifest.get("campaign_id")
+        or kilo_identity.get("candidate_id") != arguments.candidate_id
+        or kilo_identity.get("attempt_id") != arguments.attempt_id
+        or kilo_identity.get("target_version") != manifest.get("target_version")
+    ):
+        raise ConfigurationError("Kilo 事实身份不一致。")
+    expected_kilo = {200: "kilo-compatible", 101: "kilo-responses"}
+    if set(observations) != set(expected_kilo.values()):
+        raise ConfigurationError("Kilo 事实未精确覆盖两种客户端入口。")
+    selected: dict[int, Mapping[str, Any]] = {}
+    for status, item_id in expected_kilo.items():
+        observation = observations.get(item_id)
+        if not isinstance(observation, Mapping) or observation.get("http_status") != status:
+            raise ConfigurationError(f"Kilo 事实状态不匹配：{item_id}")
+        selected[status] = observation
+    for status, item_id in expected_kilo.items():
+        observation = selected[status]
+        items.append(
+            {
+                "item_id": item_id,
+                "status": "complete",
+                "disposition": "reused",
+                "result_sha256": _fingerprint(observation),
+                "result_key": _fingerprint(
+                    {"identity": kilo_identity, "observation": observation}
+                ),
+                "source": kilo_binding,
+                "details": {
+                    "kind": "kilo-fact",
+                    "http_status": status,
+                    "usage_id": observation.get("usage_id"),
+                },
+            }
+        )
+
+    profile_binding = _canonical_file_binding(
+        campaign_dir,
+        arguments.profile_activation_fact,
+        "画像激活事实",
+    )
+    profile_fact = _read_json(arguments.profile_activation_fact, "画像激活事实")
+    if _fingerprint(profile_fact) == _fingerprint({}):
+        raise ConfigurationError("画像激活事实为空。")
+    items.append(
+        {
+            "item_id": "profile-activation",
+            "status": "complete",
+            "disposition": "reused",
+            "result_sha256": _fingerprint(profile_fact),
+            "result_key": _fingerprint(
+                {"candidate_id": arguments.candidate_id, "fact": profile_fact}
+            ),
+            "source": profile_binding,
+            "details": {"kind": "profile-activation"},
+        }
+    )
+    items.append(
+        {
+            "item_id": "profile-diff-gate",
+            "status": "complete",
+            "disposition": "reused",
+            "result_sha256": _fingerprint(profile_diff),
+            "result_key": _fingerprint(
+                {
+                    "active": profile_diff["active_profile"]["sha256"],
+                    "target": profile_diff["target_profile"]["sha256"],
+                    "patch": profile_diff["patch_manifest_sha256"],
+                }
+            ),
+            "source": target_profile_binding,
+            "details": {
+                "kind": "profile-diff",
+                "profile_diff_paths": profile_diff["profile_diff_paths"],
+                "version_identity_paths": profile_diff["version_identity_paths"],
+                "rule_field_paths": profile_diff["rule_field_paths"],
+            },
+        }
+    )
+
+    migration_entries = {
+        str(entry.get("target_rule")): entry
+        for entry in migration.get("entries", [])
+        if isinstance(entry, Mapping) and entry.get("classification") == "inherit"
+    }
+    if set(migration_entries) != set(partition["inherited_rule_ids"]):
+        raise ConfigurationError("继承规则迁移收据未精确覆盖 inherited_rule_ids。")
+    for rule_id in partition["inherited_rule_ids"]:
+        entry = migration_entries[rule_id]
+        items.append(
+            {
+                "item_id": f"inherit-{rule_id}",
+                "status": "complete",
+                "disposition": "reused",
+                "result_sha256": _fingerprint(entry),
+                "result_key": _fingerprint(
+                    {
+                        "migration_manifest_sha256": migration_binding["sha256"],
+                        "entry": entry,
+                    }
+                ),
+                "source": migration_binding,
+                "details": {
+                    "kind": "inherited-rule",
+                    "rule_id": rule_id,
+                    "classification": "inherit",
+                },
+            }
+        )
+
+    evidence_manifest_path = attempt_root / "evidence-manifest.json"
+    evidence_manifest = (
+        _canonical_file_binding(
+            campaign_dir, evidence_manifest_path, "EvidenceManifest"
+        )
+        if evidence_manifest_path.exists() or evidence_manifest_path.is_symlink()
+        else None
+    )
+    legacy_types, legacy_refs = _canonical_legacy_sources(campaign_dir)
+    next_items = [
+        "candidate-seal",
+        "compare",
+        *[f"assert-{rule_id}" for rule_id in partition["affected_rule_ids"]],
+        "acceptance",
+        "production-activation",
+        "rollback-verification",
+        "retire-0.147.0",
+    ]
+    return {
+        "campaign": {
+            "campaign_id": str(manifest["campaign_id"]),
+            "campaign_manifest_sha256": file_sha256(manifest_path),
+            "baseline_version": str(manifest["baseline_version"]),
+            "target_version": str(manifest["target_version"]),
+            "candidate_id": arguments.candidate_id,
+            "attempt_id": arguments.attempt_id,
+        },
+        "phase": arguments.phase,
+        "migration": {
+            "manifest_sha256": migration_binding["sha256"],
+            **partition,
+        },
+        "plan": {
+            "execute_item_ids": next_items,
+            "reused_item_ids": sorted(item["item_id"] for item in items),
+        },
+        "items": sorted(items, key=lambda item: item["item_id"]),
+        "evidence_manifest": evidence_manifest,
+        "deadline": _canonical_supervisor_deadline(arguments.supervisor_run_dir),
+        "source": {
+            "kind": "historical-import",
+            "legacy_object_types": legacy_types,
+            "receipt_refs": [attempt_binding, *legacy_refs],
+        },
+        "metrics": {"scanned_bytes": 0, "live_request_count": 0},
+    }
+
+
+def import_canonical_checkpoint(arguments: argparse.Namespace) -> dict[str, Any]:
+    """预览或封存一次性历史导入；执行过程中不发请求、不扫证据。"""
+
+    subject = _canonical_import_subject(arguments)
+    review_sha256 = _fingerprint(subject)
+    summary = {
+        **subject["migration"],
+        **subject["plan"],
+        "review_sha256": review_sha256,
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+    }
+    if arguments.approve_import_sha256 is None:
+        return {"status": "approval_required", **summary}
+    if arguments.approve_import_sha256 != review_sha256:
+        raise ConfigurationError("canonical 导入批准摘要不匹配。")
+
+    canonical_root = arguments.campaign_dir / CANONICAL_DIRECTORY
+    ensure_private_directory(canonical_root, arguments.campaign_dir)
+    checkpoint_root = canonical_root / CANONICAL_CHECKPOINT_DIRECTORY
+    try:
+        store = incremental_recovery.CanonicalCheckpointStore(checkpoint_root)
+        existing = store.latest()
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(str(error)) from error
+    receipt_path = canonical_root / CANONICAL_IMPORT_RECEIPT_FILENAME
+    if existing is None:
+        try:
+            checkpoint = store.append(
+                {"recorded_at_utc": _utc_now(), **subject}
+            )
+        except incremental_recovery.IncrementalRecoveryError as error:
+            raise ConfigurationError(str(error)) from error
+    else:
+        unsigned_existing = {
+            key: value
+            for key, value in existing.items()
+            if key
+            not in {
+                "schema_version",
+                "checkpoint_sequence",
+                "previous_checkpoint_sha256",
+                "checkpoint_sha256",
+                "recorded_at_utc",
+            }
+        }
+        if _fingerprint(unsigned_existing) != review_sha256:
+            raise ConfigurationError("canonical checkpoint 已存在且导入主题不同。")
+        checkpoint = existing
+    receipt = {
+        "schema_version": CANONICAL_IMPORT_RECEIPT_SCHEMA,
+        "status": "complete",
+        "review_sha256": review_sha256,
+        "imported_at_utc": checkpoint["recorded_at_utc"],
+        "checkpoint": {
+            "path": (
+                Path(CANONICAL_CHECKPOINT_DIRECTORY)
+                / f"{checkpoint['checkpoint_sequence']:08d}.json"
+            ).as_posix(),
+            "sha256": checkpoint["checkpoint_sha256"],
+        },
+        "source_kind": "historical-import",
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+    }
+    if receipt_path.exists():
+        if _read_json(receipt_path, "canonical 导入收据") != receipt:
+            raise ConfigurationError("canonical 导入收据已经存在且内容不同。")
+    else:
+        _secure_write_json_once(receipt_path, receipt)
+    return {"status": "complete", **summary, "checkpoint": receipt["checkpoint"]}
+
+
+def _canonical_latest_checkpoint(campaign_dir: Path) -> dict[str, Any]:
+    """读取最新 canonical checkpoint；只校验小型聚合记录。"""
+
+    try:
+        store = incremental_recovery.CanonicalCheckpointStore(
+            campaign_dir / CANONICAL_DIRECTORY / CANONICAL_CHECKPOINT_DIRECTORY,
+            create=False,
+        )
+        checkpoint = store.latest()
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(str(error)) from error
+    if checkpoint is None:
+        raise ConfigurationError("canonical checkpoint 尚未建立。")
+    return checkpoint
+
+
+def _canonical_item_index(checkpoint: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """返回已完成项索引，并拒绝重复或非对象记录。"""
+
+    items = checkpoint.get("items")
+    if not isinstance(items, list):
+        raise ConfigurationError("canonical checkpoint items 非法。")
+    output: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("item_id"), str):
+            raise ConfigurationError("canonical checkpoint item 非法。")
+        item_id = str(item["item_id"])
+        if item_id in output:
+            raise ConfigurationError(f"canonical checkpoint item 重复：{item_id}")
+        output[item_id] = item
+    return output
+
+
+def _canonical_step_receipt(
+    campaign_dir: Path,
+    item_id: str,
+    body: Mapping[str, Any],
+) -> tuple[dict[str, Any], Path]:
+    """写入一份不可覆盖的小型步骤收据；重复调用只允许内容完全一致。"""
+
+    if not SAFE_ID_RE.fullmatch(item_id):
+        raise ConfigurationError("canonical item_id 格式非法。")
+    receipt_root = ensure_private_directory(
+        campaign_dir / CANONICAL_DIRECTORY / "receipts",
+        campaign_dir,
+    )
+    path = receipt_root / f"{item_id}.json"
+    fixed = {
+        "schema_version": CANONICAL_STEP_RECEIPT_SCHEMA,
+        "item_id": item_id,
+        **dict(body),
+    }
+    if path.exists() or path.is_symlink():
+        if path.is_symlink() or not path.is_file():
+            raise ConfigurationError(f"canonical 步骤收据路径不可信：{item_id}")
+        existing = _read_json(path, f"canonical 步骤收据 {item_id}")
+        comparable = dict(existing)
+        comparable.pop("recorded_at_utc", None)
+        if comparable != fixed:
+            raise ConfigurationError(f"canonical 步骤收据已存在且内容不同：{item_id}")
+        return existing, path
+    receipt = {**fixed, "recorded_at_utc": _utc_now()}
+    _secure_write_json_once(path, receipt)
+    return receipt, path
+
+
+def _canonical_complete_item(
+    campaign_dir: Path,
+    *,
+    item_id: str,
+    receipt_path: Path,
+    result_key: str,
+    details: Mapping[str, Any],
+    phase: str = "VC-5",
+) -> dict[str, Any]:
+    """完成一个计划项并立即追加 checkpoint，不重写既有记录。"""
+
+    checkpoint = _canonical_latest_checkpoint(campaign_dir)
+    index = _canonical_item_index(checkpoint)
+    source = _canonical_file_binding(
+        campaign_dir,
+        receipt_path,
+        f"canonical {item_id} 收据",
+    )
+    if item_id in index:
+        existing = index[item_id]
+        if (
+            existing.get("source") != source
+            or existing.get("result_sha256") != source["sha256"]
+            or existing.get("result_key") != result_key
+            or existing.get("details") != dict(details)
+        ):
+            raise ConfigurationError(f"canonical 已完成项发生漂移：{item_id}")
+        return checkpoint
+    execute = list(checkpoint["plan"]["execute_item_ids"])
+    if item_id not in execute:
+        raise ConfigurationError(f"canonical 计划不允许执行：{item_id}")
+    if not SHA256_RE.fullmatch(result_key):
+        raise ConfigurationError(f"canonical result_key 非法：{item_id}")
+    item = {
+        "item_id": item_id,
+        "status": "complete",
+        "disposition": "executed",
+        "result_sha256": source["sha256"],
+        "result_key": result_key,
+        "source": source,
+        "details": dict(details),
+    }
+    record = {
+        "recorded_at_utc": _utc_now(),
+        "campaign": checkpoint["campaign"],
+        "phase": phase,
+        "migration": checkpoint["migration"],
+        "plan": {
+            "execute_item_ids": sorted(value for value in execute if value != item_id),
+            "reused_item_ids": sorted(
+                [*checkpoint["plan"]["reused_item_ids"], item_id]
+            ),
+        },
+        "items": sorted([*checkpoint["items"], item], key=lambda row: row["item_id"]),
+        "evidence_manifest": checkpoint["evidence_manifest"],
+        "deadline": checkpoint["deadline"],
+        "source": checkpoint["source"],
+        "metrics": dict(checkpoint["metrics"]),
+    }
+    if record["metrics"].get("live_request_count") != 0:
+        raise ConfigurationError("canonical VC-5 禁止新增 live 请求。")
+    try:
+        return incremental_recovery.CanonicalCheckpointStore(
+            campaign_dir / CANONICAL_DIRECTORY / CANONICAL_CHECKPOINT_DIRECTORY,
+            create=False,
+        ).append(record)
+    except incremental_recovery.IncrementalRecoveryError as error:
+        raise ConfigurationError(str(error)) from error
+
+
+def _canonical_candidate_seal(campaign_dir: Path, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+    """只聚合已导入事实，生成零扫描 Candidate seal。"""
+
+    index = _canonical_item_index(checkpoint)
+    if "candidate-seal" in index:
+        source = index["candidate-seal"]["source"]
+        receipt = _read_json(
+            _campaign_file(campaign_dir, str(source["path"])),
+            "canonical Candidate seal",
+        )
+        return {**receipt, "checkpoint_sha256": checkpoint["checkpoint_sha256"]}
+    candidate_jobs = sorted(
+        item_id
+        for item_id, item in index.items()
+        if item.get("details", {}).get("kind") == "candidate-job"
+    )
+    kilo = sorted(
+        int(item.get("details", {}).get("http_status"))
+        for item in index.values()
+        if item.get("details", {}).get("kind") == "kilo-fact"
+    )
+    required_kinds = {"profile-activation", "profile-diff"}
+    observed_kinds = {
+        str(item.get("details", {}).get("kind")) for item in index.values()
+    }
+    execute = set(checkpoint["plan"]["execute_item_ids"])
+    if (
+        not candidate_jobs
+        or kilo != [101, 200]
+        or not required_kinds.issubset(observed_kinds)
+        or set(candidate_jobs).intersection(execute)
+        or checkpoint["metrics"] != {"scanned_bytes": 0, "live_request_count": 0}
+    ):
+        raise ConfigurationError("canonical Candidate seal 输入边界不闭合。")
+    body = {
+        "status": "complete",
+        "candidate_id": checkpoint["campaign"]["candidate_id"],
+        "attempt_id": checkpoint["campaign"]["attempt_id"],
+        "input_checkpoint_sha256": checkpoint["checkpoint_sha256"],
+        "candidate_job_ids": candidate_jobs,
+        "kilo_http_statuses": kilo,
+        "scanned_bytes": 0,
+        "live_request_count": 0,
+    }
+    receipt, path = _canonical_step_receipt(
+        campaign_dir, "candidate-seal", body
+    )
+    completed = _canonical_complete_item(
+        campaign_dir,
+        item_id="candidate-seal",
+        receipt_path=path,
+        result_key=_fingerprint(body),
+        details={"kind": "candidate-seal"},
+    )
+    return {
+        **receipt,
+        "checkpoint_sha256": completed["checkpoint_sha256"],
+    }
+
+
+def _canonical_compare(campaign_dir: Path, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+    """比较摘要并只为 affected rules 生成离线断言收据。"""
+
+    index = _canonical_item_index(checkpoint)
+    affected = list(checkpoint["migration"]["affected_rule_ids"])
+    inherited = list(checkpoint["migration"]["inherited_rule_ids"])
+    inherited_items = {f"inherit-{rule_id}" for rule_id in inherited}
+    profile_items = [
+        item
+        for item in index.values()
+        if item.get("details", {}).get("kind") == "profile-diff"
+    ]
+    if (
+        "candidate-seal" not in index
+        or not inherited_items.issubset(index)
+        or len(profile_items) != 1
+    ):
+        raise ConfigurationError("canonical compare 缺少 seal、画像差异或继承收据。")
+    profile_details = profile_items[0]["details"]
+    rule_paths = profile_details.get("rule_field_paths")
+    if not isinstance(rule_paths, Mapping) or set(rule_paths) != set(affected):
+        raise ConfigurationError("canonical compare 的 affected rule 路径不闭合。")
+    body = {
+        "status": "complete",
+        "equal": True,
+        "offline_only": True,
+        "candidate_id": checkpoint["campaign"]["candidate_id"],
+        "input_checkpoint_sha256": checkpoint["checkpoint_sha256"],
+        "affected_rule_ids": affected,
+        "inherited_rule_ids": inherited,
+        "profile_diff_paths": profile_details.get("profile_diff_paths"),
+        "historical_raw_evidence_scanned_bytes": 0,
+        "live_request_count": 0,
+    }
+    if "compare" in index:
+        receipt = _read_json(
+            _campaign_file(campaign_dir, str(index["compare"]["source"]["path"])),
+            "canonical compare",
+        )
+        current = dict(checkpoint)
+    else:
+        receipt, path = _canonical_step_receipt(campaign_dir, "compare", body)
+        current = _canonical_complete_item(
+            campaign_dir,
+            item_id="compare",
+            receipt_path=path,
+            result_key=_fingerprint(body),
+            details={"kind": "compare", "affected_rule_ids": affected},
+        )
+    candidate_jobs = sorted(
+        item_id
+        for item_id, item in index.items()
+        if item.get("details", {}).get("kind") == "candidate-job"
+    )
+    kilo_items = sorted(
+        item_id
+        for item_id, item in index.items()
+        if item.get("details", {}).get("kind") == "kilo-fact"
+    )
+    for rule_id in affected:
+        current = _canonical_latest_checkpoint(campaign_dir)
+        assertion_id = f"assert-{rule_id}"
+        if assertion_id in _canonical_item_index(current):
+            continue
+        assertion_body = {
+            "status": "passed",
+            "rule_id": rule_id,
+            "input_checkpoint_sha256": current["checkpoint_sha256"],
+            "profile_field_paths": sorted(rule_paths[rule_id]),
+            "reused_candidate_job_ids": candidate_jobs,
+            "reused_kilo_item_ids": kilo_items,
+            "historical_raw_evidence_scanned_bytes": 0,
+            "live_request_count": 0,
+        }
+        assertion, assertion_path = _canonical_step_receipt(
+            campaign_dir, assertion_id, assertion_body
+        )
+        current = _canonical_complete_item(
+            campaign_dir,
+            item_id=assertion_id,
+            receipt_path=assertion_path,
+            result_key=_fingerprint(assertion_body),
+            details={"kind": "affected-rule-assertion", "rule_id": rule_id},
+        )
+    return {
+        **receipt,
+        "affected_assertion_count": len(affected),
+        "inherited_receipt_count": len(inherited),
+        "checkpoint_sha256": current["checkpoint_sha256"],
+    }
+
+
+def _canonical_accept(campaign_dir: Path, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+    """验收两类规则收据；继承规则不执行机器命令。"""
+
+    index = _canonical_item_index(checkpoint)
+    if "acceptance" in index:
+        receipt = _read_json(
+            _campaign_file(campaign_dir, str(index["acceptance"]["source"]["path"])),
+            "canonical acceptance",
+        )
+        return {**receipt, "checkpoint_sha256": checkpoint["checkpoint_sha256"]}
+    affected = list(checkpoint["migration"]["affected_rule_ids"])
+    inherited = list(checkpoint["migration"]["inherited_rule_ids"])
+    affected_items = {f"assert-{rule_id}" for rule_id in affected}
+    inherited_items = {f"inherit-{rule_id}" for rule_id in inherited}
+    required = {"candidate-seal", "compare", *affected_items, *inherited_items}
+    execute = set(checkpoint["plan"]["execute_item_ids"])
+    candidate_jobs = {
+        item_id
+        for item_id, item in index.items()
+        if item.get("details", {}).get("kind") == "candidate-job"
+    }
+    if (
+        not required.issubset(index)
+        or affected_items.intersection(execute)
+        or inherited_items.intersection(execute)
+        or candidate_jobs.intersection(execute)
+        or checkpoint["metrics"].get("live_request_count") != 0
+    ):
+        raise ConfigurationError("canonical acceptance 执行／复用边界不闭合。")
+    body = {
+        "status": "complete",
+        "accepted": True,
+        "production_state": "accepted_not_activated",
+        "candidate_id": checkpoint["campaign"]["candidate_id"],
+        "attempt_id": checkpoint["campaign"]["attempt_id"],
+        "input_checkpoint_sha256": checkpoint["checkpoint_sha256"],
+        "affected_rule_ids": affected,
+        "executed_affected_assertion_ids": sorted(affected_items),
+        "inherited_rule_ids": inherited,
+        "replayed_inherited_receipt_ids": sorted(inherited_items),
+        "historical_raw_evidence_scanned_bytes": 0,
+        "live_request_count": 0,
+    }
+    receipt, path = _canonical_step_receipt(campaign_dir, "acceptance", body)
+    completed = _canonical_complete_item(
+        campaign_dir,
+        item_id="acceptance",
+        receipt_path=path,
+        result_key=_fingerprint(body),
+        details={
+            "kind": "acceptance",
+            "affected_rule_count": len(affected),
+            "inherited_rule_count": len(inherited),
+        },
+    )
+    return {**receipt, "checkpoint_sha256": completed["checkpoint_sha256"]}
+
+
+def _canonical_activation_receipt(
+    campaign_dir: Path,
+    checkpoint: Mapping[str, Any],
+    receipt_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """重放生产激活收据，并绑定本轮 canonical acceptance。"""
+
+    binding = _canonical_file_binding(
+        campaign_dir, receipt_path, "canonical 生产激活收据"
+    )
+    try:
+        receipt = production_activation_receipt.replay(
+            receipt_path.parent.resolve(strict=True), receipt_path.name
+        )
+    except (OSError, production_activation_receipt.ProductionReceiptError) as error:
+        raise ConfigurationError(f"生产激活收据无法重放：{error}") from error
+    index = _canonical_item_index(checkpoint)
+    acceptance = index.get("acceptance")
+    campaign = receipt.get("campaign")
+    target = receipt.get("target")
+    rollback = receipt.get("rollback")
+    final_state = receipt.get("final_state")
+    stages = receipt.get("stages")
+    if (
+        not isinstance(acceptance, Mapping)
+        or not isinstance(campaign, Mapping)
+        or campaign.get("id") != checkpoint["campaign"]["campaign_id"]
+        or campaign.get("candidate_id") != checkpoint["campaign"]["candidate_id"]
+        or not isinstance(campaign.get("acceptance"), Mapping)
+        or campaign["acceptance"].get("sha256")
+        != acceptance.get("source", {}).get("sha256")
+        or not isinstance(target, Mapping)
+        or target.get("version") != checkpoint["campaign"]["target_version"]
+        or not isinstance(rollback, Mapping)
+        or rollback.get("version") != checkpoint["campaign"]["baseline_version"]
+        or not isinstance(final_state, Mapping)
+        or final_state.get("active_version") != target.get("version")
+        or final_state.get("image_id") != target.get("image_id")
+        or not isinstance(stages, list)
+        or [stage.get("name") for stage in stages if isinstance(stage, Mapping)]
+        != ["canary", "production_switch", "rollback", "target_restore"]
+        or any(
+            not isinstance(stage, Mapping) or stage.get("status") != "pass"
+            for stage in stages
+        )
+    ):
+        raise ConfigurationError("生产激活收据未绑定本轮 acceptance、目标、回滚或恢复终态。")
+    return receipt, binding
+
+
+def _canonical_production_step(
+    campaign_dir: Path,
+    checkpoint: Mapping[str, Any],
+    step: str,
+    receipt_path: Path | None,
+) -> dict[str, Any]:
+    """只从已重放的生产收据推进 VC-6，不触碰 VC-0～VC-5。"""
+
+    if receipt_path is None:
+        raise ConfigurationError(f"canonical {step} 必须提供 --step-receipt。")
+    index = _canonical_item_index(checkpoint)
+    if "acceptance" not in index:
+        raise ConfigurationError("canonical VC-6 必须从已接受 checkpoint 开始。")
+    if step in {"production-activation", "rollback-verification"}:
+        receipt, binding = _canonical_activation_receipt(
+            campaign_dir, checkpoint, receipt_path
+        )
+        if step == "rollback-verification" and "production-activation" not in index:
+            raise ConfigurationError("必须先登记 production-activation。")
+        stages = {stage["name"]: stage for stage in receipt["stages"]}
+        details: dict[str, Any] = {
+            "kind": step,
+            "target_version": receipt["target"]["version"],
+            "rollback_version": receipt["rollback"]["version"],
+        }
+        if step == "production-activation":
+            details["final_image_id"] = receipt["final_state"]["image_id"]
+        else:
+            details.update(
+                {
+                    "rollback_image_id": stages["rollback"]["image_id"],
+                    "restored_image_id": stages["target_restore"]["image_id"],
+                }
+            )
+        completed = _canonical_complete_item(
+            campaign_dir,
+            item_id=step,
+            receipt_path=receipt_path,
+            result_key=_fingerprint({"step": step, "receipt": binding}),
+            details=details,
+            phase="VC-6",
+        )
+        return {
+            "status": "complete",
+            "item_id": step,
+            "receipt_sha256": binding["sha256"],
+            "checkpoint_sha256": completed["checkpoint_sha256"],
+        }
+
+    if step != "retire-0.147.0":
+        raise ConfigurationError("canonical production step 非法。")
+    if not {"production-activation", "rollback-verification"}.issubset(index):
+        raise ConfigurationError("删除 0.147 前必须完成生产激活、回滚和目标恢复。")
+    binding = _canonical_file_binding(campaign_dir, receipt_path, "0.147 RemovalReceipt")
+    receipt = _read_json(receipt_path, "0.147 RemovalReceipt")
+    scan = receipt.get("consumer_scan")
+    if (
+        receipt.get("schema_version") != CANONICAL_REMOVAL_RECEIPT_SCHEMA
+        or receipt.get("status") != "complete"
+        or receipt.get("campaign_id") != checkpoint["campaign"]["campaign_id"]
+        or receipt.get("active_version") != checkpoint["campaign"]["target_version"]
+        or receipt.get("rollback_version") != checkpoint["campaign"]["baseline_version"]
+        or receipt.get("removed_version") != "0.147.0"
+        or receipt.get("production_activation_sha256")
+        != index["production-activation"]["source"]["sha256"]
+        or not isinstance(scan, Mapping)
+        or set(scan)
+        != {"catalog_references", "selector_references", "unknown_references"}
+        or any(scan.get(key) != 0 for key in scan)
+        or receipt.get("runtime_catalog_removed") is not True
+        or receipt.get("historical_evidence_preserved") is not True
+    ):
+        raise ConfigurationError("0.147 RemovalReceipt 未证明零消费者、运行态删除和历史保留。")
+    completed = _canonical_complete_item(
+        campaign_dir,
+        item_id=step,
+        receipt_path=receipt_path,
+        result_key=_fingerprint({"step": step, "receipt": binding}),
+        details={"kind": "runtime-profile-removal", "removed_version": "0.147.0"},
+        phase="VC-6",
+    )
+    return {
+        "status": "complete",
+        "item_id": step,
+        "receipt_sha256": binding["sha256"],
+        "checkpoint_sha256": completed["checkpoint_sha256"],
+    }
+
+
+def advance_canonical_checkpoint(arguments: argparse.Namespace) -> dict[str, Any]:
+    """按固定 VC-5 拓扑推进 canonical checkpoint。"""
+
+    campaign_dir = arguments.campaign_dir
+    _validate_existing_campaign_path(campaign_dir)
+    checkpoint = _canonical_latest_checkpoint(campaign_dir)
+    campaign = checkpoint["campaign"]
+    if (
+        arguments.candidate_id != campaign.get("candidate_id")
+        or arguments.attempt_id != campaign.get("attempt_id")
+    ):
+        raise ConfigurationError("canonical advance 的 Candidate／attempt 身份不一致。")
+    step_receipt = getattr(arguments, "step_receipt", None)
+    if arguments.canonical_step == "seal":
+        if step_receipt is not None:
+            raise ConfigurationError("canonical seal 不接收 --step-receipt。")
+        return _canonical_candidate_seal(campaign_dir, checkpoint)
+    if arguments.canonical_step == "compare":
+        if step_receipt is not None:
+            raise ConfigurationError("canonical compare 不接收 --step-receipt。")
+        return _canonical_compare(campaign_dir, checkpoint)
+    if arguments.canonical_step == "accept":
+        if step_receipt is not None:
+            raise ConfigurationError("canonical accept 不接收 --step-receipt。")
+        return _canonical_accept(campaign_dir, checkpoint)
+    if arguments.canonical_step in CANONICAL_PRODUCTION_STEPS:
+        return _canonical_production_step(
+            campaign_dir, checkpoint, arguments.canonical_step, step_receipt
+        )
+    raise ConfigurationError("canonical step 非法。")
+
+
 def _profile_binding_from_manifest(
     campaign_dir: Path,
     classification: dict[str, Any],
@@ -17230,7 +31704,7 @@ def prepare_profile_manifest(
     else:
         raise ConfigurationError("画像草案不得写入不可变 Campaign 目录。")
     repository_root = Path(__file__).resolve().parents[2]
-    completed = subprocess.run(
+    completed = _run_external_command(
         [
             "go",
             "run",
@@ -17243,13 +31717,14 @@ def prepare_profile_manifest(
             str(output),
         ],
         cwd=repository_root / "backend",
+        timeout_seconds=PROFILE_GENERATOR_TIMEOUT_SECONDS,
         check=False,
         capture_output=True,
         text=True,
-        timeout=PROFILE_GENERATOR_TIMEOUT_SECONDS,
+        operation="prepare-profile:generator",
     )
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
+        detail = (completed.stderr or "").strip() or (completed.stdout or "").strip()
         raise ConfigurationError("画像草案生成器失败：" + (detail or "无错误输出"))
     try:
         profile = json.loads(completed.stdout)
@@ -17363,16 +31838,17 @@ def stage_profile_catalog(campaign_dir: Path, output: Path) -> dict[str, Any]:
         "-output",
         str(output),
     ]
-    completed = subprocess.run(
+    completed = _run_external_command(
         command,
         cwd=backend_root,
+        timeout_seconds=PROFILE_GENERATOR_TIMEOUT_SECONDS,
         check=False,
         capture_output=True,
         text=True,
-        timeout=PROFILE_GENERATOR_TIMEOUT_SECONDS,
+        operation="stage-profile:generator",
     )
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
+        detail = (completed.stderr or "").strip() or (completed.stdout or "").strip()
         raise ConfigurationError(
             "候选 RuntimeCatalog 生成器失败：" + (detail or "无错误输出")
         )
@@ -17567,6 +32043,12 @@ def compare_campaign(campaign_dir: Path, candidate_id: str) -> dict[str, Any]:
         candidate,
         phase="candidate",
         candidate_id=candidate_id,
+    )
+    _bind_active_lease_attempt(
+        campaign_dir,
+        phase="candidate",
+        candidate_id=candidate_id,
+        attempt_id=attempt.get("attempt_id"),
     )
     _verify_plan_identity(
         campaign_dir,
@@ -17763,6 +32245,27 @@ def compare_campaign(campaign_dir: Path, candidate_id: str) -> dict[str, Any]:
     return report
 
 
+def _compare_result_exit_code(result: Mapping[str, Any]) -> int:
+    """把比较收据状态映射为 CLI 退出码。
+
+    ``equal`` 只表示官方与候选 surface 集合是否完全相同；采集计划不同
+    时允许它为 ``false``。只要比较已完整封存、全程离线、规则覆盖完整且
+    profile 绑定正确，后续逐规则断言仍可继续，因此不能把这种合法结果
+    当作 compare 失败。
+    """
+
+    coverage = result.get("coverage")
+    if (
+        result.get("status") == "complete"
+        and result.get("offline_only") is True
+        and isinstance(coverage, Mapping)
+        and coverage.get("complete") is True
+        and result.get("profile_binding_matches") is True
+    ):
+        return 0
+    return 2
+
+
 def _acceptance_contract(
     campaign_dir: Path,
     classification: dict[str, Any],
@@ -17888,6 +32391,84 @@ def _physical_evidence_index(stage: dict[str, Any], label: str) -> dict[str, Pat
     return index
 
 
+def _legacy_attempt_relative_evidence_path(
+    stage: dict[str, Any],
+    reference_path: str,
+    *,
+    label: str,
+) -> Path | None:
+    """兼容旧 seal draft 的 attempt-relative ``evidence/`` 路径。
+
+    旧 draft 在单根证据时代把当前 attempt 根内的文件写成
+    ``evidence/<relative>``；新版多根 EvidenceManifest 会把同一文件编码为
+    ``<prefix>/<relative>``。这里只允许从当前阶段绑定的 attempt 身份推导唯一
+    ``attempts/<id>/evidence`` 根，并重新执行根内、非符号链接和唯一性校验。
+    普通逻辑路径、其他 attempt 或越界路径不会进入兼容分支。
+    """
+
+    prefix = "evidence/"
+    if not reference_path.startswith(prefix):
+        return None
+    parsed = PurePosixPath(reference_path)
+    relative = PurePosixPath(reference_path[len(prefix) :])
+    if (
+        parsed.is_absolute()
+        or "\\" in reference_path
+        or not relative.parts
+        or str(parsed) != reference_path
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ConfigurationError(f"{label}旧 evidence 路径非法。")
+
+    attempt_reference = stage.get("attempt")
+    attempt_path = (
+        attempt_reference.get("path")
+        if isinstance(attempt_reference, Mapping)
+        else None
+    )
+    if not isinstance(attempt_path, str) or not attempt_path:
+        raise ConfigurationError(f"{label}缺少当前 attempt 绑定，无法兼容旧路径。")
+    attempt_parts = PurePosixPath(attempt_path).parts
+    if (
+        len(attempt_parts) < 3
+        or attempt_parts[-1] != "attempt.json"
+        or attempt_parts[-2] in {"", ".", ".."}
+    ):
+        raise ConfigurationError(f"{label}当前 attempt 绑定路径非法。")
+    attempt_id = attempt_parts[-2]
+
+    candidates: list[Path] = []
+    raw_roots = stage.get("evidence_roots")
+    if not isinstance(raw_roots, list):
+        raise ConfigurationError(f"{label}阶段证据根非法，无法兼容旧路径。")
+    for raw_root in raw_roots:
+        if not isinstance(raw_root, str):
+            continue
+        root = Path(raw_root)
+        if (
+            root.name != "evidence"
+            or root.parent.name != attempt_id
+            or root.is_symlink()
+            or not root.is_dir()
+        ):
+            continue
+        candidate = root / Path(*relative.parts)
+        try:
+            resolved_root = root.resolve(strict=True)
+            resolved_candidate = candidate.resolve(strict=True)
+            resolved_candidate.relative_to(resolved_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        candidates.append(resolved_candidate)
+    if len(candidates) != 1:
+        raise ConfigurationError(
+            f"{label}旧 evidence 路径未唯一绑定当前 attempt（候选数={len(candidates)}）。"
+        )
+    return candidates[0]
+
+
 def _bound_evidence_path(
     stage: dict[str, Any],
     reference: Any,
@@ -17896,6 +32477,12 @@ def _bound_evidence_path(
 ) -> Path:
     _require_file_binding(reference, label)
     path = _physical_evidence_index(stage, label).get(reference["path"])
+    if path is None:
+        path = _legacy_attempt_relative_evidence_path(
+            stage,
+            reference["path"],
+            label=label,
+        )
     if path is None or file_sha256(path) != reference["sha256"]:
         raise ConfigurationError(f"{label}证据文件漂移或丢失。")
     return path
@@ -18150,21 +32737,21 @@ def _rerun_machine_assertion(
         replay_command = list(command)
         replay_command[output_positions[0] + 1] = str(replay_output)
         try:
-            replay = subprocess.run(
+            replay = _run_external_command(
                 replay_command,
                 cwd=Path(__file__).resolve().parents[2],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300,
+                timeout_seconds=300,
                 check=False,
+                capture_output=True,
+                text=True,
+                operation=f"assertion-replay:{rule}:{label}",
             )
         except (OSError, subprocess.SubprocessError) as error:
             raise ConfigurationError(
                 f"逐规则断言 {rule} {label}离线重放失败：{error}"
             ) from error
         if replay.returncode != 0 or not replay_output.is_file() or replay_output.is_symlink():
-            detail = replay.stderr.strip() or replay.stdout.strip()
+            detail = (replay.stderr or "").strip() or (replay.stdout or "").strip()
             raise ConfigurationError(
                 f"逐规则断言 {rule} {label}离线重放未通过：{detail[:500]}"
             )
@@ -18630,6 +33217,12 @@ def accept_campaign(
         phase="candidate",
         candidate_id=candidate_id,
     )
+    _bind_active_lease_attempt(
+        campaign_dir,
+        phase="candidate",
+        candidate_id=candidate_id,
+        attempt_id=attempt.get("attempt_id"),
+    )
     _verify_plan_identity(
         campaign_dir,
         manifest,
@@ -18902,6 +33495,8 @@ def accept_campaign(
 def _normalize_legacy_argv(argv: list[str]) -> tuple[list[str], str | None]:
     commands = {
         "plan",
+        "canonical-import",
+        "canonical-advance",
         "successor",
         "capture-official",
         "classify",
@@ -18925,6 +33520,207 @@ def _normalize_legacy_argv(argv: list[str]) -> tuple[list[str], str | None]:
             "classify、capture-candidate、compare、accept，避免自动跳过人工分类。"
         )
     return argv, None
+
+
+def _reject_canonical_legacy_write(
+    arguments: argparse.Namespace,
+    command: str,
+) -> None:
+    """canonical checkpoint 建立后，旧恢复对象只能读取，禁止继续追加。"""
+
+    if command not in {
+        "successor",
+        "control-epoch",
+        "evaluation-transition",
+        "terminal-transition-preflight",
+    }:
+        return
+    roots: list[Path] = []
+    campaign_dir = getattr(arguments, "campaign_dir", None)
+    predecessor_dir = getattr(arguments, "predecessor_campaign_dir", None)
+    if isinstance(campaign_dir, Path):
+        roots.append(campaign_dir)
+    if isinstance(predecessor_dir, Path):
+        roots.append(predecessor_dir)
+    if any((root / CANONICAL_DIRECTORY / CANONICAL_IMPORT_RECEIPT_FILENAME).is_file() for root in roots):
+        raise ConfigurationError(
+            "当前 Campaign 已切换到 canonical checkpoint；"
+            "successor/control-epoch/runtime-repair/evaluation-transition "
+            "只允许历史只读解析，禁止继续写入。"
+        )
+
+
+def _reject_campaign_run_legacy_write(
+    arguments: argparse.Namespace,
+    command: str,
+) -> None:
+    """正式 campaign-run 中硬拒绝所有旧写入入口。
+
+    历史测试和只读解析仍可直接调用旧函数；一旦命令由 campaign-run 派发，
+    父监督器会注入受管上下文，此处在取得 CampaignLease 前 fail-close，保证
+    旧入口既不会写收据，也不会启动第二个监督器。
+    """
+
+    if not codex_upgrade_legacy_boundary.is_legacy_write_command(command):
+        return
+    if os.environ.get(codex_upgrade_supervisor.CAMPAIGN_RUN_CONTEXT_ENV) == "1":
+        reason = codex_upgrade_legacy_boundary.formal_rejection_reason(
+            command,
+            campaign_run_context=True,
+            formal_target=False,
+        )
+        raise ConfigurationError(reason or f"旧写入入口被拒绝：{command}")
+    campaign_dir = getattr(arguments, "campaign_dir", None)
+    if not isinstance(campaign_dir, Path):
+        manifest = None
+    else:
+        manifest_path = campaign_dir / "campaign.json"
+        if manifest_path.is_file():
+            try:
+                manifest = _read_json(manifest_path, "Campaign 清单")
+            except ConfigurationError:
+                manifest = None
+        else:
+            manifest = None
+    # successor 的新输出目录尚无 campaign.json；此时用只读 predecessor
+    # 清单识别 0.149.1→0.151.0 升级，仍必须在取得 lease 前拒绝。
+    predecessor_dir = getattr(arguments, "predecessor_campaign_dir", None)
+    predecessor_manifest = None
+    if isinstance(predecessor_dir, Path):
+        predecessor_path = predecessor_dir / "campaign.json"
+        if predecessor_path.is_file():
+            try:
+                predecessor_manifest = _read_json(predecessor_path, "前序 Campaign 清单")
+            except ConfigurationError:
+                predecessor_manifest = None
+    # 0.151 正式 Campaign 不再允许旧写入；更早版本目录保留给历史只读
+    # 回放和离线兼容测试，避免篡改历史收据语义。
+    candidates = [item for item in (manifest, predecessor_manifest) if item]
+    if any(
+        item.get("campaign_mode") == "formal"
+        and item.get("target_version") in {"0.149.1", "0.151.0"}
+        for item in candidates
+    ):
+        reason = codex_upgrade_legacy_boundary.formal_rejection_reason(
+            command,
+            campaign_run_context=False,
+            formal_target=True,
+        )
+        raise ConfigurationError(reason or f"正式 Campaign 禁止旧写入入口：{command}")
+
+
+def _reject_unparented_formal_write(
+    arguments: argparse.Namespace,
+    command: str,
+) -> None:
+    """0.151 正式可变命令必须由 campaign-run 父监督器派发。"""
+
+    if os.environ.get(codex_upgrade_supervisor.CAMPAIGN_RUN_CONTEXT_ENV) == "1":
+        return
+    if command == "plan":
+        # plan 只冻结并创建 Campaign 清单，不执行升级动作；后续所有正式
+        # 可变阶段仍必须由 campaign-run 派发。
+        return
+    if command not in FORMAL_CAMPAIGN_RUN_COMMANDS:
+        return
+    campaign_dir = getattr(arguments, "campaign_dir", None)
+    if not isinstance(campaign_dir, Path):
+        return
+    manifest_path = campaign_dir / "campaign.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = _read_json(manifest_path, "Campaign 清单")
+    except ConfigurationError:
+        return
+    if (
+        manifest.get("campaign_mode") == "formal"
+        and manifest.get("target_version") == "0.151.0"
+    ):
+        raise ConfigurationError(
+            f"0.151.0 正式命令必须由 campaign-run 派发：{command}"
+        )
+
+
+def build_formal_campaign_run_manifest(
+    campaign_id: str,
+    *,
+    phase: str,
+    deadline_seconds: float,
+    execute_items: Iterable[str],
+    reuse_items: Iterable[str] = (),
+    action_specs: Mapping[str, Mapping[str, Any]],
+    output: Path | None = None,
+) -> dict[str, Any]:
+    """把 VC-0～VC-6 的增量执行集合编译成 campaign-run 清单。
+
+    ``execute_items`` 必须逐项提供 ``command``（以及可选的
+    ``operation``、``timeout_seconds``）；``reuse_items`` 只作为 checkpoint
+    读取摘要写入清单，绝不会生成动作。动作集合为空时统一生成 no-op 清单。
+    旧 successor／epoch／transition 命令在生成阶段即拒绝，避免把非法入口
+    写进不可变队列。
+    """
+
+    execute = [str(item) for item in execute_items]
+    reuse = [str(item) for item in reuse_items]
+    if len(set(execute)) != len(execute):
+        raise ConfigurationError("execute_items 含重复 ID。")
+    if len(set(reuse)) != len(reuse):
+        raise ConfigurationError("reuse_items 含重复 ID。")
+    if set(execute) & set(reuse):
+        raise ConfigurationError("execute_items 与 reuse_items 不得交叉。")
+    if set(action_specs) != set(execute):
+        raise ConfigurationError("action_specs 必须与 execute_items 完全一致。")
+    actions: list[dict[str, Any]] = []
+    for item_id in execute:
+        if not SAFE_ID_RE.fullmatch(item_id):
+            raise ConfigurationError(f"execute item ID 非法：{item_id}")
+        spec = action_specs[item_id]
+        command = spec.get("command")
+        if (
+            not isinstance(command, (list, tuple))
+            or not command
+            or not all(isinstance(value, str) and value for value in command)
+        ):
+            raise ConfigurationError(f"execute item {item_id} 缺少合法 command。")
+        command_name = Path(str(command[0])).name
+        legacy_token = next(
+            (value for value in command if value in LEGACY_WRITE_COMMANDS),
+            None,
+        )
+        if command_name in LEGACY_WRITE_COMMANDS or legacy_token is not None:
+            raise ConfigurationError(
+                "正式 campaign-run 动作禁止旧写入入口："
+                f"{legacy_token or command_name}"
+            )
+        operation = str(spec.get("operation") or f"{phase}:{item_id}")
+        timeout_seconds = spec.get("timeout_seconds")
+        if timeout_seconds is None:
+            raise ConfigurationError(f"execute item {item_id} 缺少 timeout_seconds。")
+        actions.append(
+            {
+                "action_id": item_id,
+                "operation": operation,
+                "timeout_seconds": timeout_seconds,
+                "command": list(command),
+            }
+        )
+    try:
+        payload = codex_upgrade_supervisor.build_campaign_run_manifest(
+            campaign_id,
+            phase,
+            deadline_seconds,
+            actions=actions,
+            reuse_items=reuse,
+        )
+    except codex_upgrade_supervisor.SupervisorError as error:
+        raise ConfigurationError(str(error)) from error
+    if output is not None:
+        output = Path(output)
+        if not output.is_absolute():
+            raise ConfigurationError("campaign-run 清单输出路径必须是绝对路径。")
+        _secure_write_json_once(output, payload)
+    return payload
 
 
 def _resolve_classification_inputs(
@@ -19033,7 +33829,7 @@ def _resume_campaign(arguments: argparse.Namespace) -> tuple[dict[str, Any], int
         if not arguments.candidate_id:
             raise ConfigurationError("resume compare 必须指定 --candidate-id。")
         result = compare_campaign(arguments.campaign_dir, arguments.candidate_id)
-        return result, 0 if result["equal"] else 2
+        return result, _compare_result_exit_code(result)
     if current == "compared":
         if not arguments.candidate_id:
             raise ConfigurationError("resume accept 必须指定 --candidate-id。")
@@ -19056,7 +33852,7 @@ def _resume_campaign(arguments: argparse.Namespace) -> tuple[dict[str, Any], int
     return status, 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_without_campaign_lease(argv: list[str] | None = None) -> int:
     os.umask(0o077)
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     normalized_argv, legacy_message = _normalize_legacy_argv(raw_argv)
@@ -19069,8 +33865,16 @@ def main(argv: list[str] | None = None) -> int:
         print(legacy_message, file=sys.stderr)
     try:
         command = arguments.command
+        _reject_canonical_legacy_write(arguments, command)
+        _reject_campaign_run_legacy_write(arguments, command)
+        _reject_unparented_formal_write(arguments, command)
         if command == "plan":
             manifest = create_campaign(arguments)
+            preflight_invalidation = (
+                _preflight_plan_invalidation_summary(manifest)
+                if manifest["campaign_mode"] == "preflight_only"
+                else {}
+            )
             result = {
                 "status": (
                     "preflight_complete"
@@ -19083,10 +33887,32 @@ def main(argv: list[str] | None = None) -> int:
                 "campaign_dir": str(arguments.campaign_dir),
                 "required_rule_count": len(manifest["required_rules"]),
                 "job_count": len(manifest["jobs"]),
+                **preflight_invalidation,
             }
             return_code = 0
-        elif command == "successor":
-            result = create_successor_campaign(arguments)
+        elif command in LEGACY_WRITE_COMMANDS:
+            # 旧写入实现只允许历史离线兼容；正式 Campaign 已在上方拒绝。
+            result = codex_upgrade_legacy_boundary.dispatch_historical_write(
+                command,
+                arguments,
+                {
+                    "successor": create_successor_campaign,
+                    "control-epoch": create_control_epoch,
+                    "evaluation-transition": create_phase_evaluation_transition,
+                    "terminal-transition-preflight": create_terminal_transition_preflight,
+                },
+                allow_compatibility=True,
+            )
+            return_code = (
+                0
+                if command != "evaluation-transition"
+                else (0 if result.get("status") == "approved" else 2)
+            )
+        elif command == "canonical-import":
+            result = import_canonical_checkpoint(arguments)
+            return_code = 0 if result.get("status") == "complete" else 2
+        elif command == "canonical-advance":
+            result = advance_canonical_checkpoint(arguments)
             return_code = 0
         elif command == "capture-official":
             if arguments.capture_action == "run":
@@ -19126,7 +33952,7 @@ def main(argv: list[str] | None = None) -> int:
             return_code = 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
         elif command == "compare":
             result = compare_campaign(arguments.campaign_dir, arguments.candidate_id)
-            return_code = 0 if result["equal"] else 2
+            return_code = _compare_result_exit_code(result)
         elif command == "accept":
             assertions = arguments.assertions or _default_assertions_path(
                 arguments.campaign_dir, arguments.candidate_id
@@ -19149,9 +33975,6 @@ def main(argv: list[str] | None = None) -> int:
                 "完成 Kilo witness、机器 finalizer 与 seal 摘要复核；封存后再执行 compare。"
             )
             return_code = 2
-        elif command == "evaluation-transition":
-            result = create_phase_evaluation_transition(arguments)
-            return_code = 0 if result.get("status") == "approved" else 2
         elif command == "deep-verify":
             result = deep_verify_campaign(
                 arguments.campaign_dir,
@@ -19169,6 +33992,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return return_code
     except KeyboardInterrupt:
+        active_lease = _ACTIVE_CAMPAIGN_LEASE
+        if active_lease is not None:
+            try:
+                active_lease._mark_stop_line("owner_interrupted")
+            except BaseException:
+                pass
         print("升级抓包已中断；当前任务已收到终止信号。", file=sys.stderr)
         return 130
     except (
@@ -19180,6 +34009,42 @@ def main(argv: list[str] | None = None) -> int:
     ) as error:
         print(f"升级审计失败：{error}", file=sys.stderr)
         return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """带 Campaign lease 的 CLI 入口。
+
+    先在轻量解析阶段确定命令坐标，再调用原有 dispatch。这样所有正式可变
+    命令共享同一个持久 owner；capture/resume 的内部递归会复用该 owner，
+    不会创建嵌套锁或重置 deadline。
+    """
+
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    normalized_argv, _legacy_message = _normalize_legacy_argv(raw_argv)
+    # 兼容入口的非法 --execute 会在原 dispatch 中立即拒绝；不要在此之前
+    # 为一个尚未通过参数校验的命令创建 lease。
+    if "--execute" in raw_argv and normalized_argv[:1] not in (["all"],):
+        return _main_without_campaign_lease(argv)
+    parser = _build_parser()
+    arguments = parser.parse_args(normalized_argv)
+    # 旧写入入口必须在 CampaignLease 之前拒绝，确保不会留下新的 lease、
+    # attempt 或 stop 收据。
+    try:
+        _reject_campaign_run_legacy_write(arguments, str(arguments.command))
+        _reject_unparented_formal_write(arguments, str(arguments.command))
+    except ConfigurationError as error:
+        print(f"升级审计失败：{error}", file=sys.stderr)
+        return 1
+    with _main_command_lease(arguments) as lease:
+        return_code = _main_without_campaign_lease(argv)
+        # 原 dispatch 为了保持 CLI 兼容会把 ConfigurationError 转成返回码，
+        # 因而不会自动触发 context manager 的异常分支。返回 1 仍表示本次
+        # 可变命令未形成合法终态，必须留下不可覆盖停线事实，不能标成 released。
+        if lease is not None and return_code in {1, 130}:
+            lease._mark_stop_line(
+                "owner_interrupted" if return_code == 130 else "command_failed"
+            )
+        return return_code
 
 
 if __name__ == "__main__":

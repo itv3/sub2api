@@ -430,6 +430,166 @@ class CaptureLifecycleTest(unittest.TestCase):
                     approve_sha256=preview["review_sha256"],
                 )
 
+    def test_replacement_transition_uses_append_only_seal_slot(self) -> None:
+        """替代 transition 只写同序号 draft/preview，并可批准和重放。"""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign_dir = Path(temporary) / "campaign"
+            attempt_root = campaign_dir / "official" / "attempts" / "attempt-a"
+            attempt_root.mkdir(parents=True, mode=0o700)
+            campaign_path = campaign_dir / "campaign.json"
+            campaign_path.write_text("{}\n", encoding="utf-8")
+            campaign_path.chmod(0o600)
+            attempt_path = attempt_root / "attempt.json"
+            attempt_path.write_text(
+                json.dumps({"attempt_id": "attempt-a"}) + "\n",
+                encoding="utf-8",
+            )
+            attempt_path.chmod(0o600)
+            attempt = {
+                "campaign_id": "capture-lifecycle-test",
+                "campaign_mode": "formal",
+                "campaign_purpose": "production_replacement",
+                "candidate_purpose": None,
+                "attempt_id": "attempt-a",
+                "attempt_digest": "1" * 64,
+            }
+            common_payload = {
+                "status": "complete",
+                "campaign_mode": "formal",
+                "campaign_purpose": "production_replacement",
+                "candidate_purpose": None,
+                "attempt": {
+                    "path": "official/attempts/attempt-a/attempt.json",
+                    "sha256": codex_upgrade.file_sha256(attempt_path),
+                },
+                "evidence_inventory": {"digest": "2" * 64},
+                "evidence_manifest": {
+                    "path": "official/attempts/attempt-a/evidence-manifest.json",
+                    "sha256": "3" * 64,
+                },
+                "scan_summary": {
+                    "full_scan_count": 1,
+                    "scanned_bytes": 1,
+                    "reused_bytes": 0,
+                    "total_bytes": 1,
+                    "elapsed_seconds": 0.01,
+                },
+                "assertion_context": {
+                    "capture_manifest": {"sha256": "4" * 64}
+                },
+                "restoration": {"report": {"sha256": "5" * 64}},
+            }
+            first_binding = {
+                "path": "official/attempts/source/evaluation-transition.json",
+                "sha256": "6" * 64,
+            }
+            replacement_binding = {
+                "path": "official/attempts/source/evaluation-transition-02.json",
+                "sha256": "7" * 64,
+            }
+            manifest = {"manifest_digest": "8" * 64}
+
+            with mock.patch.object(
+                codex_upgrade,
+                "_stage_evidence_manifest",
+                return_value=manifest,
+            ):
+                first_preview, _ = codex_upgrade._seal_preview(
+                    campaign_dir,
+                    attempt_root,
+                    phase="official",
+                    candidate_id=None,
+                    attempt=attempt,
+                    stage_payload={
+                        **common_payload,
+                        "evaluation_transition": first_binding,
+                    },
+                    approve_sha256=None,
+                )
+            first_draft_bytes = (attempt_root / "seal-draft.json").read_bytes()
+            first_preview_bytes = (attempt_root / "seal-preview.json").read_bytes()
+
+            replacement_payload = {
+                **common_payload,
+                "evaluation_transition": replacement_binding,
+            }
+            with mock.patch.object(
+                codex_upgrade,
+                "_stage_evidence_manifest",
+                return_value=manifest,
+            ):
+                replacement_preview, _ = codex_upgrade._seal_preview(
+                    campaign_dir,
+                    attempt_root,
+                    phase="official",
+                    candidate_id=None,
+                    attempt=attempt,
+                    stage_payload=replacement_payload,
+                    approve_sha256=None,
+                )
+                with mock.patch.object(codex_upgrade, "save_stage_result"):
+                    approved = codex_upgrade._approve_frozen_capture_seal(
+                        argparse.Namespace(
+                            approve_seal_sha256=replacement_preview[
+                                "review_sha256"
+                            ]
+                        ),
+                        phase="official",
+                        campaign_dir=campaign_dir,
+                        attempt_root=attempt_root,
+                        attempt=attempt,
+                        candidate_id=None,
+                        evaluation_transition=replacement_binding,
+                    )
+
+            self.assertEqual(
+                approved["seal_preview"]["path"],
+                "official/attempts/attempt-a/seal-preview-02.json",
+            )
+            self.assertTrue((attempt_root / "seal-draft-02.json").is_file())
+            self.assertTrue((attempt_root / "seal-preview-02.json").is_file())
+            self.assertEqual(
+                (attempt_root / "seal-draft.json").read_bytes(),
+                first_draft_bytes,
+            )
+            self.assertEqual(
+                (attempt_root / "seal-preview.json").read_bytes(),
+                first_preview_bytes,
+            )
+            self.assertNotEqual(first_preview, replacement_preview)
+
+            stage = {
+                **replacement_payload,
+                "schema_version": codex_upgrade.STAGE_SCHEMA,
+                "stage": "capture-official",
+                "campaign_id": attempt["campaign_id"],
+                "campaign_manifest_sha256": codex_upgrade.file_sha256(
+                    campaign_path
+                ),
+                "sealed_at_utc": "2026-09-02T00:00:00Z",
+                "package_digest": "9" * 64,
+                "result_schema_version": None,
+                "seal_preview": approved["seal_preview"],
+            }
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_capture_attempt",
+                    return_value=(attempt_root, attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_stage_evidence_manifest",
+                    return_value=manifest,
+                ),
+            ):
+                codex_upgrade._verify_capture_seal_preview(
+                    campaign_dir,
+                    stage,
+                    "capture-official",
+                )
+
     def test_run_rejects_seal_only_receipt_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             campaign_dir, _, _, manifest = self._fixture(Path(temporary))
@@ -618,6 +778,142 @@ class CaptureLifecycleTest(unittest.TestCase):
                         self._arguments(campaign_dir), "official"
                     )
             self.assertEqual(order, [])
+
+    def test_recovery_scope_mismatch_stops_before_container_or_reservation(self) -> None:
+        """transition 闭集漂移必须在 Docker、预约和 Job 之前失败关闭。"""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            campaign_dir, _, first_job, manifest = self._fixture(root)
+            second_job = codex_upgrade.Job(
+                job_id="official-job-2",
+                phase="official",
+                suites=("full",),
+                description="第二个恢复任务",
+                steps=first_job.steps,
+                evidence_roots=first_job.evidence_roots,
+                covers=(),
+                required=True,
+            )
+            arguments = self._arguments(campaign_dir)
+            arguments.rerun_failed = True
+            source_root = campaign_dir / "official" / "attempts" / "source"
+            source_attempt = {
+                "status": "failed",
+                "phase": "official",
+                "candidate_id": None,
+                "campaign_id": manifest["campaign_id"],
+                "identity": manifest["official_identity"],
+            }
+            frozen_scope = {
+                "planned_job_ids": [first_job.job_id, second_job.job_id],
+                "completed_job_ids": [first_job.job_id],
+                "failed_job_ids": [second_job.job_id],
+                "pending_job_ids": [],
+                "execute_job_ids": [second_job.job_id],
+            }
+            drifted_scope = {
+                **frozen_scope,
+                "execute_job_ids": [first_job.job_id],
+            }
+            reused = [{"id": first_job.job_id}]
+            with (
+                mock.patch.object(
+                    codex_upgrade,
+                    "_require_formal_campaign",
+                    return_value=manifest,
+                ),
+                mock.patch.object(codex_upgrade, "_reject_contaminated_campaign"),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_load_stage_result",
+                    side_effect=codex_upgrade.ConfigurationError(
+                        "阶段尚未封存：capture-official"
+                    ),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_active_unsealed_attempts",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_campaign_jobs",
+                    return_value=[first_job, second_job],
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_tool_identity",
+                    return_value={"files_sha256": "a" * 64, "components": {}},
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_cheap_capture_tool_impact",
+                    return_value={
+                        "kind": "unchanged",
+                        "changed_components": [],
+                        "affected_job_ids": [],
+                    },
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_latest_failed_attempt_for_identity",
+                    return_value=(source_root, source_attempt),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_phase_evaluation_recovery_scope",
+                    return_value=frozen_scope,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_validate_recovery_scope_plan",
+                    return_value=({first_job.job_id}, {second_job.job_id}),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_authorize_phase_recovery_production_paths",
+                    return_value=set(),
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_prior_complete_results",
+                    return_value=reused,
+                ),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_verify_plan_identity",
+                    return_value={
+                        "kind": "phase_evaluation_transition",
+                        "changed_components": ["evaluator"],
+                        "affected_job_ids": [second_job.job_id],
+                        "evaluation_transition": {
+                            "path": "official/attempts/source/evaluation-transition.json",
+                            "sha256": "b" * 64,
+                        },
+                        "recovery_scope": drifted_scope,
+                    },
+                ),
+                mock.patch.object(codex_upgrade, "_require_file_binding"),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_verify_official_binaries",
+                ) as verify_binaries,
+                mock.patch.object(
+                    codex_upgrade,
+                    "_reserve_capture_attempt",
+                ) as reserve,
+                mock.patch.object(codex_upgrade, "run_job") as run_job,
+            ):
+                with self.assertRaisesRegex(
+                    codex_upgrade.ConfigurationError,
+                    "闭集在计划阶段发生漂移",
+                ):
+                    codex_upgrade._run_capture_attempt(arguments, "official")
+
+            verify_binaries.assert_not_called()
+            reserve.assert_not_called()
+            run_job.assert_not_called()
 
     def test_campaign_lock_allows_only_one_atomic_reservation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1006,8 +1302,9 @@ class CaptureLifecycleTest(unittest.TestCase):
             [
                 job(
                     {
-                        "RUN_ID_PREFIX": "p" * 97,
+                        "RUN_ID_PREFIX": "p" * 86,
                         "SUBJECTS": "codex-compact",
+                        "SCENARIOS": "compact",
                     }
                 )
             ]
@@ -1016,8 +1313,9 @@ class CaptureLifecycleTest(unittest.TestCase):
         for environment in (
             {"RUN_ID": "r" * 129},
             {
-                "RUN_ID_PREFIX": "p" * 98,
+                "RUN_ID_PREFIX": "p" * 87,
                 "SUBJECTS": "codex-compact",
+                "SCENARIOS": "compact",
             },
         ):
             with self.assertRaisesRegex(
@@ -1205,7 +1503,11 @@ class CaptureLifecycleTest(unittest.TestCase):
                 mock.patch.object(
                     codex_upgrade, "load_campaign_manifest", return_value=manifest
                 ),
-                mock.patch.object(codex_upgrade, "_verify_plan_identity"),
+                mock.patch.object(
+                    codex_upgrade,
+                    "_verify_plan_identity",
+                    return_value=None,
+                ),
                 mock.patch.object(codex_upgrade, "_reject_contaminated_campaign"),
                 mock.patch.object(
                     codex_upgrade,

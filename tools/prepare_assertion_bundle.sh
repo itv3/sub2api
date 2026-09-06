@@ -10,6 +10,7 @@
 #   CAMPAIGN_DIR=... ATTEMPT_ID=... SIDE=official|candidate \
 #   bash prepare_assertion_bundle.sh
 set -euo pipefail
+umask 077
 
 campaign_dir=${CAMPAIGN_DIR:?必须提供 CAMPAIGN_DIR}
 attempt_id=${ATTEMPT_ID:?必须提供 ATTEMPT_ID}
@@ -53,38 +54,39 @@ declaration=${DECLARATION:-"$tool_root/codex_upgrade_evidence_labels_${version_k
 
 bundle_dir="$attempt_dir/evidence/assertion-bundle"
 [[ -e $bundle_dir ]] && { echo "断言证据包已存在，拒绝覆盖：$bundle_dir" >&2; exit 1; }
-work_dir=$(mktemp -d)
+evidence_dir="$attempt_dir/evidence"
+[[ -d $evidence_dir && ! -L $evidence_dir ]] || {
+  echo "attempt 证据目录不存在或不可信：$evidence_dir" >&2
+  exit 1
+}
+# 暂存目录必须与最终 bundle 位于同一文件系统；全部步骤通过后再原子发布，
+# 失败时不能留下一个看似可用的半成品 assertion-bundle。
+work_dir=$(mktemp -d "$evidence_dir/.assertion-work.XXXXXX")
+chmod 700 "$work_dir"
 trap 'rm -rf "$work_dir"' EXIT
+staged_bundle="$work_dir/assertion-bundle"
 
-# 1) 由 campaign.json 的 job 定义与 attempt 已绑定的证据根，推出 job→(前缀, 路径)
+# 1) 唯一从逐 Job 结果读取权威证据根；顶层 evidence_roots 和 Campaign 名称
+# 不能覆盖跨 Campaign 的复用根。
 python3 - "$campaign_dir" "$attempt_dir" "$side" > "$work_dir/jobroots.txt" <<'PY'
-import fnmatch, json, sys, pathlib
+import json, re, sys, pathlib
 campaign = json.loads((pathlib.Path(sys.argv[1]) / "campaign.json").read_text())
 attempt = json.loads((pathlib.Path(sys.argv[2]) / "attempt.json").read_text())
 side = sys.argv[3]
-bound = {str(pathlib.Path(r).resolve()): pathlib.Path(r) for r in attempt["evidence_roots"]}
-result_by_job = {result["id"]: result for result in attempt["results"]}
+results = attempt.get("results")
+if not isinstance(results, list):
+    raise SystemExit("attempt results 必须是数组")
+result_by_job = {}
+for result in results:
+    if not isinstance(result, dict) or not isinstance(result.get("id"), str):
+        raise SystemExit("attempt result 身份非法")
+    if result["id"] in result_by_job:
+        raise SystemExit(f'attempt result 重复：{result["id"]}')
+    result_by_job[result["id"]] = result
 
-# 候选侧的 run 目录名比 campaign.json 里的 job 定义多一段 candidate_id：plan 阶段还不
-# 知道会由哪个候选来跑，模板只展开到 {campaign_id}，实际运行时插入的是
-# `{campaign_id}-{candidate_id}-…`。官方侧没有这一段，直接等值匹配即可。
-# 不做这层归一化，候选侧会一个证据根都匹配不上，脚本以「没有可编目的证据根」退出。
-campaign_id = str(campaign["campaign_id"])
-candidate_id = attempt.get("candidate_id") or ""
-
-
-def suffix(name: str, *prefixes: str) -> str:
-    for prefix in prefixes:
-        head = f"{prefix}-"
-        if name.startswith(head):
-            name = name[len(head):]
-    return name
-
-
-by_suffix = {}
-if side == "candidate" and candidate_id:
-    for resolved, path in bound.items():
-        by_suffix.setdefault(suffix(path.name, campaign_id, candidate_id), resolved)
+root_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+seen_roots = {}
+complete_jobs = set()
 
 for job in campaign["jobs"]:
     if job["phase"] != side:
@@ -103,34 +105,29 @@ for job in campaign["jobs"]:
             file=sys.stderr,
         )
         continue
-    for root in job["evidence_roots"]:
-        p = pathlib.Path(root)
-        resolved = str(p.resolve())
-        if resolved in bound:
-            print(f'{job["id"]}={p.name}={root}')
-            continue
-        # 候选侧的根名比 job 定义多一段 candidate_id；此外 mitm 系列的 job 定义本身就是
-        # 带通配符的模式（…-candidate-mitm-core-*-run），一条模式对应多个实际根，
-        # 必须按 fnmatch 展开，否则这两个 job 会整个从编目里消失——而且不会报错，
-        # 因为「没匹配到根」和「该 job 没有证据」在下游看起来一样。
-        wanted = suffix(p.name, campaign_id)
-        matched = by_suffix.get(wanted)
-        if matched:
-            actual = bound[matched]
-            print(f'{job["id"]}={actual.name}={matched}')
-            continue
-        if "*" in wanted or "?" in wanted:
-            for cand_suffix, cand_resolved in sorted(by_suffix.items()):
-                if not fnmatch.fnmatch(cand_suffix, wanted):
-                    continue
-                # mitm 系列的 setup 根只承载代理自身的启动日志，没有任何 wire 证据：
-                # 登记为 opaque 会被断言器以「无派生引用」拒绝，不登记又会让编目报
-                # 「该根没有适用规则」。它不是证据面，显式跳过并打印，不静默丢。
-                if cand_suffix.endswith("-setup-run"):
-                    print(f'# skip {job["id"]} setup-only root: {cand_suffix}', file=sys.stderr)
-                    continue
-                actual = bound[cand_resolved]
-                print(f'{job["id"]}={actual.name}={cand_resolved}')
+    roots = result.get("evidence_roots")
+    if not isinstance(roots, list) or not roots:
+        raise SystemExit(f'complete job {job["id"]} 缺少权威 evidence_roots')
+    complete_jobs.add(job["id"])
+    for raw_root in roots:
+        if not isinstance(raw_root, str) or not raw_root.startswith("/"):
+            raise SystemExit(f'job {job["id"]} 的 evidence_root 不是绝对路径')
+        path = pathlib.Path(raw_root)
+        if path.is_symlink() or not path.is_dir():
+            raise SystemExit(f'job {job["id"]} 的 evidence_root 不存在或不可信：{raw_root}')
+        resolved = str(path.resolve(strict=True))
+        if resolved in seen_roots:
+            raise SystemExit(
+                f'权威 evidence_root 被多个结果重复声明：{resolved} '
+                f'({seen_roots[resolved]}、{job["id"]})'
+            )
+        if not root_name_re.fullmatch(path.name):
+            raise SystemExit(f'job {job["id"]} 的 evidence_root 名称非法：{path.name}')
+        seen_roots[resolved] = job["id"]
+        print(f'{job["id"]}={path.name}={resolved}')
+
+if not complete_jobs:
+    raise SystemExit("没有已完成 Job 可供编目")
 PY
 
 catalog_args=()
@@ -150,17 +147,17 @@ python3 "$tool_root/build_evidence_catalog.py" \
 
 python3 "$tool_root/build_assertion_bundle.py" \
   "${bundle_args[@]}" --plan "$work_dir/catalog/bundle-plan.json" \
-  --bundle-dir "$bundle_dir"
+  --bundle-dir "$staged_bundle"
 
 if [[ -s $work_dir/catalog/derivation-plan.json ]] &&
    python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))['entries'] else 1)" \
      "$work_dir/catalog/derivation-plan.json"; then
   python3 "$tool_root/derive_official_observations.py" \
-    --bundle-dir "$bundle_dir" --plan "$work_dir/catalog/derivation-plan.json"
+    --bundle-dir "$staged_bundle" --plan "$work_dir/catalog/derivation-plan.json"
 fi
 
 # 2) 回填 sha256，产出可提交的 capture manifest
-python3 - "$work_dir/catalog/manifest-draft.json" "$bundle_dir" "$campaign_dir" <<'PY'
+python3 - "$work_dir/catalog/manifest-draft.json" "$staged_bundle" "$campaign_dir" <<'PY'
 import json, pathlib, sys
 # 本段以 stdin 执行，无 __file__；cwd 已切到仓库根。
 sys.path.insert(0, str(pathlib.Path("tools/official_client_capture").resolve()))
@@ -179,6 +176,93 @@ path = bundle / "capture-manifest.json"
 path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
 path.chmod(0o600)
 print(f"capture manifest 已写入：{len(manifest['artifacts'])} 个 artifact")
+PY
+
+# 候选侧的内部状态事实必须由冻结源码快照的 go test 原始日志派生。该步骤过去
+# 依赖人工命令，容易出现“抓包 Job complete、但 bundle 缺 candidate trace”；现在
+# 与 bundle 一起在暂存目录内完成，任一步失败都不会发布半成品。
+if [[ $side == candidate ]]; then
+  go_test_artifact=$(python3 - "$staged_bundle/capture-manifest.json" <<'PY'
+import json, pathlib, sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+matches = [
+    artifact["path"]
+    for artifact in manifest.get("artifacts", [])
+    if isinstance(artifact, dict)
+    and artifact.get("kind") == "stdout_log"
+    and pathlib.PurePosixPath(str(artifact.get("path", ""))).name
+    == "candidate-go-test.jsonl"
+]
+if len(matches) > 1:
+    raise SystemExit(
+        f"候选 bundle 最多包含一份 candidate-go-test.jsonl，实际 {len(matches)} 份"
+    )
+print(matches[0] if matches else "")
+PY
+  )
+  if [[ -n $go_test_artifact ]]; then
+    candidate_source_root=${CANDIDATE_SOURCE_ROOT:?含 candidate-go-test 的候选侧必须提供 CANDIDATE_SOURCE_ROOT}
+    [[ $candidate_source_root == /* && -d $candidate_source_root && ! -L $candidate_source_root ]] || {
+      echo "候选源码快照不存在、不可信或不是绝对路径：$candidate_source_root" >&2
+      exit 1
+    }
+    mapping="$candidate_source_root/tools/official_client_capture/candidate_test_fact_map_${version_key}.json"
+    profile="$candidate_source_root/tools/official_client_capture/candidate_rule_expectations_${version_key}.json"
+    [[ -f $mapping && ! -L $mapping && -f $profile && ! -L $profile ]] || {
+      echo "候选源码快照缺少目标版本的测试事实映射或断言画像" >&2
+      exit 1
+    }
+    mapping_sha256=$(sha256sum "$mapping" | awk '{print $1}')
+    profile_sha256=$(sha256sum "$profile" | awk '{print $1}')
+    mv "$staged_bundle/capture-manifest.json" \
+      "$staged_bundle/capture-manifest.json.base"
+    python3 "$tool_root/candidate_test_trace.py" \
+      --source-root "$candidate_source_root" \
+      --evidence-root "$staged_bundle" \
+      --capture-manifest "$staged_bundle/capture-manifest.json.base" \
+      --go-test-artifact "$go_test_artifact" \
+      --mapping "$mapping" --profile "$profile" \
+      --expected-codex-version "$target_version" \
+      --expected-mapping-sha256 "$mapping_sha256" \
+      --expected-profile-sha256 "$profile_sha256" \
+      --trace-dir candidate-trace \
+      --output-manifest capture-manifest.json \
+      --output-receipt candidate-trace/trace-receipt.json >/dev/null
+    echo "候选测试 trace 已生成并绑定冻结源码快照"
+  fi
+fi
+
+# 3) 发布前证明权威根集合与 provenance 实际来源严格相等，并立即重放复制摘要。
+python3 - "$work_dir/jobroots.txt" "$staged_bundle/provenance.json" <<'PY'
+import json, pathlib, sys
+
+expected = {}
+for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    job_id, root_name, root_path = line.split("=", 2)
+    expected[root_name] = {"job_id": job_id, "path": root_path}
+provenance = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+actual = {entry["source_root"] for entry in provenance["entries"]}
+if actual != set(expected):
+    missing = sorted(set(expected) - actual)
+    extra = sorted(actual - set(expected))
+    raise SystemExit(f"assertion bundle 根集合不闭合：missing={missing} extra={extra}")
+print(f"assertion bundle 权威根闭合：{len(expected)} 个")
+PY
+
+python3 "$tool_root/build_assertion_bundle.py" \
+  "${bundle_args[@]}" --bundle-dir "$staged_bundle" --verify \
+  --allow-extra derived/ --allow-extra candidate-trace/ \
+  --allow-extra capture-manifest.json
+
+python3 - "$staged_bundle" "$bundle_dir" <<'PY'
+import os, pathlib, sys
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+if target.exists() or target.is_symlink():
+    raise SystemExit(f"断言证据包发布目标已存在：{target}")
+os.rename(source, target)
 PY
 
 echo "断言证据包就绪：$bundle_dir"

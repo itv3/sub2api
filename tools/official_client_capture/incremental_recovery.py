@@ -24,6 +24,8 @@ from typing import Any, Iterable, Mapping
 
 SCHEMA_VERSION = "codex-upgrade-incremental/v1"
 CHECKPOINT_SCHEMA = "codex-upgrade-incremental-checkpoint/v1"
+CANONICAL_CHECKPOINT_SCHEMA = "codex-upgrade-canonical-checkpoint/v1"
+CANONICAL_IMPORT_RECEIPT_SCHEMA = "codex-upgrade-canonical-import/v1"
 SHA256_HEX_LENGTH = 64
 MAX_CHECKPOINT_RECORD_BYTES = 4 * 1024 * 1024
 MAX_CHECKPOINT_RECORDS = 100_000
@@ -33,6 +35,15 @@ SAFE_ID_CHARS = frozenset(
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CHECKPOINT_STATUSES = frozenset(
     {"pending", "passed", "complete", "failed", "blocked", "reused"}
+)
+CANONICAL_RULE_CLASSIFICATIONS = frozenset(
+    {"inherit", "change", "condition_change", "add", "delete"}
+)
+CANONICAL_AFFECTED_CLASSIFICATIONS = frozenset(
+    {"change", "condition_change", "add", "delete"}
+)
+CANONICAL_PHASES = frozenset(
+    {"VC-0", "VC-1", "VC-2", "VC-3", "VC-4", "VC-5", "VC-6"}
 )
 
 
@@ -1004,3 +1015,407 @@ def re_fullmatch_checkpoint_name(name: str) -> bool:
         and name[8:] == ".json"
         and int(name[:8]) > 0
     )
+
+
+def canonical_rule_partition(
+    migration: Mapping[str, Any],
+) -> dict[str, Any]:
+    """从规则迁移清单计算唯一的受影响／继承规则集合。
+
+    该函数只读取迁移项，不根据文件数、工具摘要或历史证据体积扩大执行集合。
+    ``delete`` 使用旧规则编号，其余决策使用目标规则编号。
+    """
+
+    entries = migration.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise IncrementalRecoveryError("规则迁移清单 entries 不能为空")
+    affected: list[str] = []
+    inherited: list[str] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(entries, 1):
+        if not isinstance(entry, Mapping):
+            raise IncrementalRecoveryError(f"规则迁移项 {index} 必须是对象")
+        classification = entry.get("classification")
+        if classification not in CANONICAL_RULE_CLASSIFICATIONS:
+            raise IncrementalRecoveryError(
+                f"规则迁移项 {index} 不是可执行的最终决策"
+            )
+        field = "baseline_rule" if classification == "delete" else "target_rule"
+        rule_id = entry.get(field)
+        _validate_identifier(rule_id, f"规则迁移项 {index}.{field}")
+        normalized = str(rule_id)
+        if normalized in seen:
+            raise IncrementalRecoveryError(f"规则迁移规则重复：{normalized}")
+        seen.add(normalized)
+        if classification in CANONICAL_AFFECTED_CLASSIFICATIONS:
+            affected.append(normalized)
+        else:
+            inherited.append(normalized)
+    return {
+        "total_rule_count": len(entries),
+        "affected_rule_ids": sorted(affected),
+        "inherited_rule_ids": sorted(inherited),
+    }
+
+
+def _canonical_item_ids(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise IncrementalRecoveryError(f"{label} 必须是数组")
+    output: list[str] = []
+    for item in value:
+        _validate_identifier(item, label)
+        output.append(str(item))
+    if len(output) != len(set(output)):
+        raise IncrementalRecoveryError(f"{label} 含重复项")
+    return output
+
+
+def _validate_canonical_checkpoint(
+    payload: Mapping[str, Any],
+    *,
+    expected_sequence: int,
+    previous_digest: str | None,
+) -> dict[str, Any]:
+    """验证一条聚合 checkpoint；不打开其引用的原始证据。"""
+
+    required = {
+        "schema_version",
+        "checkpoint_sequence",
+        "previous_checkpoint_sha256",
+        "checkpoint_sha256",
+        "recorded_at_utc",
+        "campaign",
+        "phase",
+        "migration",
+        "plan",
+        "items",
+        "evidence_manifest",
+        "deadline",
+        "source",
+        "metrics",
+    }
+    if set(payload) != required:
+        raise IncrementalRecoveryError("canonical checkpoint 字段不闭合")
+    if payload.get("schema_version") != CANONICAL_CHECKPOINT_SCHEMA:
+        raise IncrementalRecoveryError("canonical checkpoint schema_version 非法")
+    if payload.get("checkpoint_sequence") != expected_sequence:
+        raise IncrementalRecoveryError("canonical checkpoint 序号不连续")
+    if payload.get("previous_checkpoint_sha256") != previous_digest:
+        raise IncrementalRecoveryError("canonical checkpoint 摘要链断裂")
+    recorded = payload.get("checkpoint_sha256")
+    _validate_sha(recorded, "canonical checkpoint.checkpoint_sha256")
+    unsigned = dict(payload)
+    unsigned.pop("checkpoint_sha256", None)
+    if digest(unsigned) != recorded:
+        raise IncrementalRecoveryError("canonical checkpoint 自摘要不一致")
+    recorded_at = payload.get("recorded_at_utc")
+    if not isinstance(recorded_at, str) or not recorded_at.endswith("Z"):
+        raise IncrementalRecoveryError("canonical checkpoint 时间非法")
+
+    campaign = payload.get("campaign")
+    if not isinstance(campaign, Mapping) or set(campaign) != {
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "baseline_version",
+        "target_version",
+        "candidate_id",
+        "attempt_id",
+    }:
+        raise IncrementalRecoveryError("canonical checkpoint Campaign 身份不闭合")
+    for field in ("campaign_id", "candidate_id", "attempt_id"):
+        _validate_identifier(campaign.get(field), f"Campaign.{field}")
+    _validate_sha(
+        campaign.get("campaign_manifest_sha256"),
+        "Campaign.campaign_manifest_sha256",
+    )
+    for field in ("baseline_version", "target_version"):
+        value = campaign.get(field)
+        if not isinstance(value, str) or not value:
+            raise IncrementalRecoveryError(f"Campaign.{field} 非法")
+
+    if payload.get("phase") not in CANONICAL_PHASES:
+        raise IncrementalRecoveryError("canonical checkpoint phase 非法")
+    migration = payload.get("migration")
+    if not isinstance(migration, Mapping) or set(migration) != {
+        "manifest_sha256",
+        "total_rule_count",
+        "affected_rule_ids",
+        "inherited_rule_ids",
+    }:
+        raise IncrementalRecoveryError("canonical checkpoint 规则分区不闭合")
+    _validate_sha(migration.get("manifest_sha256"), "migration.manifest_sha256")
+    affected = _canonical_item_ids(
+        migration.get("affected_rule_ids"), "affected_rule_ids"
+    )
+    inherited = _canonical_item_ids(
+        migration.get("inherited_rule_ids"), "inherited_rule_ids"
+    )
+    total = migration.get("total_rule_count")
+    if (
+        not isinstance(total, int)
+        or isinstance(total, bool)
+        or total < 1
+        or set(affected).intersection(inherited)
+        or total != len(affected) + len(inherited)
+    ):
+        raise IncrementalRecoveryError("canonical checkpoint 规则分区不一致")
+
+    plan = payload.get("plan")
+    if not isinstance(plan, Mapping) or set(plan) != {
+        "execute_item_ids",
+        "reused_item_ids",
+    }:
+        raise IncrementalRecoveryError("canonical checkpoint 执行计划不闭合")
+    execute = _canonical_item_ids(plan.get("execute_item_ids"), "execute_item_ids")
+    reused = _canonical_item_ids(plan.get("reused_item_ids"), "reused_item_ids")
+    if set(execute).intersection(reused):
+        raise IncrementalRecoveryError("execute/reuse 集合相交")
+
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise IncrementalRecoveryError("canonical checkpoint items 必须是数组")
+    item_ids: list[str] = []
+    for index, item in enumerate(items, 1):
+        if not isinstance(item, Mapping) or set(item) != {
+            "item_id",
+            "status",
+            "disposition",
+            "result_sha256",
+            "result_key",
+            "source",
+            "details",
+        }:
+            raise IncrementalRecoveryError(f"canonical item {index} 字段不闭合")
+        _validate_identifier(item.get("item_id"), f"canonical item {index}.item_id")
+        item_id = str(item["item_id"])
+        item_ids.append(item_id)
+        if item.get("status") not in {"passed", "complete", "reused"}:
+            raise IncrementalRecoveryError(f"canonical item {item_id} 尚未通过")
+        if item.get("disposition") not in {"executed", "reused"}:
+            raise IncrementalRecoveryError(f"canonical item {item_id} disposition 非法")
+        for field in ("result_sha256", "result_key"):
+            value = item.get(field)
+            if value is not None:
+                _validate_sha(value, f"canonical item {item_id}.{field}")
+        source = item.get("source")
+        if not isinstance(source, Mapping) or set(source) != {"path", "sha256", "bytes"}:
+            raise IncrementalRecoveryError(f"canonical item {item_id} 来源不闭合")
+        path = source.get("path")
+        size = source.get("bytes")
+        if not isinstance(path, str) or not path or "\x00" in path:
+            raise IncrementalRecoveryError(f"canonical item {item_id} 来源路径非法")
+        _validate_sha(source.get("sha256"), f"canonical item {item_id}.source.sha256")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+            raise IncrementalRecoveryError(f"canonical item {item_id} 来源大小非法")
+        details = item.get("details")
+        if not isinstance(details, Mapping):
+            raise IncrementalRecoveryError(f"canonical item {item_id} details 非法")
+    if len(item_ids) != len(set(item_ids)) or set(item_ids) != set(reused):
+        raise IncrementalRecoveryError(
+            "canonical 已通过 items 必须精确等于 reused_item_ids"
+        )
+
+    evidence_manifest = payload.get("evidence_manifest")
+    if evidence_manifest is not None:
+        if not isinstance(evidence_manifest, Mapping) or set(evidence_manifest) != {
+            "path",
+            "sha256",
+            "bytes",
+        }:
+            raise IncrementalRecoveryError("EvidenceManifest 引用不闭合")
+        _validate_sha(evidence_manifest.get("sha256"), "EvidenceManifest.sha256")
+        if (
+            not isinstance(evidence_manifest.get("path"), str)
+            or not evidence_manifest.get("path")
+            or not isinstance(evidence_manifest.get("bytes"), int)
+            or isinstance(evidence_manifest.get("bytes"), bool)
+            or evidence_manifest.get("bytes") < 1
+        ):
+            raise IncrementalRecoveryError("EvidenceManifest 引用非法")
+
+    deadline = payload.get("deadline")
+    if not isinstance(deadline, Mapping) or set(deadline) != {
+        "started_at_epoch",
+        "budget_seconds",
+        "deadline_at_epoch",
+    }:
+        raise IncrementalRecoveryError("canonical checkpoint deadline 不闭合")
+    start = deadline.get("started_at_epoch")
+    budget = deadline.get("budget_seconds")
+    end = deadline.get("deadline_at_epoch")
+    if (
+        isinstance(start, bool)
+        or not isinstance(start, (int, float))
+        or isinstance(budget, bool)
+        or not isinstance(budget, (int, float))
+        or isinstance(end, bool)
+        or not isinstance(end, (int, float))
+        or not all(math.isfinite(float(value)) for value in (start, budget, end))
+        or float(start) <= 0
+        or float(budget) <= 0
+        or abs((float(start) + float(budget)) - float(end)) > 0.001
+    ):
+        raise IncrementalRecoveryError("canonical checkpoint deadline 非法")
+
+    source = payload.get("source")
+    if not isinstance(source, Mapping) or set(source) != {
+        "kind",
+        "legacy_object_types",
+        "receipt_refs",
+    }:
+        raise IncrementalRecoveryError("canonical checkpoint source 不闭合")
+    if source.get("kind") not in {"native", "historical-import"}:
+        raise IncrementalRecoveryError("canonical checkpoint source.kind 非法")
+    legacy_types = source.get("legacy_object_types")
+    receipt_refs = source.get("receipt_refs")
+    if (
+        not isinstance(legacy_types, list)
+        or not all(isinstance(value, str) and value for value in legacy_types)
+        or len(legacy_types) != len(set(legacy_types))
+        or not isinstance(receipt_refs, list)
+        or not all(isinstance(value, Mapping) for value in receipt_refs)
+    ):
+        raise IncrementalRecoveryError("canonical checkpoint 历史来源非法")
+    for index, reference in enumerate(receipt_refs, 1):
+        if set(reference) != {"path", "sha256", "bytes"}:
+            raise IncrementalRecoveryError(f"历史来源 {index} 字段不闭合")
+        _validate_sha(reference.get("sha256"), f"历史来源 {index}.sha256")
+        if (
+            not isinstance(reference.get("path"), str)
+            or not reference.get("path")
+            or not isinstance(reference.get("bytes"), int)
+            or isinstance(reference.get("bytes"), bool)
+            or reference.get("bytes") < 1
+        ):
+            raise IncrementalRecoveryError(f"历史来源 {index} 非法")
+
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, Mapping) or set(metrics) != {
+        "scanned_bytes",
+        "live_request_count",
+    }:
+        raise IncrementalRecoveryError("canonical checkpoint metrics 不闭合")
+    if any(
+        not isinstance(metrics.get(field), int)
+        or isinstance(metrics.get(field), bool)
+        or metrics.get(field) < 0
+        for field in ("scanned_bytes", "live_request_count")
+    ):
+        raise IncrementalRecoveryError("canonical checkpoint metrics 非法")
+    return dict(payload)
+
+
+class CanonicalCheckpointStore:
+    """新流程唯一的 Campaign 聚合 checkpoint 存储。"""
+
+    def __init__(self, root: Path, *, create: bool = True):
+        if not isinstance(root, Path) or not root.is_absolute() or root.is_symlink():
+            raise IncrementalRecoveryError(
+                "canonical checkpoint 根必须是绝对非符号链接目录"
+            )
+        if create:
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        elif not root.is_dir():
+            raise IncrementalRecoveryError("canonical checkpoint 根不存在")
+        if root.is_symlink() or stat.S_IMODE(root.stat().st_mode) != 0o700:
+            raise IncrementalRecoveryError("canonical checkpoint 根权限必须为 0700")
+        self.root = root.resolve(strict=True)
+
+    def _paths(self) -> list[Path]:
+        paths = sorted(self.root.iterdir(), key=lambda path: path.name)
+        for path in paths:
+            if path.is_symlink() or not path.is_file() or not re_fullmatch_checkpoint_name(path.name):
+                raise IncrementalRecoveryError(
+                    f"canonical checkpoint 目录含非法文件：{path.name}"
+                )
+        return paths
+
+    def records(self) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        previous: str | None = None
+        for sequence, path in enumerate(self._paths(), 1):
+            metadata = path.stat()
+            if (
+                metadata.st_uid != os.geteuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_size > MAX_CHECKPOINT_RECORD_BYTES
+            ):
+                raise IncrementalRecoveryError(
+                    f"canonical checkpoint 权限或大小非法：{path.name}"
+                )
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                raise IncrementalRecoveryError(
+                    f"canonical checkpoint 不可读：{path.name}"
+                ) from error
+            if not isinstance(payload, Mapping):
+                raise IncrementalRecoveryError("canonical checkpoint 顶层不是对象")
+            validated = _validate_canonical_checkpoint(
+                payload,
+                expected_sequence=sequence,
+                previous_digest=previous,
+            )
+            output.append(validated)
+            previous = str(validated["checkpoint_sha256"])
+        return output
+
+    def latest(self) -> dict[str, Any] | None:
+        records = self.records()
+        return records[-1] if records else None
+
+    def append(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(record, Mapping):
+            raise IncrementalRecoveryError("canonical checkpoint 必须是对象")
+        if {"checkpoint_sequence", "checkpoint_sha256"}.intersection(record):
+            raise IncrementalRecoveryError("canonical checkpoint 序号和摘要由存储器生成")
+        previous_records = self.records()
+        previous_digest = (
+            str(previous_records[-1]["checkpoint_sha256"])
+            if previous_records
+            else None
+        )
+        payload = dict(record)
+        payload["schema_version"] = CANONICAL_CHECKPOINT_SCHEMA
+        payload["checkpoint_sequence"] = len(previous_records) + 1
+        payload["previous_checkpoint_sha256"] = previous_digest
+        payload["checkpoint_sha256"] = digest(payload)
+        validated = _validate_canonical_checkpoint(
+            payload,
+            expected_sequence=len(previous_records) + 1,
+            previous_digest=previous_digest,
+        )
+        name = f"{validated['checkpoint_sequence']:08d}.json"
+        destination = self.root / name
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{name}.", suffix=".tmp", dir=self.root
+        )
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(validated, ensure_ascii=False, sort_keys=True, indent=2)
+                    + "\n"
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary, destination)
+            except FileExistsError as error:
+                raise IncrementalRecoveryError(
+                    f"canonical checkpoint 序号已存在：{name}"
+                ) from error
+            directory_descriptor = os.open(
+                self.root,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+            )
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return self.records()[-1]

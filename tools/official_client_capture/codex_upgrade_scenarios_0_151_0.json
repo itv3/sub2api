@@ -6,7 +6,7 @@
   "source_spec": {
     "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
     "fragment": "第二章",
-    "sha256": "4521874fe9ec2d36906c1898cab7adb4879a56c98456f552165980685aabcaed"
+    "sha256": "6b7e4eeb9aa4725559730e3129faebf926dbd53e2697c000787258f034e179b3"
   },
   "rule_manifest": {
     "path": "tools/official_client_capture/codex_upgrade_rules_0_151_0.json",
@@ -861,6 +861,7 @@
             "SCENARIOS": "s1 s2 s4",
             "CODEX_MODEL": "{model}",
             "CODEX_VERSION": "{target_version}",
+            "CODEX_BIN": "{capture_codex_bin}",
             "RUN_ID": "{campaign_id}-candidate-direct-core"
           },
           "timeout_seconds": 3600
@@ -926,6 +927,7 @@
             "SCENARIOS": "s1 s2 s4",
             "CODEX_MODEL": "{model}",
             "CODEX_VERSION": "{target_version}",
+            "CODEX_BIN": "{capture_codex_bin}",
             "RUN_ID": "{campaign_id}-candidate-ws-repeat"
           },
           "timeout_seconds": 3600
@@ -977,6 +979,7 @@
             "SCENARIOS": "s1 s2 s4",
             "CODEX_MODEL": "{model}",
             "CODEX_VERSION": "{target_version}",
+            "CODEX_BIN": "{capture_codex_bin}",
             "RUN_ID_PREFIX": "{campaign_id}-candidate-mitm-core",
             "WINDOW_ID": "run"
           },
@@ -1090,6 +1093,7 @@
             "SCENARIOS": "compact",
             "CODEX_MODEL": "{model}",
             "CODEX_VERSION": "{target_version}",
+            "CODEX_BIN": "{capture_codex_bin}",
             "RUN_ID": "{campaign_id}-candidate-direct-compact"
           },
           "timeout_seconds": 1200
@@ -1138,6 +1142,7 @@
             "SCENARIOS": "compact",
             "CODEX_MODEL": "{model}",
             "CODEX_VERSION": "{target_version}",
+            "CODEX_BIN": "{capture_codex_bin}",
             "RUN_ID_PREFIX": "{campaign_id}-candidate-mitm-compact",
             "WINDOW_ID": "run"
           },

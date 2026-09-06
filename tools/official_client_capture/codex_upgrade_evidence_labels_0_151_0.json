@@ -1140,7 +1140,7 @@
       "side": "candidate",
       "rules": [
         {
-          "root_suffix": "codex-http-run",
+        "root_suffix": "codex-http-s1-a2-run",
           "glob": "mitm/codex-http/codex-http.jsonl",
           "scenario_ids": [
             "A01",
@@ -1160,8 +1160,50 @@
           },
           "rationale": "mitm 面由抓包 CA 解密（ca_mode=custom），是代理重构面：判据凡要求客户端原始字节者均以 labels.ca_mode absent 排除本面；provider 由账号类型（OpenAI OAuth）推出。"
         },
-        {
-          "root_suffix": "codex-ws-run",
+      {
+        "root_suffix": "codex-http-s2-a1-run",
+        "glob": "mitm/codex-http/codex-http.jsonl",
+        "scenario_ids": [
+          "A01",
+          "A09"
+        ],
+        "kind": "wire_dump",
+        "parser": "opaque_bound_source",
+        "derive": {
+          "parser": "mitm_http_jsonl",
+          "kind": "process_trace"
+        },
+        "labels": {
+          "transport": "http",
+          "ca_mode": "custom",
+          "surface": "mitm",
+          "provider": "openai_oauth"
+        },
+        "rationale": "mitm 面由抓包 CA 解密（ca_mode=custom），是代理重构面：判据凡要求客户端原始字节者均以 labels.ca_mode absent 排除本面；provider 由账号类型（OpenAI OAuth）推出。"
+      },
+      {
+        "root_suffix": "codex-http-s4-a1-run",
+        "glob": "mitm/codex-http/codex-http.jsonl",
+        "scenario_ids": [
+          "A01",
+          "A09"
+        ],
+        "kind": "wire_dump",
+        "parser": "opaque_bound_source",
+        "derive": {
+          "parser": "mitm_http_jsonl",
+          "kind": "process_trace"
+        },
+        "labels": {
+          "transport": "http",
+          "ca_mode": "custom",
+          "surface": "mitm",
+          "provider": "openai_oauth"
+        },
+        "rationale": "mitm 面由抓包 CA 解密（ca_mode=custom），是代理重构面：判据凡要求客户端原始字节者均以 labels.ca_mode absent 排除本面；provider 由账号类型（OpenAI OAuth）推出。"
+      },
+      {
+        "root_suffix": "codex-ws-s1-a1-run",
           "glob": "ingress/codex-ws/codex-ingress-http.jsonl",
           "scenario_ids": [
             "A02"
@@ -1177,8 +1219,46 @@
             "ca_mode": "custom",
             "surface": "ingress"
           },
-          "rationale": "ws subject 的 ingress 面 HTTP jsonl（WS 升级前的握手请求），由抓包 CA 解密；ingress 是入站面，同样以 ca_mode=custom 被原始字节判据排除。"
-        }
+        "rationale": "ws subject 的 ingress 面 HTTP jsonl（WS 升级前的握手请求），由抓包 CA 解密；ingress 是入站面，同样以 ca_mode=custom 被原始字节判据排除。"
+      },
+      {
+        "root_suffix": "codex-ws-s2-a1-run",
+        "glob": "ingress/codex-ws/codex-ingress-http.jsonl",
+        "scenario_ids": [
+          "A02"
+        ],
+        "kind": "wire_dump",
+        "parser": "opaque_bound_source",
+        "derive": {
+          "parser": "mitm_http_jsonl",
+          "kind": "process_trace"
+        },
+        "labels": {
+          "transport": "websocket",
+          "ca_mode": "custom",
+          "surface": "ingress"
+        },
+        "rationale": "ws subject 的 ingress 面 HTTP jsonl（WS 升级前的握手请求），由抓包 CA 解密；ingress 是入站面，同样以 ca_mode=custom 被原始字节判据排除。"
+      },
+      {
+        "root_suffix": "codex-ws-s4-a1-run",
+        "glob": "ingress/codex-ws/codex-ingress-http.jsonl",
+        "scenario_ids": [
+          "A02"
+        ],
+        "kind": "wire_dump",
+        "parser": "opaque_bound_source",
+        "derive": {
+          "parser": "mitm_http_jsonl",
+          "kind": "process_trace"
+        },
+        "labels": {
+          "transport": "websocket",
+          "ca_mode": "custom",
+          "surface": "ingress"
+        },
+        "rationale": "ws subject 的 ingress 面 HTTP jsonl（WS 升级前的握手请求），由抓包 CA 解密；ingress 是入站面，同样以 ca_mode=custom 被原始字节判据排除。"
+      }
       ]
     },
     {
@@ -1249,7 +1329,6 @@
       "side": "candidate",
       "rules": [
         {
-          "root_suffix": "codex-compact-run",
           "glob": "mitm/codex-compact/codex-http.jsonl",
           "scenario_ids": [
             "A10"

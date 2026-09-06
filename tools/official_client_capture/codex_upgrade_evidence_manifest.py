@@ -390,6 +390,108 @@ def build_evidence_manifest(
     return manifest
 
 
+def merge_evidence_manifests(
+    reused_manifest: Mapping[str, Any],
+    delta_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """合并已验证的来源清单与本轮小型增量清单，不重读来源文件内容。"""
+
+    reused = validate_manifest_document(reused_manifest)
+    delta = validate_manifest_document(delta_manifest)
+    manifests = (reused, delta)
+    root_rows: dict[str, dict[str, Any]] = {}
+    old_prefix_to_root: list[dict[str, str]] = []
+    for manifest in manifests:
+        prefix_map: dict[str, str] = {}
+        for row in manifest["roots"]:
+            path = str(row["path"])
+            prefix = str(row["prefix"])
+            if path in root_rows:
+                raise EvidenceManifestError("来源与增量 EvidenceManifest 的证据根重叠。")
+            root_rows[path] = dict(row)
+            prefix_map[prefix] = path
+        old_prefix_to_root.append(prefix_map)
+
+    prefix_by_root = {
+        str(root): prefix
+        for root, prefix in _root_map(Path(path) for path in root_rows)
+    }
+    roots = [
+        {**root_rows[path], "prefix": prefix_by_root[path]}
+        for path in sorted(root_rows)
+    ]
+    entries: list[dict[str, Any]] = []
+    for manifest, prefix_map in zip(manifests, old_prefix_to_root, strict=True):
+        for row in manifest["entries"]:
+            old_prefix, separator, relative = str(row["path"]).partition("/")
+            root_path = prefix_map.get(old_prefix)
+            if not separator or not relative or root_path is None:
+                raise EvidenceManifestError("EvidenceManifest 合并条目的根前缀非法。")
+            entries.append(
+                {
+                    **row,
+                    "path": f"{prefix_by_root[root_path]}/{relative}",
+                }
+            )
+    entries.sort(key=lambda item: str(item["path"]))
+    if len({str(item["path"]) for item in entries}) != len(entries):
+        raise EvidenceManifestError("EvidenceManifest 合并后出现重复逻辑路径。")
+
+    inventory_entries = [
+        {"path": item["path"], "size": item["size"], "sha256": item["sha256"]}
+        for item in entries
+    ]
+    total_bytes = sum(int(item["size"]) for item in entries)
+    reused_security = reused["security"]
+    delta_security = delta["security"]
+    for field in ("known_secret_env_names", "limitation"):
+        if reused_security.get(field) != delta_security.get(field):
+            raise EvidenceManifestError(
+                f"来源与增量 EvidenceManifest 的安全扫描合同不一致：{field}"
+            )
+    metadata_view = {
+        "roots": roots,
+        "entries": [
+            {key: value for key, value in entry.items() if key != "sha256"}
+            for entry in entries
+        ],
+    }
+    inventory = {
+        "entry_count": len(inventory_entries),
+        "entries": inventory_entries,
+        "digest": canonical_json_sha256({"entries": inventory_entries}),
+    }
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA,
+        "created_at_utc": delta["created_at_utc"],
+        "completed_at_utc": _utc_now(),
+        "roots": roots,
+        "metadata_sha256": canonical_json_sha256(metadata_view),
+        "entry_count": len(entries),
+        "total_bytes": total_bytes,
+        "entries": entries,
+        "inventory": inventory,
+        "security": {
+            "known_secret_scan_passed": True,
+            "known_secret_env_names": list(reused_security["known_secret_env_names"]),
+            "file_count": len(entries),
+            "scanned_bytes": total_bytes,
+            "findings": [],
+            "limitation": reused_security.get("limitation"),
+        },
+        "scan": {
+            "full_scan_count": 1,
+            "scanned_bytes": int(delta["scan"]["scanned_bytes"]),
+            "reused_bytes": int(reused["total_bytes"])
+            + int(delta["scan"]["reused_bytes"]),
+            "total_bytes": total_bytes,
+            "elapsed_seconds": float(delta["scan"]["elapsed_seconds"]),
+        },
+    }
+    manifest["manifest_digest"] = canonical_json_sha256(manifest)
+    return validate_manifest_document(manifest)
+
+
 def validate_manifest_document(manifest: Mapping[str, Any]) -> dict[str, Any]:
     payload = dict(manifest)
     digest = payload.pop("manifest_digest", None)

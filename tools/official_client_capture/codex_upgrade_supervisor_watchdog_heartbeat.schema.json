@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-watchdog-heartbeat-v1.json",
+  "title": "Codex 升级独立监督器心跳",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at_utc",
+    "recorded_at_epoch",
+    "recorded_monotonic_ns",
+    "status",
+    "owner_alive",
+    "heartbeat_age_seconds",
+    "operation",
+    "job_id",
+    "owner_heartbeat_at_utc",
+    "owner_heartbeat_monotonic_ns",
+    "owner_event_sequence"
+  ],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-supervisor-watchdog-heartbeat/v1"},
+    "recorded_at_utc": {"type": "string", "format": "date-time"},
+    "recorded_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "recorded_monotonic_ns": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["active", "stopped", "failed", "audit-incomplete", "watchdog-aborted"]},
+    "owner_alive": {"type": "boolean"},
+    "heartbeat_age_seconds": {"oneOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+    "operation": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    "job_id": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    "owner_heartbeat_at_utc": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+    "owner_heartbeat_monotonic_ns": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "owner_event_sequence": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}
+  }
+}

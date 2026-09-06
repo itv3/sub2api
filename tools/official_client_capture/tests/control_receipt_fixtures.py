@@ -82,6 +82,14 @@ def create_arm_receipt(
             "available_bytes": 60 * 1024 * 1024 * 1024,
             "used_percent": 40,
         },
+        "wireguard": {
+            "interface": arm.WIREGUARD_INTERFACE,
+            "configured_mtu": arm.EXPECTED_DMIT_WG1_MTU,
+            "runtime_mtu": arm.EXPECTED_DMIT_WG1_MTU,
+            "expected_dmit_mtu": arm.EXPECTED_DMIT_WG1_MTU,
+            "config_path": str(arm.WIREGUARD_CONFIG),
+            "config_sha256": "d" * 64,
+        },
         "containers": containers,
         "collector": {
             "schema_version": arm.PRODUCER_SCHEMA,

@@ -268,6 +268,67 @@ class ProductionActivationReceiptTests(unittest.TestCase):
         self.assertEqual(finalized, replayed)
         self.assertEqual(finalized["campaign"]["candidate_id"], "k83-dmit")
 
+    def test_canonical_acceptance_binds_explicit_candidate_identity(self) -> None:
+        self._write(
+            "inputs/acceptance.json",
+            {
+                "schema_version": "codex-upgrade-canonical-step/v1",
+                "item_id": "acceptance",
+                "status": "complete",
+                "accepted": True,
+                "production_state": "accepted_not_activated",
+                "candidate_id": "k83-dmit",
+                "attempt_id": "attempt-151",
+            },
+        )
+        acceptance_sha256 = self._digest(self.acceptance)
+        promotion_path = self.root / "inputs/promotion.json"
+        promotion = json.loads(promotion_path.read_text(encoding="utf-8"))
+        promotion["acceptance_sha256"] = acceptance_sha256
+        self._write("inputs/promotion.json", promotion)
+        promotion_sha256 = self._digest(promotion_path)
+
+        gate_facts_path = self.root / "inputs/post-gate-facts.json"
+        gate_facts = json.loads(gate_facts_path.read_text(encoding="utf-8"))
+        gate_facts["subject"]["acceptance_sha256"] = acceptance_sha256
+        gate_facts["subject"]["promotion_receipt_sha256"] = promotion_sha256
+        gate_facts["inputs"][0]["sha256"] = acceptance_sha256
+        gate_facts["inputs"][1]["sha256"] = promotion_sha256
+        self._write("inputs/post-gate-facts.json", gate_facts)
+        gate_path = self.root / "inputs/post-gate-receipt.json"
+        gate_path.unlink()
+        gate_receipt.finalize(
+            self.root,
+            "inputs/post-gate-facts.json",
+            "inputs/post-gate-receipt.json",
+        )
+
+        canonical_facts = dict(self.facts)
+        canonical_facts["campaign"] = {
+            **self.facts["campaign"],
+            "acceptance_sha256": acceptance_sha256,
+        }
+        canonical_facts["promotion"] = {
+            "path": "inputs/promotion.json",
+            "sha256": promotion_sha256,
+        }
+        canonical_facts["post_promotion_gate"] = {
+            "path": "inputs/post-gate-receipt.json",
+            "sha256": self._digest(gate_path),
+        }
+        canonical_facts["candidate"] = {
+            "package_digest": self.candidate_package_digest,
+            "source_tree_sha256": self.candidate_source_tree,
+            "build_id": "candidate-build",
+            "deployed_version": "candidate-version",
+            "image_id": self.candidate_image,
+            "image_reference": self.candidate_image_reference,
+        }
+        self._write("canonical-facts.json", canonical_facts)
+        built = receipt.build_receipt(self.root, "canonical-facts.json")
+        self.assertEqual(built["campaign"]["acceptance"]["sha256"], acceptance_sha256)
+        self.assertEqual(built["candidate"], canonical_facts["candidate"])
+
     def test_schema_file_is_valid_json_and_matches_version(self) -> None:
         schema_path = Path(receipt.__file__).with_name(
             "production_activation_receipt.schema.json"

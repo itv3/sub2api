@@ -314,7 +314,7 @@ func TestUploadOfficialCodexFileC2PAReservationReusesCreateBodyOnRetry(t *testin
 		officialegress.DefaultGuard(),
 		upstream,
 		officialegress.ExecutorID(t.Name()),
-		officialegress.ReleaseModePrevious,
+		officialegress.ReleaseModeActive,
 	)
 	require.NoError(t, err)
 	service := &OpenAIGatewayService{httpUpstream: upstream, officialEgress: runtimeState}

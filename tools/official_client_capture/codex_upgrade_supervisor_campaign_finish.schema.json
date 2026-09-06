@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-campaign-finish-v1.json",
+  "title": "Codex 升级 Campaign 父监督器结束请求",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "requested_at_utc", "requested_at_epoch", "reason", "status"],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-campaign-finish/v1"},
+    "requested_at_utc": {"type": "string", "format": "date-time"},
+    "requested_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 512},
+    "status": {"enum": ["stopped", "failed"]}
+  }
+}

@@ -21,6 +21,16 @@ if [[ ! $codex_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "CODEX_VERSION 必须是完整的 x.y.z 版本。" >&2
   exit 2
 fi
+codex_bin=${CODEX_BIN:-/opt/codex-$codex_version/bin/codex}
+if [[ $codex_bin != /* ]]; then
+  echo "CODEX_BIN 必须是绝对路径。" >&2
+  exit 2
+fi
+actual_codex_version=$(docker exec "$capture_container" "$codex_bin" --version)
+if [[ $actual_codex_version != "codex-cli $codex_version" ]]; then
+  echo "Codex 二进制版本不一致：预期 codex-cli $codex_version，实际 $actual_codex_version。" >&2
+  exit 2
+fi
 run_id_prefix=${RUN_ID_PREFIX:-p0-p2-review-fix-direct-0.1.165-3}
 run_id=${RUN_ID:-"$run_id_prefix-$(date -u +%Y%m%dT%H%M%SZ)"}
 
@@ -203,14 +213,16 @@ run_case() {
         --output-dir "$output_dir" --timeout 70
       ;;
     codex-http)
-      docker exec -e SUB2API_API_KEY="$api_key" "$capture_container" \
-        python3 /capture/scripts/run_codex_scenario.py \
+      docker exec -e SUB2API_API_KEY="$api_key" -e CODEX_BIN="$codex_bin" \
+        -e CODEX_VERSION="$codex_version" "$capture_container" \
+        python3 "$capture_tool_root/run_codex_scenario_target.py" \
         --mode sub2api-http --scenario "$scenario" --model "$codex_model" \
         --output-dir "$output_dir" --timeout 70
       ;;
     codex-ws)
-      docker exec -e SUB2API_API_KEY="$api_key" "$capture_container" \
-        python3 /capture/scripts/run_codex_scenario.py \
+      docker exec -e SUB2API_API_KEY="$api_key" -e CODEX_BIN="$codex_bin" \
+        -e CODEX_VERSION="$codex_version" "$capture_container" \
+        python3 "$capture_tool_root/run_codex_scenario_target.py" \
         --mode sub2api-ws --scenario "$scenario" --model "$codex_model" \
         --output-dir "$output_dir" --timeout 70
       ;;
@@ -221,6 +233,7 @@ run_case() {
       fi
       docker exec -e SUB2API_API_KEY="$api_key" "$capture_container" \
         python3 "$capture_tool_root/run_codex_compact_scenario.py" \
+        --codex-bin "$codex_bin" \
         --mode sub2api-http --model "$codex_model" --codex-version "$codex_version" \
         --output-dir "$output_dir" --timeout 70
       ;;

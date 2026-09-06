@@ -2,7 +2,7 @@
 
 Linux 生不出 DeviceCheck 值，Sub2API 为隔离抓包提供了 candidatecapture 构建；该 provider
 只读进程环境，所以采集侧必须按本轮 api_key／group／account／临时代理重建服务，采集结束后
-按原 compose 拉回。缺少 compose 坐标时不得静默跳过 A11——断言应照常暴露失败。
+按原 compose 拉回。缺少 compose 坐标或注入失败时必须在 A11 前立即失败关闭。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ class LiveAttestationCaptureWiringTest(unittest.TestCase):
         cls.script_path = root / "run_candidate_aux_capture.sh"
         cls.script = cls.script_path.read_text(encoding="utf-8")
         cls.scenarios = json.loads(
-            (root / "codex_upgrade_scenarios_0_145_0.json").read_text(encoding="utf-8")
+            (root / "codex_upgrade_scenarios_0_151_0.json").read_text(encoding="utf-8")
         )
         cls.upgrade = (root / "codex_upgrade.py").read_text(encoding="utf-8")
 
@@ -58,7 +58,7 @@ class LiveAttestationCaptureWiringTest(unittest.TestCase):
         self.assertIn("+ 900 ))", self.script)
 
     def test_注入发生在第一跳之前且结束后恢复(self) -> None:
-        inject = self.script.index("deploy_with_live_attestation ||")
+        inject = self.script.index("if ! deploy_with_live_attestation; then")
         first_hop = self.script.index("A11-live-first-hop")
         self.assertLess(inject, first_hop)
         self.assertIn("restore_deploy_without_live_attestation", self.script)
@@ -80,12 +80,14 @@ class LiveAttestationCaptureWiringTest(unittest.TestCase):
         hosts_restore = self.script.index('hosts.before" "$service_container:/tmp/candidate-aux-hosts.restore"')
         self.assertLess(redeploy, hosts_restore)
 
-    def test_缺少坐标时不静默跳过(self) -> None:
-        # 未提供 compose 坐标只是不注入，A11 仍会执行并由 assert_2xx 暴露失败。
+    def test_缺少坐标时在_a11_前失败关闭(self) -> None:
         self.assertIn(
-            '[[ -n ${LIVE_ATTESTATION_COMPOSE_DIR:-} && -n ${LIVE_ATTESTATION_COMPOSE_FILES:-} ]] || return 0',
+            'if [[ -z ${LIVE_ATTESTATION_COMPOSE_DIR:-} || -z ${LIVE_ATTESTATION_COMPOSE_FILES:-} ]]; then',
             self.script,
         )
+        self.assertIn("缺少 Live attestation compose 目录或文件", self.script)
+        self.assertIn("if ! deploy_with_live_attestation; then", self.script)
+        self.assertIn("拒绝继续 A11～A14", self.script)
         self.assertIn("assert_2xx A11-live-first-hop", self.script)
 
     def test_场景清单与变量契约闭环(self) -> None:
@@ -102,7 +104,8 @@ class LiveAttestationCaptureWiringTest(unittest.TestCase):
         self.assertIn("live_attestation_compose_files", names)
         for item in self.scenarios["variable_contract"]:
             if item["name"].startswith("live_attestation_"):
-                # compose 坐标不是秘密，也不应被标为必需（缺省即不注入）。
+                # 坐标不是秘密；变量合同对 preflight/validation_only 仍允许为空，
+                # formal production_replacement 由建 Campaign 前的用途门禁收紧。
                 self.assertFalse(item["sensitive"])
                 self.assertFalse(item["required"])
 
@@ -111,6 +114,10 @@ class LiveAttestationCaptureWiringTest(unittest.TestCase):
         self.assertIn("--live-attestation-compose-files", self.upgrade)
         self.assertIn('"live_attestation_compose_dir": str(', self.upgrade)
         self.assertIn('live_attestation_compose_dir=str(', self.upgrade)
+        self.assertIn(
+            "formal production_replacement 必须在建 Campaign 前冻结",
+            self.upgrade,
+        )
 
     def test_compose_文件串规范化且不使用_eval(self) -> None:
         self.assertIn("prepare_live_attestation_compose_args()", self.script)

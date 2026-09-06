@@ -31,6 +31,7 @@ IMAGE_REFERENCE_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}$"
 )
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+CANONICAL_ACCEPTANCE_SCHEMA = "codex-upgrade-canonical-step/v1"
 RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
@@ -169,6 +170,31 @@ def _validate_identity(payload: dict[str, Any], label: str) -> None:
         raise ProductionReceiptError(f"{label}.image_reference 必须固定 registry digest")
 
 
+def _validate_candidate_identity(payload: dict[str, Any]) -> None:
+    _expect_keys(
+        payload,
+        {
+            "package_digest",
+            "source_tree_sha256",
+            "build_id",
+            "deployed_version",
+            "image_id",
+            "image_reference",
+        },
+        "candidate",
+    )
+    _require_sha(payload, "package_digest", "candidate")
+    _require_sha(payload, "source_tree_sha256", "candidate")
+    _require_string(payload, "build_id", "candidate")
+    _require_string(payload, "deployed_version", "candidate")
+    if not IMAGE_ID_RE.fullmatch(_require_string(payload, "image_id", "candidate")):
+        raise ProductionReceiptError("candidate.image_id 非法")
+    if not IMAGE_REFERENCE_RE.fullmatch(
+        _require_string(payload, "image_reference", "candidate")
+    ):
+        raise ProductionReceiptError("candidate.image_reference 必须固定 registry digest")
+
+
 def _validate_stage(
     stage: dict[str, Any],
     *,
@@ -242,20 +268,18 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
     root = _require_private_root(root)
     facts_path = _resolve_relative(root, facts_relative)
     facts, _ = _load_json(facts_path)
-    _expect_keys(
-        facts,
-        {
-            "schema_version",
-            "campaign",
-            "promotion",
-            "post_promotion_gate",
-            "target",
-            "rollback",
-            "stages",
-            "final_state",
-        },
-        "facts",
-    )
+    base_fact_keys = {
+        "schema_version",
+        "campaign",
+        "promotion",
+        "post_promotion_gate",
+        "target",
+        "rollback",
+        "stages",
+        "final_state",
+    }
+    if set(facts) not in {frozenset(base_fact_keys), frozenset({*base_fact_keys, "candidate"})}:
+        _expect_keys(facts, base_fact_keys, "facts")
     if facts.get("schema_version") != FACTS_SCHEMA:
         raise ProductionReceiptError("facts.schema_version 不匹配")
 
@@ -273,12 +297,28 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
     acceptance_sha256 = _require_sha(campaign, "acceptance_sha256", "campaign")
     acceptance = _binding(root, acceptance_path, acceptance_sha256)
     acceptance_payload, _ = _load_json(_resolve_relative(root, acceptance_path))
+    canonical_acceptance = (
+        acceptance_payload.get("schema_version") == CANONICAL_ACCEPTANCE_SCHEMA
+        and acceptance_payload.get("item_id") == "acceptance"
+    )
     if (
         acceptance_payload.get("status") != "complete"
         or acceptance_payload.get("accepted") is not True
         or acceptance_payload.get("candidate_id") != campaign["candidate_id"]
+        or (
+            canonical_acceptance
+            and acceptance_payload.get("production_state") != "accepted_not_activated"
+        )
     ):
         raise ProductionReceiptError("acceptance 未完成、未接受或 candidate_id 不一致")
+
+    candidate = facts.get("candidate")
+    if canonical_acceptance:
+        if not isinstance(candidate, dict):
+            raise ProductionReceiptError("canonical acceptance 必须显式绑定 candidate 身份")
+        _validate_candidate_identity(candidate)
+    elif candidate is not None:
+        raise ProductionReceiptError("旧版 acceptance 禁止附加 candidate 身份")
 
     target = facts.get("target")
     rollback = facts.get("rollback")
@@ -327,8 +367,22 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
         ) from error
     gate_subject = gate_payload.get("subject")
     candidate_identity = acceptance_payload.get("candidate_identity")
-    if not isinstance(gate_subject, dict) or not isinstance(candidate_identity, dict):
+    if not isinstance(gate_subject, dict) or (
+        not canonical_acceptance and not isinstance(candidate_identity, dict)
+    ):
         raise ProductionReceiptError("acceptance 或 post-promotion 门禁缺少候选身份")
+    if canonical_acceptance:
+        assert isinstance(candidate, dict)
+        candidate_package_digest = candidate["package_digest"]
+        candidate_source_tree_sha256 = candidate["source_tree_sha256"]
+        candidate_image_id = candidate["image_id"]
+        candidate_image_reference = candidate["image_reference"]
+    else:
+        assert isinstance(candidate_identity, dict)
+        candidate_package_digest = acceptance_payload.get("candidate_package_digest")
+        candidate_source_tree_sha256 = candidate_identity.get("source_tree_sha256")
+        candidate_image_id = candidate_identity.get("image_id")
+        candidate_image_reference = candidate_identity.get("image_reference")
     expected_gate_subject = {
         "campaign_id": campaign["id"],
         "campaign_mode": "formal",
@@ -338,23 +392,21 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
         "target_version": target["version"],
         "profile_id": target["profile_id"],
         "profile_digest": target["profile_digest"],
-        "candidate_package_digest": acceptance_payload.get(
-            "candidate_package_digest"
-        ),
-        "candidate_source_tree_sha256": candidate_identity.get(
-            "source_tree_sha256"
-        ),
-        "candidate_image_id": candidate_identity.get("image_id"),
-        "candidate_image_reference": candidate_identity.get("image_reference"),
+        "candidate_package_digest": candidate_package_digest,
+        "candidate_source_tree_sha256": candidate_source_tree_sha256,
+        "candidate_image_id": candidate_image_id,
+        "candidate_image_reference": candidate_image_reference,
         "production_tree_sha256": target["source_tree_sha256"],
         "acceptance_sha256": acceptance_sha256,
         "promotion_receipt_sha256": promotion_sha256,
     }
     if (
-        acceptance_payload.get("campaign_mode") != "formal"
-        or acceptance_payload.get("campaign_purpose") != "production_replacement"
-        or acceptance_payload.get("candidate_purpose") != "production_replacement"
-        or acceptance_payload.get("production_state") != "accepted_not_activated"
+        (not canonical_acceptance and (
+            acceptance_payload.get("campaign_mode") != "formal"
+            or acceptance_payload.get("campaign_purpose") != "production_replacement"
+            or acceptance_payload.get("candidate_purpose") != "production_replacement"
+            or acceptance_payload.get("production_state") != "accepted_not_activated"
+        ))
         or
         gate_payload.get("phase")
         != codex_upgrade_gate_receipt.POST_PROMOTION_PHASE
@@ -461,6 +513,8 @@ def build_receipt(root: Path, facts_relative: str) -> dict[str, Any]:
             "facts": facts_binding,
         },
     }
+    if canonical_acceptance:
+        receipt["candidate"] = candidate
     return receipt
 
 

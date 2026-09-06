@@ -78,18 +78,18 @@ func TestRuntimeCatalogArchiveFilesPreserveHistoricalAggregates(t *testing.T) {
 	}
 }
 
-func TestRuntimeCatalogDoesNotEmbedRetiredCodex0145Profiles(t *testing.T) {
+func TestRuntimeCatalogDoesNotEmbedRetiredCodexProfiles(t *testing.T) {
 	for _, snapshot := range DefaultReleaseCatalog().snapshots.ToDoc().Snapshots {
-		if snapshot.Version == "0.145.0" {
-			t.Fatalf("已退休的 Codex 0.145.0 画像仍在当前 SnapshotCatalog：%s", snapshot.Digest)
+		if snapshot.Version == "0.145.0" || snapshot.Version == "0.147.0" {
+			t.Fatalf("已退休的 Codex %s 画像仍在当前 SnapshotCatalog：%s", snapshot.Version, snapshot.Digest)
 		}
 	}
 	err := fs.WalkDir(releaseCatalogFS, "catalogdata/runtime/profiles", func(pathValue string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if !entry.IsDir() && strings.Contains(pathValue, "/0.145.0/") {
-			t.Fatalf("已退休的 Codex 0.145.0 画像仍被嵌入正式镜像：%s", pathValue)
+		if !entry.IsDir() && (strings.Contains(pathValue, "/0.145.0/") || strings.Contains(pathValue, "/0.147.0/")) {
+			t.Fatalf("已退休的 Codex 画像仍被嵌入正式镜像：%s", pathValue)
 		}
 		return nil
 	})

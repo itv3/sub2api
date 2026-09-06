@@ -64,8 +64,10 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 规则与判据载荷不变。
 # 2026-08-24 主手册 active 升级为 0.149.1 后再次重绑第二部分摘要；0.145
 # 基线的规则与判据载荷仍保持不变。
+# 2026-09-03 主手册补充恢复审计约束后再次重绑第二部分摘要；0.149.1
+# 基线规则、场景与机器判据载荷保持不变。
 FROZEN_PROFILE_SHA256 = (
-    "523a3a9f201188a1a8744de4e0216d4bc569d8edbb79a26d41923cb22c749e97"
+    "15e69c5e3ae1bde030776af673c325b40f722b0d6de1083b43329bc1079832d0"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 RULE_ID_RE = re.compile(r"^SPEC-[A-Z0-9]+-[0-9]{3}$")

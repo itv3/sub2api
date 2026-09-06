@@ -25,7 +25,7 @@ from tools.official_client_capture import incremental_recovery
 FACTS_SCHEMA = "codex-upgrade-arm64-environment-facts/v1"
 RECEIPT_SCHEMA = "codex-upgrade-arm64-environment-receipt/v1"
 PRODUCER_SCHEMA = "codex-upgrade-arm64-environment-producer/v1"
-PRODUCER_VERSION = "2"
+PRODUCER_VERSION = "3"
 PRODUCER_TOOL_RELATIVE = (
     "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py"
 )
@@ -37,11 +37,13 @@ LEGACY_REPLAY_PRODUCERS = {
 # 信任规范相对坐标和精确字节摘要；未知摘要仍必须失败关闭。
 REGISTERED_REPLAY_PRODUCER_HASHES = {
     "1": frozenset({LEGACY_REPLAY_PRODUCERS["1"]}),
-    # 28f15/7633 为已登记的历史后继，a62a 为本次 ARM64 Campaign 使用的
-    # 旧工作树版本；它们都只允许重放，不允许生成新 facts。
+    # 28f15/7633/a62a 为已登记的历史后继；317e 为本次 heartbeat 标签修复前
+    # 已生成 P0／attempt 收据的受管版本。它们都只允许重放，不允许生成新 facts。
     "2": frozenset(
         {
+            "687e28781d5e6300e829f83ca603a916e1388fa7df0a0702d777c5f66e7a139f",
             "28f15f366b9fc1761179256f5cb7d06f7f45e76ddf467383565469d1965a8053",
+            "317ea2c842cf32afabc919583b08a5dfd11f6f4aa97103cc0805fa178d3770e4",
             "7633ad1f101a8320126fb6c76417362bf8571faed9f14e5dcf20ec616a593048",
             "a62a269e5e4cb0e64aac21e5223ddbde8b884ecbe383b405c560e3c6ebcea527",
         }
@@ -49,6 +51,14 @@ REGISTERED_REPLAY_PRODUCER_HASHES = {
 }
 PUBLIC_EGRESS_URL = "https://api.ipify.org"
 EXPECTED_PUBLIC_EGRESS = "179.255.100.158"
+WIREGUARD_INTERFACE = "wg1"
+WIREGUARD_CONFIG = Path("/etc/wireguard/wg1.conf")
+# DMIT 当前受管 wg1 MTU 已独立核验并冻结为 1420。ARM64 的持久配置和
+# 运行时值必须同时与该对端值一致，不能只检查 IP、rule 和 route。
+EXPECTED_DMIT_WG1_MTU = 1420
+LEGACY_NETWORK_CONTRACT_SHA256 = (
+    "9e342c764883ee1107b998ef7a26650402ff4e8d82207926f518528f83dc4ec8"
+)
 ROOT_MAX_USED_PERCENT = 69
 ROOT_MIN_AVAILABLE_BYTES = 30 * 1024 * 1024 * 1024
 PHASES = frozenset(
@@ -85,6 +95,7 @@ RFC3339_RE = re.compile(
 )
 CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+HEARTBEAT_OPERATION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 MAX_JSON_BYTES = 4 * 1024 * 1024
 
 
@@ -300,6 +311,10 @@ def contract_sha256() -> str:
                 "containers": CONTAINER_CONTRACTS,
                 "public_egress_ip": EXPECTED_PUBLIC_EGRESS,
                 "public_egress_url": PUBLIC_EGRESS_URL,
+                "wireguard": {
+                    "interface": WIREGUARD_INTERFACE,
+                    "expected_dmit_mtu": EXPECTED_DMIT_WG1_MTU,
+                },
                 "root_max_used_percent": ROOT_MAX_USED_PERCENT,
                 "root_min_available_bytes": ROOT_MIN_AVAILABLE_BYTES,
                 "architecture": "linux/arm64",
@@ -313,9 +328,14 @@ def _run(
     label: str,
     timeout: int = 30,
     *,
+    operation: str,
     deadline: incremental_recovery.WallClockDeadline | None = None,
     heartbeat: Any | None = None,
 ) -> bytes:
+    # 中文 label 只用于错误诊断；heartbeat operation 属于机器审计字段，
+    # 必须使用固定 ASCII 标签，不能把诊断文本或命令参数直接写入心跳。
+    if not HEARTBEAT_OPERATION_RE.fullmatch(operation):
+        raise Arm64EnvironmentReceiptError("ARM64 探针 heartbeat operation 非法")
     active_deadline = deadline if deadline is not None else _ACTIVE_DEADLINE
     active_heartbeat = heartbeat if heartbeat is not None else _ACTIVE_HEARTBEAT
     try:
@@ -324,7 +344,7 @@ def _run(
                 argv,
                 timeout=timeout,
                 deadline=active_deadline,
-                operation=label,
+                operation=operation,
                 check=False,
                 capture_output=True,
                 heartbeat=active_heartbeat,
@@ -371,7 +391,11 @@ def _parse_default_route(raw: bytes, container: str) -> dict[str, str]:
 
 
 def _container_observation(name: str) -> dict[str, Any]:
-    inspect_raw = _run(["docker", "inspect", name], f"{name} docker inspect")
+    inspect_raw = _run(
+        ["docker", "inspect", name],
+        f"{name} docker inspect",
+        operation=f"arm64:docker-inspect:{name}",
+    )
     try:
         inspected = json.loads(inspect_raw)
     except json.JSONDecodeError as error:
@@ -418,6 +442,7 @@ def _container_observation(name: str) -> dict[str, Any]:
     route_raw = _run(
         ["docker", "exec", name, "cat", "/proc/net/route"],
         f"{name} 默认路由读取",
+        operation=f"arm64:default-route:{name}",
     )
     default_route = _parse_default_route(route_raw, name)
     egress_raw = _run(
@@ -438,6 +463,7 @@ def _container_observation(name: str) -> dict[str, Any]:
         ],
         f"{name} 公网出口查询",
         timeout=25,
+        operation=f"arm64:public-egress:{name}",
     )
     try:
         public_ip = str(ipaddress.ip_address(egress_raw.decode("ascii").strip()))
@@ -459,6 +485,67 @@ def _container_observation(name: str) -> dict[str, Any]:
             "docker_inspect": _sha256_bytes(inspect_raw),
             "proc_net_route": _sha256_bytes(route_raw),
         },
+    }
+
+
+def _wireguard_observation() -> dict[str, Any]:
+    """读取 ARM64 wg1 的持久配置与运行时 MTU，不暴露配置内容。"""
+
+    config = WIREGUARD_CONFIG
+    if config.is_symlink() or not config.is_file():
+        raise Arm64EnvironmentReceiptError("ARM64 wg1 配置不是可信普通文件")
+    metadata = config.stat()
+    if (
+        metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise Arm64EnvironmentReceiptError("ARM64 wg1 配置必须为 root:root 0600")
+    try:
+        raw = config.read_bytes()
+        text = raw.decode("utf-8")
+    except (OSError, UnicodeError) as error:
+        raise Arm64EnvironmentReceiptError("ARM64 wg1 配置不可读") from error
+
+    section: str | None = None
+    configured_values: list[int] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            continue
+        if section != "interface" or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip().lower() != "mtu":
+            continue
+        try:
+            configured_values.append(int(value.strip()))
+        except ValueError as error:
+            raise Arm64EnvironmentReceiptError("ARM64 wg1 配置 MTU 非整数") from error
+    if configured_values != [EXPECTED_DMIT_WG1_MTU]:
+        raise Arm64EnvironmentReceiptError(
+            f"ARM64 wg1 配置 MTU 必须唯一且等于 DMIT {EXPECTED_DMIT_WG1_MTU}"
+        )
+
+    runtime_path = Path(f"/sys/class/net/{WIREGUARD_INTERFACE}/mtu")
+    try:
+        runtime_mtu = int(runtime_path.read_text(encoding="ascii").strip())
+    except (OSError, UnicodeError, ValueError) as error:
+        raise Arm64EnvironmentReceiptError("ARM64 wg1 运行时 MTU 不可读") from error
+    if runtime_mtu != EXPECTED_DMIT_WG1_MTU:
+        raise Arm64EnvironmentReceiptError(
+            f"ARM64 wg1 运行时 MTU 与 DMIT {EXPECTED_DMIT_WG1_MTU} 不一致"
+        )
+    return {
+        "interface": WIREGUARD_INTERFACE,
+        "configured_mtu": configured_values[0],
+        "runtime_mtu": runtime_mtu,
+        "expected_dmit_mtu": EXPECTED_DMIT_WG1_MTU,
+        "config_path": str(config),
+        "config_sha256": _sha256_bytes(raw),
     }
 
 
@@ -498,6 +585,7 @@ def _collect_facts(*, phase: str, subject_id: str) -> dict[str, Any]:
             "available_bytes": available_bytes,
             "used_percent": used_percent,
         },
+        "wireguard": _wireguard_observation(),
         "containers": [
             _container_observation(name) for name in sorted(CONTAINER_CONTRACTS)
         ],
@@ -613,19 +701,26 @@ def validate_facts(
 ) -> dict[str, Any]:
     """严格校验原始事实并返回用于前后连续性比较的稳定身份。"""
 
+    producer_version = _validated_producer_version(
+        facts.get("collector"),
+        allow_legacy_replay=allow_legacy_replay,
+    )
+    fact_fields = {
+        "schema_version",
+        "phase",
+        "subject_id",
+        "observed_at_utc",
+        "contract_sha256",
+        "host",
+        "root_filesystem",
+        "containers",
+        "collector",
+    }
+    if producer_version == PRODUCER_VERSION:
+        fact_fields.add("wireguard")
     _expect(
         facts,
-        {
-            "schema_version",
-            "phase",
-            "subject_id",
-            "observed_at_utc",
-            "contract_sha256",
-            "host",
-            "root_filesystem",
-            "containers",
-            "collector",
-        },
+        fact_fields,
         "facts",
     )
     if facts.get("schema_version") != FACTS_SCHEMA:
@@ -634,7 +729,12 @@ def validate_facts(
         raise Arm64EnvironmentReceiptError("facts.phase 非法")
     _safe_id(facts.get("subject_id"), "facts.subject_id")
     _rfc3339(facts.get("observed_at_utc"), "facts.observed_at_utc")
-    if facts.get("contract_sha256") != contract_sha256():
+    expected_contract = (
+        contract_sha256()
+        if producer_version == PRODUCER_VERSION
+        else LEGACY_NETWORK_CONTRACT_SHA256
+    )
+    if facts.get("contract_sha256") != expected_contract:
         raise Arm64EnvironmentReceiptError("固定网络或资源合同摘要漂移")
     host = _expect(facts.get("host"), {"hostname", "architecture"}, "facts.host")
     if host.get("architecture") != "linux/arm64" or not isinstance(host.get("hostname"), str) or not host["hostname"]:
@@ -665,10 +765,31 @@ def validate_facts(
     normalized = [
         _validate_container(item, name) for item, name in zip(containers, expected_names, strict=True)
     ]
-    producer_version = _validated_producer_version(
-        facts.get("collector"),
-        allow_legacy_replay=allow_legacy_replay,
-    )
+    wireguard: dict[str, Any] | None = None
+    if producer_version == PRODUCER_VERSION:
+        wireguard = _expect(
+            facts.get("wireguard"),
+            {
+                "interface",
+                "configured_mtu",
+                "runtime_mtu",
+                "expected_dmit_mtu",
+                "config_path",
+                "config_sha256",
+            },
+            "wireguard",
+        )
+        if (
+            wireguard.get("interface") != WIREGUARD_INTERFACE
+            or wireguard.get("configured_mtu") != EXPECTED_DMIT_WG1_MTU
+            or wireguard.get("runtime_mtu") != EXPECTED_DMIT_WG1_MTU
+            or wireguard.get("expected_dmit_mtu") != EXPECTED_DMIT_WG1_MTU
+            or wireguard.get("config_path") != str(WIREGUARD_CONFIG)
+            or not SHA256_RE.fullmatch(str(wireguard.get("config_sha256", "")))
+        ):
+            raise Arm64EnvironmentReceiptError(
+                "ARM64 wg1 持久配置或运行时 MTU 与 DMIT 冻结值不一致"
+            )
     # Docker restart／compose recreate 会更换 container_id、EndpointID 和容器内接口名，
     # 但不会改变受管网络本身。候选抓包按设计会执行这两类操作；若把这些临时值纳入
     # 连续性身份，每次正常恢复都会被误判为网络污染。连续性只绑定真正不可变的镜像、
@@ -725,6 +846,8 @@ def validate_facts(
                 for item in normalized
             ],
         }
+        if wireguard is not None:
+            continuity_identity["wireguard"] = wireguard
     return {
         "producer_version": producer_version,
         "continuity_identity_sha256": _sha256_bytes(_canonical(continuity_identity)),

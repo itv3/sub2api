@@ -270,6 +270,20 @@ class CatalogNegativeTest(CatalogFixture):
         with self.assertRaisesRegex(catalog.EvidenceCatalogError, "未命中任何证据"):
             self._build()
 
+    def test_reports_all_missing_globs_in_one_matrix(self) -> None:
+        """一次列出全部缺口，禁止按首个失败逐项试错。"""
+
+        first = self.declaration["entries"][0]["rules"][0]
+        second = self.declaration["entries"][0]["rules"][1]
+        first["glob"] = "direct/absent-one/*.pcap"
+        second["glob"] = "mitm/absent-two/*.jsonl"
+        with self.assertRaises(catalog.EvidenceCatalogError) as caught:
+            self._build()
+        message = str(caught.exception)
+        self.assertIn("完整缺失矩阵共 2 项", message)
+        self.assertIn("direct/absent-one/*.pcap", message)
+        self.assertIn("mitm/absent-two/*.jsonl", message)
+
     def test_missing_rationale_rejected(self) -> None:
         del self.declaration["entries"][0]["rules"][0]["rationale"]
         with self.assertRaises(catalog.EvidenceCatalogError):
@@ -614,6 +628,45 @@ class Repository01491DeclarationTest(unittest.TestCase):
                     or rule["parser"] == "h1_request_stream",
                     f"{entry['job_id']} 的 {rule['glob']} 声明了 frame_labels，"
                     f"但既不派生 websocket_trace 也不是 h1_request_stream",
+                )
+
+
+class Codex0151MitmRootCoverageTest(unittest.TestCase):
+    """0.151 的两个通配 MITM Job 必须覆盖每个实际成功根。"""
+
+    def test_candidate_mitm_rules_cover_every_actual_root_once(self) -> None:
+        base = Path(__file__).resolve().parents[1]
+        declaration = catalog.load_label_declaration(
+            base / "codex_upgrade_evidence_labels_0_151_0.json",
+            expected_codex_version="0.151.0",
+        )
+        by_job = {entry["job_id"]: entry for entry in declaration["entries"]}
+        actual_roots = {
+            "candidate-core-mitm": (
+                "codex-http-s1-a2-run",
+                "codex-http-s2-a1-run",
+                "codex-http-s4-a1-run",
+                "codex-ws-s1-a1-run",
+                "codex-ws-s2-a1-run",
+                "codex-ws-s4-a1-run",
+            ),
+            "candidate-compact-mitm": (
+                "codex-compact-compact-a2-run",
+            ),
+        }
+        for job_id, root_names in actual_roots.items():
+            rules = by_job[job_id]["rules"]
+            for root_name in root_names:
+                applicable = [
+                    rule
+                    for rule in rules
+                    if not rule.get("root_suffix")
+                    or root_name.endswith(rule["root_suffix"])
+                ]
+                self.assertEqual(
+                    len(applicable),
+                    1,
+                    f"{job_id} 的实际根 {root_name} 必须且只能命中一条声明",
                 )
 
 

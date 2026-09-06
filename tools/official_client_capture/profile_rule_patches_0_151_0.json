@@ -1,0 +1,33 @@
+{
+  "active_profile_sha256": "a8ec3ccf43748bd225a9bd753fb2a240d3f5667da76ccd344e370294178ec2df",
+  "baseline_version": "0.149.1",
+  "rule_patches": [
+    {
+      "after": "(Ubuntu 24.4.0; aarch64)",
+      "before": "(Ubuntu 24.4.0; x86_64)",
+      "path": "/Surfaces/0/PlatformPrefix",
+      "rule_id": "SPEC-HDR-005"
+    },
+    {
+      "after": "(Ubuntu 24.4.0; aarch64)",
+      "before": "(Ubuntu 24.4.0; x86_64)",
+      "path": "/Surfaces/1/PlatformPrefix",
+      "rule_id": "SPEC-HDR-005"
+    },
+    {
+      "after": [
+        {
+          "Condition": "",
+          "Name": "pdf_c2pa_create_request",
+          "OmitWhen": "none",
+          "Required": false
+        }
+      ],
+      "before": null,
+      "path": "/Endpoints/3/Body/Fields",
+      "rule_id": "SPEC-EP-002"
+    }
+  ],
+  "schema_version": "codex-upgrade-profile-rule-patches/v1",
+  "target_version": "0.151.0"
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-stop-v1.json",
+  "title": "Codex 升级监督器停线收据",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_type", "reason", "detected_at_utc", "detected_at_epoch", "owner_pid", "owner_nonce", "campaign_id", "phase", "receipt_sha256"],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-supervisor-stop/v1"},
+    "event_type": {"type": "string", "minLength": 1, "maxLength": 64},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 512},
+    "detected_at_utc": {"type": "string", "format": "date-time"},
+    "detected_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "owner_pid": {"type": "integer", "minimum": 1},
+    "owner_nonce": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "campaign_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "phase": {"type": "string", "minLength": 1, "maxLength": 32},
+    "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

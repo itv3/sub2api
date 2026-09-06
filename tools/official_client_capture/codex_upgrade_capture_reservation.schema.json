@@ -79,6 +79,10 @@
         }
       }
     },
+    "campaign_lease": {
+      "description": "创建预约时绑定的 Campaign 持久租约摘要；不复制可变租约正文。",
+      "$ref": "#/$defs/campaignLeaseBinding"
+    },
     "reservation_digest": {
       "$ref": "#/$defs/sha256"
     }
@@ -128,6 +132,22 @@
     "rfc3339": {
       "type": "string",
       "format": "date-time"
+    },
+    "campaignLeaseBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "owner_nonce", "deadline_at_utc"],
+      "properties": {
+        "path": {
+          "const": ".campaign-lease.json"
+        },
+        "owner_nonce": {
+          "$ref": "#/$defs/sha256"
+        },
+        "deadline_at_utc": {
+          "$ref": "#/$defs/rfc3339"
+        }
+      }
     }
   }
 }

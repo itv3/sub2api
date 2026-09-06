@@ -8,6 +8,27 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/officialegress/bindingcontract"
 )
 
+func TestVersionRouteFrozenProfileIsHistoricalOnly(t *testing.T) {
+	const retiredDigest = "94071c8eb93cfd337ac6eabc291d878084e3dcec8a9e618e04e6f68792d1a7bc"
+	executable, archived, err := loadVersionRouteFrozenProfile(retiredDigest)
+	if err != nil || !archived || executable.Version() != "0.147.0" {
+		t.Fatalf("历史 version-route 冻结画像无效：archived=%v version=%s err=%v",
+			archived, executable.Version(), err)
+	}
+	for _, mode := range []ReleaseMode{ReleaseModeActive, ReleaseModePrevious} {
+		release, resolveErr := DefaultReleaseCatalog().Resolve(mode)
+		if resolveErr != nil {
+			t.Fatal(resolveErr)
+		}
+		if release.ProfileDigest() == retiredDigest || release.Version() == "0.147.0" {
+			t.Fatalf("历史证明画像被生产 selector 选中：mode=%s version=%s", mode, release.Version())
+		}
+	}
+	if _, found, loadErr := loadVersionRouteFrozenProfile(strings.Repeat("1", 64)); loadErr != nil || found {
+		t.Fatalf("未知历史画像未失败关闭：found=%v err=%v", found, loadErr)
+	}
+}
+
 func TestVersionRouteReceiptBindsCurrentProfilesThatContainEndpoint(t *testing.T) {
 	binding, ok := DefaultSinkCatalog().Resolve(SinkCodexQuotaWHAM)
 	if !ok || len(binding.Routes()) != 4 {

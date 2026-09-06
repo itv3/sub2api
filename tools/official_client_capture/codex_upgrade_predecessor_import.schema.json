@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-predecessor-import-v1.json",
-  "title": "Codex 同版本后继 Campaign 前序导入收据",
-  "description": "只读绑定前序 Campaign 的官方封存证据、批准分类、逐字复制闭集和可选放弃 attempt。每次 status、compare 与 accept 都必须从原始路径重放这些绑定。",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-predecessor-import-v9.json",
+  "title": "Codex Candidate 运行时场景纠正导入收据",
+  "description": "只读承接前序 official、分类和证据绑定，仅允许为固定五个 Candidate Job 新增 CODEX_BIN，并强制绑定当前完整 Job 演练。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,12 +14,15 @@
     "predecessor_campaign",
     "stages",
     "copied_files",
+    "configuration_transition",
+    "job_rehearsal_transition",
+    "target_scenario_transition",
     "abandoned_candidate_attempt",
     "receipt_digest"
   ],
   "properties": {
     "schema_version": {
-      "const": "codex-upgrade-predecessor-import/v1"
+      "const": "codex-upgrade-predecessor-import/v9"
     },
     "created_at_utc": {
       "type": "string",
@@ -42,11 +45,23 @@
     },
     "copied_files": {
       "type": "array",
-      "minItems": 10,
+      "minItems": 1,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/copiedFile"
       }
+    },
+    "configuration_transition": {
+      "$ref": "#/$defs/configurationTransition"
+    },
+    "job_rehearsal_transition": {
+      "$ref": "#/$defs/jobRehearsalTransition"
+    },
+    "target_scenario_transition": {
+      "$ref": "#/$defs/targetScenarioTransition"
+    },
+    "recovery_control_transition": {
+      "$ref": "#/$defs/recoveryControlTransition"
     },
     "abandoned_candidate_attempt": {
       "oneOf": [
@@ -79,6 +94,43 @@
     "absolutePath": {
       "type": "string",
       "pattern": "^/"
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "fileBindingWithBytes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     },
     "predecessorCampaign": {
       "type": "object",
@@ -184,6 +236,7 @@
             "plan_inputs",
             "plan_analysis",
             "approved_classification",
+            "runtime_target_scenario",
             "official_surface"
           ]
         },
@@ -199,6 +252,417 @@
         "bytes": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "accountTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "predecessor",
+        "successor",
+        "reason"
+      ],
+      "properties": {
+        "predecessor": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "successor": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "const": "operator_selected_active_account"
+        }
+      }
+    },
+    "configurationTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "dependentRequired": {
+        "live_attestation_compose_dir": [
+          "live_attestation_compose_files"
+        ],
+        "live_attestation_compose_files": [
+          "live_attestation_compose_dir"
+        ]
+      },
+      "required": [
+        "codex_account_id"
+      ],
+      "properties": {
+        "codex_account_id": {
+          "$ref": "#/$defs/accountTransition"
+        },
+        "live_attestation_compose_dir": {
+          "$ref": "#/$defs/runtimeConfigurationTransition"
+        },
+        "live_attestation_compose_files": {
+          "$ref": "#/$defs/runtimeConfigurationTransition"
+        }
+      }
+    },
+    "runtimeConfigurationTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "predecessor",
+        "successor",
+        "reason"
+      ],
+      "properties": {
+        "predecessor": {
+          "type": "string"
+        },
+        "successor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "const": "candidate_runtime_identity_correction"
+        }
+      }
+    },
+    "upgradeTimingControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ledger_dir",
+        "ledger_plan_sha256",
+        "receipt",
+        "upgrade_id",
+        "evidence_decision",
+        "checkpoint_head_sha256"
+      ],
+      "properties": {
+        "ledger_dir": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "ledger_plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "receipt": {
+          "$ref": "#/$defs/fileBindingWithBytes"
+        },
+        "upgrade_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "evidence_decision": {
+          "enum": [
+            "reuse",
+            "recapture"
+          ]
+        },
+        "checkpoint_head_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "arm64EnvironmentControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_root",
+        "receipt",
+        "subject_id",
+        "contract_sha256",
+        "continuity_identity_sha256"
+      ],
+      "properties": {
+        "evidence_root": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "receipt": {
+          "$ref": "#/$defs/fileBindingWithBytes"
+        },
+        "subject_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "continuity_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "jobRehearsalControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_root",
+        "receipt",
+        "preflight_campaign_id",
+        "preflight_campaign_manifest_sha256",
+        "execution_contract_sha256",
+        "runtime_identity_sha256",
+        "job_count",
+        "job_set_sha256"
+      ],
+      "properties": {
+        "evidence_root": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "receipt": {
+          "$ref": "#/$defs/fileBindingWithBytes"
+        },
+        "preflight_campaign_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "preflight_campaign_manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "execution_contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtime_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "job_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "job_set_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "controlReceipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upgrade_timing",
+        "arm64_environment",
+        "job_rehearsal"
+      ],
+      "properties": {
+        "upgrade_timing": {
+          "$ref": "#/$defs/upgradeTimingControl"
+        },
+        "arm64_environment": {
+          "$ref": "#/$defs/arm64EnvironmentControl"
+        },
+        "job_rehearsal": {
+          "$ref": "#/$defs/jobRehearsalControl"
+        }
+      }
+    },
+    "jobRehearsalTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "predecessor",
+        "successor"
+      ],
+      "properties": {
+        "reason": {
+          "const": "current_execution_contract_rehearsal"
+        },
+        "predecessor": {
+          "$ref": "#/$defs/jobRehearsalControl"
+        },
+        "successor": {
+          "$ref": "#/$defs/jobRehearsalControl"
+        }
+      }
+    },
+    "targetScenarioTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "predecessor",
+        "successor",
+        "changed_job_ids"
+      ],
+      "properties": {
+        "reason": {
+          "const": "candidate_codex_binary_binding_correction"
+        },
+        "predecessor": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "successor": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "changed_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "enum": [
+              "candidate-compact-direct",
+              "candidate-compact-mitm",
+              "candidate-core-direct",
+              "candidate-core-mitm",
+              "candidate-ws-handshake-repeat"
+            ]
+          }
+        }
+      }
+    },
+    "sourceStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "package_digest"
+      ],
+      "properties": {
+        "path": {
+          "const": "official/result.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "package_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "stageControlTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "source_stage",
+        "evaluation_transition",
+        "predecessor",
+        "successor"
+      ],
+      "properties": {
+        "reason": {
+          "const": "sealed_stage_control_recovery"
+        },
+        "source_stage": {
+          "$ref": "#/$defs/sourceStage"
+        },
+        "evaluation_transition": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "predecessor": {
+          "$ref": "#/$defs/controlReceipts"
+        },
+        "successor": {
+          "$ref": "#/$defs/controlReceipts"
+        }
+      }
+    },
+    "recoveryControlPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upgrade_timing",
+        "arm64_environment"
+      ],
+      "properties": {
+        "upgrade_timing": {
+          "$ref": "#/$defs/upgradeTimingControl"
+        },
+        "arm64_environment": {
+          "$ref": "#/$defs/arm64EnvironmentControl"
+        }
+      }
+    },
+    "stopCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ledger_dir",
+        "receipt",
+        "upgrade_id",
+        "active_phase",
+        "head_sequence",
+        "head_sha256",
+        "total_elapsed_seconds",
+        "total_live_request_count"
+      ],
+      "properties": {
+        "ledger_dir": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "receipt": {
+          "$ref": "#/$defs/fileBindingWithBytes"
+        },
+        "upgrade_id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "active_phase": {
+          "enum": [
+            "VC-0",
+            "VC-1",
+            "VC-2",
+            "VC-3",
+            "VC-4",
+            "VC-5",
+            "VC-6"
+          ]
+        },
+        "head_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "total_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total_live_request_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "recoveryControlTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "predecessor",
+        "stop_checkpoint",
+        "successor"
+      ],
+      "properties": {
+        "reason": {
+          "const": "stopped_ledger_recovery"
+        },
+        "predecessor": {
+          "$ref": "#/$defs/recoveryControlPair"
+        },
+        "stop_checkpoint": {
+          "$ref": "#/$defs/stopCheckpoint"
+        },
+        "source_transition": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "successor": {
+          "$ref": "#/$defs/recoveryControlPair"
+        }
+      }
+    },
+    "executionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executed_job_ids",
+        "scanned_bytes",
+        "live_request_count"
+      ],
+      "properties": {
+        "executed_job_ids": {
+          "const": []
+        },
+        "scanned_bytes": {
+          "const": 0
+        },
+        "live_request_count": {
+          "const": 0
         }
       }
     },

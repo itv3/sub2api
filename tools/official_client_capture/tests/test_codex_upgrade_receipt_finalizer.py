@@ -570,6 +570,34 @@ class ReceiptFinalizerTests(unittest.TestCase):
         replayed = finalizer.replay_receipt(output, self.root, "restoration")
         self.assertEqual(replayed["producer"], payload["producer"])
 
+    def test_replay_restoration_accepts_current_0151_historical_producer(self) -> None:
+        """真实 0.151 恢复 attempt 的旧 finalizer 摘要必须可只读重放。"""
+
+        historical_sha256 = (
+            "491cbf961309176dd73b0569df6afedb55ed270e6fc3ee695e9779f451e0760f"
+        )
+        self.assertIn(historical_sha256, finalizer.LEGACY_REPLAY_PRODUCER_HASHES)
+        self.assertEqual(self._run(self._restoration_argv()), 0)
+        output = self.root / "restoration-report.json"
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        payload["producer"]["tool"]["sha256"] = historical_sha256
+        core = {
+            key: value
+            for key, value in payload["producer"].items()
+            if key != "command_sha256"
+        }
+        payload["producer"]["command_sha256"] = hashlib.sha256(
+            json.dumps(
+                core,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        self._write_json(output.name, payload)
+        replayed = finalizer.replay_receipt(output, self.root, "restoration")
+        self.assertEqual(replayed["producer"], payload["producer"])
+
     def test_replay_restoration_rejects_unregistered_producer_hash(self) -> None:
         self.assertEqual(self._run(self._restoration_argv()), 0)
         output = self.root / "restoration-report.json"
@@ -853,6 +881,9 @@ class ReceiptFinalizerTests(unittest.TestCase):
         )
         response["client_id"] = "kilo-responses"
         self._write_json("kilo-response.json", response)
+        usage = json.loads(facts["usage_audit"].read_text(encoding="utf-8"))
+        usage["recorded_at_utc"] = "2026-07-31T00:00:02.500Z"
+        self._write_json("usage-audit.json", usage)
         arguments = self._kilo_argv(
             facts,
             output="kilo-responses.json",
@@ -864,6 +895,14 @@ class ReceiptFinalizerTests(unittest.TestCase):
         )
         self.assertEqual(payload["protocol"], "openai-responses")
         self.assertEqual(payload["entrypoint"], "/v1/responses")
+
+    def test_kilo_compatible_rejects_usage_before_http_response(self) -> None:
+        facts = self._kilo_facts()
+        usage = json.loads(facts["usage_audit"].read_text(encoding="utf-8"))
+        usage["recorded_at_utc"] = "2026-07-31T00:00:02.500Z"
+        self._write_json("usage-audit.json", usage)
+        self.assertEqual(self._run(self._kilo_argv(facts)), 2)
+        self.assertFalse((self.root / "kilo-compatible.json").exists())
 
     def test_kilo_binding_rejects_wrong_correlation(self) -> None:
         facts = self._kilo_facts()

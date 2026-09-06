@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/codex-upgrade-supervisor-state-v1.json",
+  "title": "Codex 升级独立监督器状态",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "supervisor_schema_version",
+    "campaign_id",
+    "phase",
+    "owner_pid",
+    "owner_nonce",
+    "started_at_utc",
+    "started_at_epoch",
+    "started_monotonic_ns",
+    "deadline_at_epoch",
+    "deadline_monotonic_ns",
+    "heartbeat_seconds",
+    "watchdog_timeout_seconds",
+    "ledger_interval_seconds",
+    "state",
+    "terminate_owner"
+  ],
+  "properties": {
+    "schema_version": {"const": "codex-upgrade-supervisor-state/v1"},
+    "supervisor_schema_version": {"const": "codex-upgrade-supervisor/v1"},
+    "campaign_id": {"$ref": "#/$defs/safeId"},
+    "phase": {"type": "string", "minLength": 1, "maxLength": 32},
+    "owner_pid": {"type": "integer", "minimum": 1},
+    "owner_nonce": {"$ref": "#/$defs/nonce"},
+    "started_at_utc": {"type": "string", "format": "date-time"},
+    "started_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "started_monotonic_ns": {"type": "integer", "minimum": 0},
+    "deadline_at_epoch": {"type": "number", "exclusiveMinimum": 0},
+    "deadline_monotonic_ns": {"type": "integer", "minimum": 1},
+    "heartbeat_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "watchdog_timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "ledger_interval_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "state": {"enum": ["running", "stopped", "failed", "audit-incomplete", "watchdog-aborted"]},
+    "terminate_owner": {"type": "boolean"},
+    "monitor_pid": {"type": "integer", "minimum": 1},
+    "terminal_at_utc": {"type": "string", "format": "date-time"},
+    "terminal_at_epoch": {"type": "number", "exclusiveMinimum": 0}
+  },
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "nonce": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

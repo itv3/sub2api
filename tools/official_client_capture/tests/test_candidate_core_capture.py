@@ -225,3 +225,53 @@ class MitmMatrixProxyHostTest(unittest.TestCase):
         )
         self.assertIn("'$capture_container'", insert)
         self.assertNotIn("'capture-cli'", insert)
+
+
+class MitmMatrixCodexIsolationTest(unittest.TestCase):
+    """MITM Job 必须隔离 0.151 的插件／MCP 后台流量并保留足够时限。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = (
+            Path(__file__).resolve().parents[1]
+            / "run_sub2api_openai_mitm_matrix.sh"
+        ).read_text()
+
+    def test_uses_isolated_codex_home_for_both_drivers(self) -> None:
+        self.assertIn(
+            'isolated_codex_home="$capture_root/runtime/codex-mitm-home-$window_id"',
+            self.source,
+        )
+        self.assertGreaterEqual(
+            self.source.count('-e CODEX_HOME="$container_codex_home"'),
+            2,
+        )
+        self.assertIn("plugins = false", self.source)
+        self.assertIn('rm -rf -- "$isolated_codex_home"', self.source)
+
+    def test_defines_capture_mount_before_container_home(self) -> None:
+        assignment = "capture_mount=${CAPTURE_MOUNT:-/capture}"
+        use = 'container_codex_home="$capture_mount/runtime/codex-mitm-home-$window_id"'
+        self.assertIn(assignment, self.source)
+        self.assertIn(use, self.source)
+        self.assertLess(self.source.index(assignment), self.source.index(use))
+
+    def test_mitm_scenario_timeout_has_explicit_floor(self) -> None:
+        self.assertIn(
+            "scenario_timeout_seconds=${SCENARIO_TIMEOUT_SECONDS:-120}",
+            self.source,
+        )
+        self.assertIn("scenario_timeout_seconds < 120", self.source)
+        self.assertNotIn("--timeout 70", self.source)
+
+    def test_each_subject_scenario_has_an_independent_checkpoint(self) -> None:
+        self.assertIn("mitm_scenario_checkpoint.py", self.source)
+        self.assertIn(
+            'run_id="$run_id_prefix-$subject-$scenario-a$attempt_index-$window_id"',
+            self.source,
+        )
+        self.assertIn('-e CAPTURE_SCENARIO="$scenario"', self.source)
+        self.assertIn("incremental_noop=true", self.source)
+        self.assertIn("pcap_scanned_bytes=0", self.source)
+        self.assertIn("preserve_active_failure()", self.source)
+        self.assertNotIn("WS pcap", self.source)

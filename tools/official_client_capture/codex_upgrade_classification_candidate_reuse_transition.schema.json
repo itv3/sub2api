@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schemas/classification-candidate-reuse-transition-v1.json",
+  "title": "分类事实纠正 Candidate 零执行复用 Transition",
+  "description": "只允许已批准的 classification_fact_correction 后继承接直接前序九项全部通过的 Candidate 结果。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "approved_at_utc",
+    "preview",
+    "transition_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "classification-candidate-reuse-transition/v1"
+    },
+    "status": {
+      "const": "approved"
+    },
+    "approved_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "preview": {
+      "type": "object",
+      "description": "批准前实时生成且自摘要闭合的零请求预览。"
+    },
+    "transition_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

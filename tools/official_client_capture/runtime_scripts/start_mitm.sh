@@ -20,6 +20,13 @@ capture_scenario=${CAPTURE_SCENARIO:?必须提供 CAPTURE_SCENARIO}
 capture_target_hosts=${CAPTURE_TARGET_HOSTS:?必须提供 CAPTURE_TARGET_HOSTS}
 capture_host_scope=${CAPTURE_HOST_SCOPE:-targets}
 capture_fault_spec=${CAPTURE_FAULT_SPEC:-}
+fingerprint_proxy_bin=${CAPTURE_FINGERPRINT_PROXY_BIN:-}
+codex_profile=${CAPTURE_CODEX_PROFILE:-}
+codex_version=${CAPTURE_CODEX_VERSION:-}
+fingerprint_proxy_port=${CAPTURE_FINGERPRINT_PROXY_PORT:-18082}
+fingerprint_tcp_max_segment=${CAPTURE_FINGERPRINT_TCP_MAXSEG:-1368}
+ingress_port=${CAPTURE_INGRESS_PORT:-18081}
+pair_runner="$tool_root/runtime_scripts/run_fingerprint_mitm_pair.sh"
 
 safe_id='^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
 if [[ ! $run_id =~ $safe_id || ! $subject =~ $safe_id || ! $capture_scenario =~ $safe_id ]]; then
@@ -50,6 +57,30 @@ if [[ ! $mitm_port =~ ^[0-9]+$ ]] || (( mitm_port < 1024 || mitm_port > 65535 ))
   echo "CAPTURE_MITM_PORT 超出合法范围。" >&2
   exit 2
 fi
+fingerprint_mode=0
+if [[ -n $fingerprint_proxy_bin || -n $codex_profile || -n $codex_version ]]; then
+  fingerprint_mode=1
+  if [[ -z $fingerprint_proxy_bin || -z $codex_profile || -z $codex_version ]]; then
+    echo "指纹转发模式必须同时提供转发器、画像和目标版本。" >&2
+    exit 2
+  fi
+  if [[ ! $fingerprint_proxy_port =~ ^[0-9]+$ ]] || (( fingerprint_proxy_port < 1024 || fingerprint_proxy_port > 65535 )); then
+    echo "CAPTURE_FINGERPRINT_PROXY_PORT 超出合法范围。" >&2
+    exit 2
+  fi
+  if [[ ! $ingress_port =~ ^[0-9]+$ ]] || (( ingress_port < 1024 || ingress_port > 65535 )); then
+    echo "CAPTURE_INGRESS_PORT 超出合法范围。" >&2
+    exit 2
+  fi
+  if [[ $fingerprint_proxy_port == "$mitm_port" || $fingerprint_proxy_port == "$ingress_port" ]]; then
+    echo "指纹转发器端口不得与 MITM 或 Ingress 端口相同。" >&2
+    exit 2
+  fi
+  if [[ ! $fingerprint_tcp_max_segment =~ ^[0-9]+$ ]] || (( fingerprint_tcp_max_segment < 536 || fingerprint_tcp_max_segment > 65495 )); then
+    echo "CAPTURE_FINGERPRINT_TCP_MAXSEG 必须为 536～65495 的整数。" >&2
+    exit 2
+  fi
+fi
 for path in "$mitmdump_bin" "$mitm_addon"; do
   if [[ -L $path || ! -f $path ]]; then
     echo "MITM 运行文件不存在或不可信：$path" >&2
@@ -59,6 +90,18 @@ done
 if [[ ! -x $mitmdump_bin || ! -d $mitm_confdir || -L $mitm_confdir ]]; then
   echo "MITM 可执行文件或 CA 目录不可用。" >&2
   exit 1
+fi
+if [[ $fingerprint_mode == 1 ]]; then
+  for path in "$fingerprint_proxy_bin" "$codex_profile" "$pair_runner"; do
+    if [[ -L $path || ! -f $path ]]; then
+      echo "指纹转发运行文件不存在或不可信：$path" >&2
+      exit 1
+    fi
+  done
+  if [[ ! -x $fingerprint_proxy_bin || ! -x $pair_runner ]]; then
+    echo "指纹转发运行文件不可执行。" >&2
+    exit 1
+  fi
 fi
 
 install -d -m 0700 "$state_root"
@@ -88,23 +131,48 @@ fi
 install -d -m 0700 "$output_dir"
 log_path="$output_dir/mitmdump.log"
 
-setsid env \
-  CAPTURE_TASK="$capture_task" \
-  CAPTURE_BOUNDARY="$capture_boundary" \
-  CAPTURE_RUN_ID="$run_id" \
-  CAPTURE_SUBJECT="$subject" \
-  CAPTURE_SCENARIO="$capture_scenario" \
-  CAPTURE_OUTPUT_DIR="$output_dir" \
-  CAPTURE_TARGET_HOSTS="$capture_target_hosts" \
-  CAPTURE_HOST_SCOPE="$capture_host_scope" \
-  CAPTURE_FAULT_SPEC="$capture_fault_spec" \
-  "$mitmdump_bin" \
-  --listen-host 0.0.0.0 \
-  --listen-port "$mitm_port" \
-  --set "confdir=$mitm_confdir" \
-  --set block_global=false \
-  -s "$mitm_addon" \
-  >"$log_path" 2>&1 </dev/null &
+if [[ $fingerprint_mode == 1 ]]; then
+  setsid env \
+    CAPTURE_TASK="$capture_task" \
+    CAPTURE_BOUNDARY="$capture_boundary" \
+    CAPTURE_RUN_ID="$run_id" \
+    CAPTURE_SUBJECT="$subject" \
+    CAPTURE_SCENARIO="$capture_scenario" \
+    CAPTURE_OUTPUT_DIR="$output_dir" \
+    CAPTURE_TARGET_HOSTS="$capture_target_hosts" \
+    CAPTURE_HOST_SCOPE="$capture_host_scope" \
+    CAPTURE_FAULT_SPEC="$capture_fault_spec" \
+    CAPTURE_FINGERPRINT_PROXY_BIN="$fingerprint_proxy_bin" \
+    CAPTURE_CODEX_PROFILE="$codex_profile" \
+    CAPTURE_CODEX_VERSION="$codex_version" \
+    CAPTURE_FINGERPRINT_PROXY_PORT="$fingerprint_proxy_port" \
+    CAPTURE_FINGERPRINT_TCP_MAXSEG="$fingerprint_tcp_max_segment" \
+    CAPTURE_INGRESS_PORT="$ingress_port" \
+    CAPTURE_MITMDUMP_BIN="$mitmdump_bin" \
+    CAPTURE_MITM_ADDON="$mitm_addon" \
+    CAPTURE_MITM_CONFDIR="$mitm_confdir" \
+    CAPTURE_MITM_PORT="$mitm_port" \
+    "$pair_runner" \
+    >"$log_path" 2>&1 </dev/null &
+else
+  setsid env \
+    CAPTURE_TASK="$capture_task" \
+    CAPTURE_BOUNDARY="$capture_boundary" \
+    CAPTURE_RUN_ID="$run_id" \
+    CAPTURE_SUBJECT="$subject" \
+    CAPTURE_SCENARIO="$capture_scenario" \
+    CAPTURE_OUTPUT_DIR="$output_dir" \
+    CAPTURE_TARGET_HOSTS="$capture_target_hosts" \
+    CAPTURE_HOST_SCOPE="$capture_host_scope" \
+    CAPTURE_FAULT_SPEC="$capture_fault_spec" \
+    "$mitmdump_bin" \
+    --listen-host 0.0.0.0 \
+    --listen-port "$mitm_port" \
+    --set "confdir=$mitm_confdir" \
+    --set block_global=false \
+    -s "$mitm_addon" \
+    >"$log_path" 2>&1 </dev/null &
+fi
 pid=$!
 pgid=$pid
 chmod 0600 "$log_path"

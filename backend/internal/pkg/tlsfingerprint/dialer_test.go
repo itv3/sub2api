@@ -504,3 +504,53 @@ func TestCodexExec0144ClientHelloMarshals(t *testing.T) {
 		t.Fatal("codex profile 必须在 ALPN 中声明 h2")
 	}
 }
+
+// TestCodexHTTP0151ClientHelloMatchesOfficialWireShape 验证当前 Codex HTTP
+// native-tls 画像经 uTLS 生成后，仍与 ARM64 官方 0.151 抓包的 ClientHello
+// 长度和固定字段一致。官方抓包的 TLS record payload 为 1537 字节，其中
+// handshake body 为 1533 字节；这个门禁可以发现“字段列表相同、实际编码不同”。
+func TestCodexHTTP0151ClientHelloMatchesOfficialWireShape(t *testing.T) {
+	profile := &Profile{
+		Name: "codex_http_0151_wire_shape",
+		CipherSuites: []uint16{
+			0x1302, 0x1303, 0x1301, 0xc02c, 0xc030, 0x009f, 0xcca9, 0xcca8,
+			0xccaa, 0xc02b, 0xc02f, 0x009e, 0xc024, 0xc028, 0x006b, 0xc023,
+			0xc027, 0x0067, 0xc00a, 0xc014, 0x0039, 0xc009, 0xc013, 0x0033,
+			0x009d, 0x009c, 0x003d, 0x003c, 0x0035, 0x002f,
+		},
+		Curves: []uint16{
+			0x11ec, 0x001d, 0x0017, 0x001e, 0x0018, 0x0019, 0x0100, 0x0101,
+		},
+		PointFormats: []uint16{0},
+		SignatureAlgorithms: []uint16{
+			0x0905, 0x0906, 0x0904, 0x0403, 0x0503, 0x0603, 0x0807, 0x0808,
+			0x081a, 0x081b, 0x081c, 0x0809, 0x080a, 0x080b, 0x0804, 0x0805,
+			0x0806, 0x0401, 0x0501, 0x0601, 0x0303, 0x0301, 0x0302, 0x0402,
+			0x0502, 0x0602,
+		},
+		SupportedVersions: []uint16{utls.VersionTLS13, utls.VersionTLS12},
+		KeyShareGroups:    []uint16{0x11ec, 0x001d},
+		PSKModes:          []uint16{1},
+		Extensions:        []uint16{0xff01, 0, 11, 10, 35, 22, 23, 13, 43, 45, 51},
+		TLSVersMin:        uint16(utls.VersionTLS12),
+		TLSVersMax:        uint16(utls.VersionTLS13),
+	}
+	spec := buildClientHelloSpecFromProfile(profile)
+	clientConn, serverConn := net.Pipe()
+	defer func() { _ = clientConn.Close() }()
+	defer func() { _ = serverConn.Close() }()
+	uconn := utls.UClient(clientConn, &utls.Config{ServerName: "chatgpt.com"}, utls.HelloCustom)
+	if err := uconn.ApplyPreset(spec); err != nil {
+		t.Fatalf("应用 0.151 ClientHello 失败：%v", err)
+	}
+	if err := uconn.BuildHandshakeState(); err != nil {
+		t.Fatalf("生成 0.151 ClientHello 失败：%v", err)
+	}
+	raw := uconn.HandshakeState.Hello.Raw
+	if len(raw) != 1537 {
+		t.Fatalf("0.151 ClientHello 长度 = %d，官方抓包为 1537", len(raw))
+	}
+	if len(raw) <= 38 || raw[0] != 1 || raw[4] != 0x03 || raw[5] != 0x03 || raw[38] != 32 {
+		t.Fatalf("0.151 ClientHello 固定头字段与官方抓包不一致")
+	}
+}

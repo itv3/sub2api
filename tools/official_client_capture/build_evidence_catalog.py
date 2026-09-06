@@ -311,12 +311,24 @@ def build_catalog(
     artifacts: list[dict[str, Any]] = []
     claimed_targets: set[str] = set()
     receipt_paths: dict[tuple[str, str], dict[str, set[str]]] = {}
+    root_inventory: list[
+        tuple[str, str, Path, list[tuple[Mapping[str, Any], list[str]]]]
+    ] = []
+    validation_issues: list[str] = []
 
+    # 先完整检查全部根和全部规则，再开始构造任何计划。这样一次失败会给出完整
+    # 缺失矩阵，不会按首个 glob 逐次暴露问题并诱发反复重跑。
     for job_id in sorted(job_roots):
-        matched_any = False
         for prefix, root in job_roots[job_id]:
-            available = _relative_files(root)
             root_name = root.resolve(strict=False).name
+            try:
+                available = _relative_files(root)
+            except EvidenceCatalogError as error:
+                validation_issues.append(
+                    f"job={job_id} root={root_name} issue=root-invalid detail={error}"
+                )
+                root_inventory.append((job_id, prefix, root, []))
+                continue
             applicable = [
                 rule
                 for rule in by_job[job_id]["rules"]
@@ -324,17 +336,28 @@ def build_catalog(
                 or root_name.endswith(rule["root_suffix"])
             ]
             if not applicable:
-                raise EvidenceCatalogError(
-                    f"job {job_id} 的证据根 {root_name} 没有任何适用声明规则"
+                validation_issues.append(
+                    f"job={job_id} root={root_name} issue=no-applicable-rule"
                 )
+                root_inventory.append((job_id, prefix, root, []))
+                continue
+            matched_rules: list[tuple[Mapping[str, Any], list[str]]] = []
             for rule in applicable:
                 glob = rule["glob"]
                 receipt_role = rule.get("receipt_role")
                 allowed_by_receipt: set[str] | None = None
                 if receipt_role is not None:
                     cache_key = (job_id, str(root.resolve(strict=True)))
-                    if cache_key not in receipt_paths:
-                        receipt_paths[cache_key] = _receipt_role_paths(root, job_id)
+                    try:
+                        if cache_key not in receipt_paths:
+                            receipt_paths[cache_key] = _receipt_role_paths(root, job_id)
+                    except EvidenceCatalogError as error:
+                        validation_issues.append(
+                            f"job={job_id} root={root_name} glob={glob} "
+                            f"receipt_role={receipt_role} issue=receipt-invalid "
+                            f"detail={error}"
+                        )
+                        continue
                     allowed_by_receipt = receipt_paths[cache_key][receipt_role]
                 hits = sorted(
                     name
@@ -348,80 +371,90 @@ def build_catalog(
                         if receipt_role is not None
                         else glob
                     )
-                    raise EvidenceCatalogError(
-                        f"job {job_id} 根 {root_name} 的声明 glob 未命中任何证据，"
-                        f"编目不完整：{selector}"
+                    validation_issues.append(
+                        f"job={job_id} root={root_name} glob={selector} "
+                        "issue=glob-unmatched（未命中任何证据）"
                     )
-                matched_any = True
-                for relative in hits:
-                    target = f"{prefix}/{relative}"
-                    validate_relative_path(target, f"job {job_id} 的收口目标")
-                    if target in claimed_targets:
-                        # 同一原件被多条规则引用（不同场景／kind）：只收口一次，
-                        # 但把新场景并入已登记 artifact 的 scenario_ids。
-                        for existing in artifacts:
-                            if existing["path"] == target:
-                                merged = sorted(
-                                    set(existing["scenario_ids"])
-                                    | set(rule["scenario_ids"])
-                                )
-                                existing["scenario_ids"] = merged
-                                break
-                    else:
-                        claimed_targets.add(target)
-                        bundle_entries.append(
-                            {"root": prefix, "path": relative, "target": target}
-                        )
-                        artifacts.append(
-                            {
-                                "path": target,
-                                "kind": rule["kind"],
-                                "parser": rule["parser"],
-                                "scenario_ids": list(rule["scenario_ids"]),
-                                "labels": dict(rule["labels"]),
-                            }
-                        )
-                    derive = rule.get("derive")
-                    if derive is None:
-                        continue
-                    for scenario_id in rule["scenario_ids"]:
-                        stem = f"{prefix}_{relative}".replace("/", "_")
-                        derived_target = (
-                            f"{DERIVED_PREFIX}{scenario_id}/{derive['kind']}/"
-                            f"{stem}.observation.jsonl"
-                        )
-                        if derived_target in claimed_targets:
-                            raise EvidenceCatalogError(
-                                f"派生目标重复：{derived_target}"
+                    continue
+                matched_rules.append((rule, hits))
+            root_inventory.append((job_id, prefix, root, matched_rules))
+
+    if validation_issues:
+        matrix = "\n".join(f"- {issue}" for issue in validation_issues)
+        raise EvidenceCatalogError(
+            f"编目不完整：完整缺失矩阵共 {len(validation_issues)} 项：\n{matrix}"
+        )
+
+    for job_id, prefix, _root, matched_rules in root_inventory:
+        for rule, hits in matched_rules:
+            relative: str
+            for relative in hits:
+                target = f"{prefix}/{relative}"
+                validate_relative_path(target, f"job {job_id} 的收口目标")
+                if target in claimed_targets:
+                    # 同一原件被多条规则引用（不同场景／kind）：只收口一次，
+                    # 但把新场景并入已登记 artifact 的 scenario_ids。
+                    for existing in artifacts:
+                        if existing["path"] == target:
+                            merged = sorted(
+                                set(existing["scenario_ids"])
+                                | set(rule["scenario_ids"])
                             )
-                        claimed_targets.add(derived_target)
-                        derive_entries.append(
-                            {
-                                "source": target,
-                                "parser": derive["parser"],
-                                "scenario_id": scenario_id,
-                                "kind": derive["kind"],
-                                "target": derived_target,
-                                "connection_id": Path(relative).stem,
-                            }
-                        )
-                        derived_artifact = {
-                            "path": derived_target,
-                            "kind": derive["kind"],
-                            "parser": "observation_jsonl",
-                            "scenario_ids": [scenario_id],
+                            existing["scenario_ids"] = merged
+                            break
+                else:
+                    claimed_targets.add(target)
+                    bundle_entries.append(
+                        {"root": prefix, "path": relative, "target": target}
+                    )
+                    artifacts.append(
+                        {
+                            "path": target,
+                            "kind": rule["kind"],
+                            "parser": rule["parser"],
+                            "scenario_ids": list(rule["scenario_ids"]),
                             "labels": dict(rule["labels"]),
                         }
-                        # 帧级标签只挂在产出 websocket_frame 观测的派生 artifact 上，
-                        # 由断言加载器按 data.frame_index 叠加到帧事实。
-                        if rule.get("frame_labels"):
-                            derived_artifact["frame_labels"] = {
-                                key: dict(value)
-                                for key, value in rule["frame_labels"].items()
-                            }
-                        artifacts.append(derived_artifact)
-        if not matched_any:
-            raise EvidenceCatalogError(f"job {job_id} 未编目任何证据")
+                    )
+                derive = rule.get("derive")
+                if derive is None:
+                    continue
+                for scenario_id in rule["scenario_ids"]:
+                    stem = f"{prefix}_{relative}".replace("/", "_")
+                    derived_target = (
+                        f"{DERIVED_PREFIX}{scenario_id}/{derive['kind']}/"
+                        f"{stem}.observation.jsonl"
+                    )
+                    if derived_target in claimed_targets:
+                        raise EvidenceCatalogError(
+                            f"派生目标重复：{derived_target}"
+                        )
+                    claimed_targets.add(derived_target)
+                    derive_entries.append(
+                        {
+                            "source": target,
+                            "parser": derive["parser"],
+                            "scenario_id": scenario_id,
+                            "kind": derive["kind"],
+                            "target": derived_target,
+                            "connection_id": Path(relative).stem,
+                        }
+                    )
+                    derived_artifact = {
+                        "path": derived_target,
+                        "kind": derive["kind"],
+                        "parser": "observation_jsonl",
+                        "scenario_ids": [scenario_id],
+                        "labels": dict(rule["labels"]),
+                    }
+                    # 帧级标签只挂在产出 websocket_frame 观测的派生 artifact 上，
+                    # 由断言加载器按 data.frame_index 叠加到帧事实。
+                    if rule.get("frame_labels"):
+                        derived_artifact["frame_labels"] = {
+                            key: dict(value)
+                            for key, value in rule["frame_labels"].items()
+                        }
+                    artifacts.append(derived_artifact)
 
     artifacts.sort(key=lambda item: item["path"])
     bundle_entries.sort(key=lambda item: item["target"])

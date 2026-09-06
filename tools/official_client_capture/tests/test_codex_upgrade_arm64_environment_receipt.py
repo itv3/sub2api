@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools.official_client_capture import codex_upgrade_arm64_environment_receipt as receipt
 from tools.official_client_capture.tests.control_receipt_fixtures import (
@@ -43,6 +45,8 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
             "version": "1",
         }
         facts["collector"] = producer
+        facts.pop("wireguard", None)
+        facts["contract_sha256"] = receipt.LEGACY_NETWORK_CONTRACT_SHA256
         self._rewrite(facts_path, facts)
         legacy_receipt = receipt._build_receipt(
             root,
@@ -68,6 +72,48 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
             self.assertEqual(replayed["phase"], "attempt_before")
             self.assertEqual(replayed["resource_gate"]["passed"], True)
 
+    def test_bounded_probe_separates_diagnostic_label_from_heartbeat_operation(
+        self,
+    ) -> None:
+        observed: list[str] = []
+
+        def heartbeat(operation: str) -> None:
+            operation.encode("ascii")
+            observed.append(operation)
+
+        def bounded(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            callback = kwargs["heartbeat"]
+            assert callable(callback)
+            callback(kwargs["operation"])
+            return subprocess.CompletedProcess(argv, 0, b"ok", b"")
+
+        with mock.patch.object(
+            receipt.incremental_recovery,
+            "run_bounded_subprocess",
+            side_effect=bounded,
+        ):
+            output = receipt._run(
+                ["probe"],
+                "面向人的中文错误标签",
+                operation="arm64:docker-inspect:capture-cli",
+                deadline=mock.Mock(),
+                heartbeat=heartbeat,
+            )
+
+        self.assertEqual(output, b"ok")
+        self.assertEqual(observed, ["arm64:docker-inspect:capture-cli"])
+
+    def test_probe_rejects_non_ascii_heartbeat_operation(self) -> None:
+        with self.assertRaisesRegex(
+            receipt.Arm64EnvironmentReceiptError,
+            "heartbeat operation",
+        ):
+            receipt._run(
+                ["probe"],
+                "诊断标签",
+                operation="ARM64 公网出口查询",
+            )
+
     def test_wrong_fixed_ip_gateway_or_public_egress_fails_closed(self) -> None:
         mutations = (
             ("selected_network", "ipv4_address", "172.25.0.99", "固定网络坐标"),
@@ -85,6 +131,24 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
                 container[group][field] = value
                 self._rewrite(path, facts)
                 with self.assertRaisesRegex(receipt.Arm64EnvironmentReceiptError, message):
+                    receipt.build_receipt(root, "p0-facts.json")
+
+    def test_wg1_mtu_must_match_frozen_dmit_value(self) -> None:
+        for field, value in (
+            ("configured_mtu", 8920),
+            ("runtime_mtu", 8920),
+            ("expected_dmit_mtu", 8920),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                root.chmod(0o700)
+                path, facts = self._fixture(root)
+                facts["wireguard"][field] = value
+                self._rewrite(path, facts)
+                with self.assertRaisesRegex(
+                    receipt.Arm64EnvironmentReceiptError,
+                    "MTU",
+                ):
                     receipt.build_receipt(root, "p0-facts.json")
 
     def test_disk_watermarks_fail_closed(self) -> None:
@@ -216,6 +280,8 @@ class Arm64EnvironmentReceiptTests(unittest.TestCase):
             }
             facts = json.loads(facts_path.read_text(encoding="utf-8"))
             facts["collector"] = producer
+            facts.pop("wireguard", None)
+            facts["contract_sha256"] = receipt.LEGACY_NETWORK_CONTRACT_SHA256
             self._rewrite(facts_path, facts)
             legacy_receipt = receipt._build_receipt(
                 root,

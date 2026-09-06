@@ -162,6 +162,10 @@
       "description": "评估工具 transition 的受控绑定；失败源 attempt 仅授权 capture-run，补跑闭集完成的新 attempt 承接同一绑定后才可进行离线 seal/compare/accept。",
       "$ref": "#/$defs/fileBinding"
     },
+    "classification_candidate_reuse_transition": {
+      "description": "分类事实纠正后继对直接前序九项 Candidate 结果的零执行复用授权。",
+      "$ref": "#/$defs/fileBinding"
+    },
     "incremental_plan": {
       "$ref": "#/$defs/attemptIncrementalPlan"
     },
@@ -231,13 +235,24 @@
     },
     {
       "if": {
-        "properties": {
-          "status": {
-            "const": "awaiting_receipts"
+        "allOf": [
+          {
+            "properties": {
+              "status": {
+                "const": "awaiting_receipts"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "classification_candidate_reuse_transition"
+              ]
+            }
           }
-        },
-        "required": [
-          "status"
         ]
       },
       "then": {
@@ -277,6 +292,57 @@
                 }
               }
             ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "classification_candidate_reuse_transition"
+        ]
+      },
+      "then": {
+        "required": [
+          "incremental_plan",
+          "watchdog",
+          "job_checkpoint"
+        ],
+        "properties": {
+          "phase": {
+            "const": "candidate"
+          },
+          "status": {
+            "const": "awaiting_receipts"
+          },
+          "binary_verification": {
+            "type": "null"
+          },
+          "execution_error": {
+            "type": "null"
+          },
+          "restoration_error": {
+            "type": "null"
+          },
+          "environment": {
+            "type": "object",
+            "properties": {
+              "before_probe": {
+                "type": "null"
+              },
+              "after_probe": {
+                "type": "null"
+              },
+              "restoration_report": {
+                "type": "null"
+              },
+              "arm64_before_receipt": {
+                "type": "null"
+              },
+              "arm64_after_receipt": {
+                "type": "null"
+              }
+            }
           }
         }
       }
@@ -1054,6 +1120,11 @@
         },
         "tool_component_digests": {
           "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/sha256"}
+        },
+        "tool_dependency_files": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/relativePath"},
           "additionalProperties": {"$ref": "#/$defs/sha256"}
         },
         "input_sha256": {

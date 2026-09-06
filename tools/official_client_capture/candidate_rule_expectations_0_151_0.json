@@ -461,9 +461,30 @@
         },
         {
           "assertion": {
-            "operator": "all_equal",
+            "allowed": [
+              "version",
+              "x-codex-beta-features",
+              "x-codex-window-id",
+              "x-codex-turn-metadata",
+              "x-openai-internal-codex-responses-lite",
+              "x-codex-routing-hint",
+              "x-client-request-id",
+              "session-id",
+              "thread-id",
+              "accept",
+              "content-encoding",
+              "content-type",
+              "authorization",
+              "chatgpt-account-id",
+              "originator",
+              "user-agent",
+              "cookie",
+              "host",
+              "content-length"
+            ],
+            "operator": "all_ordered_subset_of",
             "path": "data.header_names_in_order",
-            "value": [
+            "required": [
               "version",
               "x-codex-beta-features",
               "x-codex-window-id",

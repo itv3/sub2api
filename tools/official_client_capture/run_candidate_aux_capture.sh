@@ -35,6 +35,10 @@ elif [[ $candidate_a14_c2pa_sequence != negative ]]; then
   echo "Codex <0.151.0 的 CANDIDATE_A14_C2PA_SEQUENCE 只能是 negative。" >&2
   exit 2
 fi
+if [[ -z ${LIVE_ATTESTATION_COMPOSE_DIR:-} || -z ${LIVE_ATTESTATION_COMPOSE_FILES:-} ]]; then
+  echo "candidate-frozen-aux 必须冻结 Live attestation compose 目录和文件。" >&2
+  exit 2
+fi
 
 capture_container=${CAPTURE_CONTAINER:-capture-cli}
 service_container=${SERVICE_CONTAINER:-sub2apiplus}
@@ -224,10 +228,13 @@ prepare_live_attestation_compose_args() {
 
 deploy_with_live_attestation() {
   local expires_at
-  [[ -n ${LIVE_ATTESTATION_COMPOSE_DIR:-} && -n ${LIVE_ATTESTATION_COMPOSE_FILES:-} ]] || return 0
+  if [[ -z ${LIVE_ATTESTATION_COMPOSE_DIR:-} || -z ${LIVE_ATTESTATION_COMPOSE_FILES:-} ]]; then
+    echo "缺少 Live attestation compose 目录或文件，拒绝继续 A11～A14。" >&2
+    return 1
+  fi
   prepare_live_attestation_compose_args || return 1
   group_id=$(db_query "select group_id from api_keys where id = $api_key_id")
-  [[ $group_id =~ ^[0-9]+$ ]] || { echo "无法读取 API Key 分组，跳过 Live attestation 注入。" >&2; return 1; }
+  [[ $group_id =~ ^[0-9]+$ ]] || { echo "无法读取 API Key 分组，拒绝 Live attestation 注入。" >&2; return 1; }
   expires_at=$(( $(date -u +%s) + 900 ))
   install -d -m 0700 "$capture_root/runtime/live-attestation"
   cat > "$capture_root/runtime/live-attestation/$run_id.override.yml" <<YML
@@ -1072,8 +1079,11 @@ stop_capture
 
 # A11：第一跳返回 call_id，生产 observer 自动建立 api.openai.com sideband；relay
 # 发送 session.ended，候选走真实终止清理路径。第一跳前先按本轮四元组重建服务，
-# 使 candidatecapture provider 生效；未提供 compose 坐标时保持原样并由断言暴露。
-deploy_with_live_attestation || echo "Live attestation 注入未生效，A11 将按原样执行。" >&2
+# 使 candidatecapture provider 生效；未提供 compose 坐标或注入失败时立即停线。
+if ! deploy_with_live_attestation; then
+  echo "Live attestation 注入失败，拒绝继续 A11～A14。" >&2
+  exit 1
+fi
 start_capture A11
 trigger_root="$work_dir/scenarios/A11/trigger"
 live_body='{"sdp":"v=0\\r\\n","session":{"model":"gpt-realtime","modalities":["audio","text"]}}'

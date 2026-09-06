@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2apiplus.local/schema/codex-upgrade-campaign-run.schema.json",
+  "title": "Codex upgrade canonical campaign run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_id",
+    "phase",
+    "deadline_seconds",
+    "no_op",
+    "actions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "codex-upgrade-campaign-run/v1"
+    },
+    "campaign_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "phase": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,32}$"
+    },
+    "deadline_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "no_op": {
+      "type": "boolean"
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action_id",
+          "operation",
+          "timeout_seconds",
+          "command"
+        ],
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,128}$"
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "command": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+        }
+    },
+    "execute_items": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]{1,128}$"
+      }
+    },
+    "reuse_items": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]{1,128}$"
+      }
+    }
+  }
+}
+    }
+  }
+}

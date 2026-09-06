@@ -51,6 +51,8 @@ LEGACY_REPLAY_PRODUCER_HASHES = frozenset(
     {
         # 0.151 ARM64 取证期间使用的同字节 finalizer（仅允许只读重放）。
         "06fe9886cf3bdab552dc61e556011bf8377f04389fa52a3536a457636052d788",
+        # 当前 0.151 恢复 attempt 的不可变 restoration 收据所绑定版本。
+        "491cbf961309176dd73b0569df6afedb55ed270e6fc3ee695e9779f451e0760f",
     }
 )
 
@@ -1631,7 +1633,14 @@ def finalize_kilo_binding(
         response["completed_at_utc"], "kilo_response.completed_at_utc"
     )
     usage_at = _rfc3339(usage["recorded_at_utc"], "usage_audit.recorded_at_utc")
-    if not installed_at <= ingress_at <= runtime_at <= response_at <= usage_at:
+    if runtime["transport"] == "websocket":
+        ordered = (
+            installed_at <= ingress_at <= runtime_at <= response_at
+            and ingress_at <= usage_at
+        )
+    else:
+        ordered = installed_at <= ingress_at <= runtime_at <= response_at <= usage_at
+    if not ordered:
         raise ReceiptFinalizerError("Kilo 五份事实的时间顺序不成立")
     for label, observed_at in (
         ("kilo_ingress.received_at_utc", ingress_at),
