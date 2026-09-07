@@ -15,6 +15,78 @@
   },
   "entries": [
     {
+      "path": ".goreleaser.simple.yaml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1921,
+        "sha256": "7d56397fcaa7f46797f0df559a3155222664daf5d7f3bdd1773f9080c6071521"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1961,
+        "sha256": "c620a2a6c091dee7d84e046446a55f8633f87fb00a5cdb9fc2a208b89d30caf5"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": ".goreleaser.yaml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6471,
+        "sha256": "1aa1a734a0220cd20a375a5bf22674a3ed69299700eaec46b029d7a4c5652d7b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6631,
+        "sha256": "522b7d700e3396c79799f159b65025137fef3fb845f5f9727a7c69a29662779d"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "Dockerfile",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6496,
+        "sha256": "7df3281736c270a52e60f2cdad03bcb7db9ef7b5459f8da59cb91dad68a2a9d9"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6556,
+        "sha256": "010edc68472a8180a0e649a20a0623573ca91971149df2eed8b9d768d7d1e466"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "Dockerfile.goreleaser",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2159,
+        "sha256": "6c842db48397100f9cba393f7bf23ffc778d751a39ed949bc838cc11349ed201"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2236,
+        "sha256": "9d91d485bf0dc39b75f11991d1b91846c711d1d0e9dcf57b9b7727aee600e6ab"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
       "path": "Makefile",
       "before": {
         "existence": "present",
@@ -31,6 +103,96 @@
         "sha256": "460cb1464501eca6ecbe59ee38fb4de721076ce2ef7cfb74f66f9d0d2cbf24ee"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/cmd/server/VERSION",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10,
+        "sha256": "48c23ab5775aaeb7a05df41bcd35544b89f56a11b7614d2736b07740c2f3190d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10,
+        "sha256": "231db48c68264349ff291add90025e4ef67260f279be5acd4a14765280f46b07"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/config/config.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 200284,
+        "sha256": "18809baead630b1edd72570f3acd0bf3777ff9857b69b824407a11fffec07712"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 202623,
+        "sha256": "fc53921e37337bb2538d4781c4776919d7ce903c0e2e6439046d6ce857a960c7"
+      },
+      "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_handler.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 152102,
+        "sha256": "e04a4a304b17b67442e77f3b32d38b477970e2656200ff189a46dc8e2ad450a6"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 154685,
+        "sha256": "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168"
+      },
+      "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/handler/request_body_limit.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 959,
+        "sha256": "5a56a58037f2a2fa703dc208a87ffc55d3662c366c6eeb9ae5738177750fe00c"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5012,
+        "sha256": "62fc6463db88d9d51ec287bd64024a10f194df8cb09d047c36d7b6169974c709"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/handler/request_body_limit_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1149,
+        "sha256": "710fb6425e20982b557e47d464136f8229bef3f2b9426bb5b1a3097d621009c1"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3048,
+        "sha256": "33282ce13ff7220f94ddf48e4e6f5091d6d67b45fd500403700f8fc7c5ae8921"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
     {
       "path": "backend/internal/officialegress/catalog_retirements_test.go",
@@ -153,8 +315,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 46743,
-        "sha256": "373e4e5604fbdca346e210d9d784aef07cc3f7d4a8383d094f8aa0e207ea1f68"
+        "size": 48180,
+        "sha256": "306b107855c74de640093e07b7c11fd64620cdc4cb64173a8f1c893d0847d6d9"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -603,8 +765,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 42158,
-        "sha256": "6545b9d729c4ce1b902dc0e9b93c7503ffda2e31d19fe05715c5896c5f4e05b4"
+        "size": 43567,
+        "sha256": "54082decde220206a89eb60a7d80e898fe743235d17fbe686e20f3ca70f56d13"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -945,10 +1107,28 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 64616,
-        "sha256": "1a11ceaa660ce0d0ea142cf1b3ac63e2a50df0f7af46363cb7635205d08e8f56"
+        "size": 69710,
+        "sha256": "8a82ba775eebd17e738cb56c73e563d04a2c149a1c8540405d86e949d6976ab4"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_json.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13773,
+        "sha256": "3489b277dbb5c572ba44f94112bc0b5a218e36a4c533ce0df6e2c8cbcfecae20"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13612,
+        "sha256": "ca5ca77361e65242aea94ad58387c486c9de1f5b9fafb0a767dad0c6976c3c94"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
     {
       "path": "backend/internal/service/official_egress_openai_ws.go",
@@ -981,8 +1161,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 46752,
-        "sha256": "7c9dddff62f23c08c91a13a9e5027579afe5f410d99d3e4c5514408c2d1c3048"
+        "size": 46964,
+        "sha256": "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -999,8 +1179,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 10026,
-        "sha256": "48a9f973796d44b35191643255d8123df5750c52b9bfbf4ae14047563a1a3b35"
+        "size": 10245,
+        "sha256": "db1b9205d4425f3e79214ad7f1b77de62abc46f4bbed73d6c97fc77305d2638f"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1059,6 +1239,150 @@
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
     {
+      "path": "backend/internal/service/openai_gateway_forward.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 71897,
+        "sha256": "8620ec8084f8712c8ab8b7ac52664373b77dd42a14879a9d8c0f32ae1d0e8c97"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 73878,
+        "sha256": "05f5ed82cd07980a1865a88c54d656e9a57e3d2ffe99e07fadf64b41207640c3"
+      },
+      "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_gateway_passthrough.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 87826,
+        "sha256": "ad2310940ea873e8d5aea83a159eedc8678da9228a18be5c0922ad51f17f8bbe"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 87968,
+        "sha256": "12e787207800f03e78032d8403bda571d0371cb30ff088734725c82dde26053f"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_gateway_service.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 45310,
+        "sha256": "2d4e6ca5d3b533c273e685056f727c19419beb8b7457c5c3fd31da2e90539890"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 45418,
+        "sha256": "0021fff91d9c853f323cc5a914ff8c5bb5dcd4bfa2f5706407ceadc74f6b339a"
+      },
+      "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_gateway_service_hotpath_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 42803,
+        "sha256": "58d8e68094fd4a28536ce2a0ce5c35bd24026b9694de45dd594d5f631f178d65"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 42912,
+        "sha256": "88e49d50f5cca1feb119536350ed71e25fe1644c04958e97115e8f50465e9bc9"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_invalid_encrypted_content_state.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5660,
+        "sha256": "869922263611338e17734d4329a754a1af90ffdcab4fffbc2536c73a6d45988a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13855,
+        "sha256": "3ad8271f91c41ab8614eaeea5989355ff92a0272c7b1db9acfa121b4667e934b"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_invalid_encrypted_content_state_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2670,
+        "sha256": "dc8e0fece2e81e4f583e9fd0e899909df9204e7b6ad3f4ca4655c09084a4cd96"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4899,
+        "sha256": "239a9921874c638ddddc95045ae44febc89b6a01e4649eca5fb83aa51939459b"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_model_capabilities.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 16787,
+        "sha256": "4bcbc50dbdf6bb91532aa774f4d3ce7cde56b4b1e39035adacab2af8c3ad09a1"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 17125,
+        "sha256": "0c5be270f67f2a848089752d7b955174d6a4d358fc269e84af0ad6656890a881"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_model_capabilities_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10430,
+        "sha256": "8c922f2209dbe499d9e036456fdbc08cfbd06f37bf02527b6c3ee67ef5c46818"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10856,
+        "sha256": "61275f1a10b2c2244440d5598b9d9eaea234fb38caa402d094baa075a3348e96"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
       "path": "backend/internal/service/openai_quota_spark_window_test.go",
       "before": {
         "existence": "present",
@@ -1075,6 +1399,114 @@
         "sha256": "13f6ecaa9ee291113b13b7fa6b633bcd9d0ea4cd0e6d6d8acb0772341521d98e"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_responses_lite_tools.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8739,
+        "sha256": "050cc847d8558d33f97d2b3ab8b6c0d10d11af978607036d391f08bb414049cd"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 11874,
+        "sha256": "087ba3b91adebb102abd4ca63e296626c8475f3a61befe8e484a9d1efb99eeb9"
+      },
+      "reason": "承接 Lite 能力路由修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_responses_lite_tools_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 21522,
+        "sha256": "cdebc18956ee35d2df1eba6ee17edf3c12aeab36dca53985b83b8bc31f87913a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 20627,
+        "sha256": "ffd683ecab26bd70dd5158a91d17100c1e926a732fd567cf6b0f503a3d1f5cdf"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_fallback_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10652,
+        "sha256": "96aae3b7219b71466874276086872478e6b9b31dfa459790ef7ca0a131e62e1f"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 11096,
+        "sha256": "c2fffc4ace34583c4875acd2f2ef8413b9e2b2629a75e4b27ecb63b95fdac494"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_forwarder_ingress.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 90717,
+        "sha256": "6f0e13f1d5e50ab04a4354032c1d5912cbd7581a569d143f3e5343e34ae5c1ef"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 91399,
+        "sha256": "12714f3101fee24e08c87958279daa4aa9fb138ce9436ef77f9cf5ce45f8e610"
+      },
+      "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_forwarder_support.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 29081,
+        "sha256": "06c7a49ae50719eb64153ef2847123672db4b20731dbc50f39537039667e6f6a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 29940,
+        "sha256": "128e3e5e1183f6f44161ca986fcb7a87e3827f5aa3d278bd3270775c69e65a95"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_tool_turn_classification_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 911,
+        "sha256": "0b9826c17e1d238e30ccc366590d722f15c82bd4f7c016880fd2b44ae8c3425f"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
     {
       "path": "backend/internal/service/source_transition_digest_acceptance_test.go",
@@ -1165,6 +1597,186 @@
         "sha256": "cfc6dfb0161044f83dc659ad8724f4bd5f692471a591d9d165355da88dd52d49"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/websocket_finalizer_compat_retirement_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8494,
+        "sha256": "85c3461329da03e411d38e737acb75bb034d98e2881fc56cf7135f11f5e8872c"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8588,
+        "sha256": "e8403c2a2274c007bdc707f9f27e8578f4484fbb9bc8265797dd1bf3055d7e21"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/.env.example",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 23116,
+        "sha256": "8adaffb3aa02e319215697fe018e8e8b3d8a76a5fa44b07b8cc2eb9273ee799f"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 23752,
+        "sha256": "0d982e24923248e2ca7228442bbf4a77ae9fed263d2c0c067f799eb31dd103b8"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/Dockerfile",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5856,
+        "sha256": "7b8435147781d849479d5be17348c8bc12523f710e68a74e2c999feb1485156d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5916,
+        "sha256": "280b6d49eda50801cfe1d15db16baed79c9d6af967507c9edd67e045735cad35"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/config.example.yaml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 60322,
+        "sha256": "b1c98a8f865a923330cd332b961a95fff6a196f7f23a7165f2bd710ff16889ed"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 60812,
+        "sha256": "fd8e528296bbbca00d7a4e10fb93158d0b33a35d9b194ddc0c7b9b760d637d6e"
+      },
+      "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/container-healthcheck.sh",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0755",
+        "size": 2595,
+        "sha256": "da9bce2acfd089500d19c3b9484dfecc545a0405dccad3bbdea0d883c376c008"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/docker-compose.dev.yml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9163,
+        "sha256": "4fdcfab190400026fae27e6ee90809bf4166f051428582798180c28fd02c73e2"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9982,
+        "sha256": "d1b3b190bbf03498e73a0582b6e32fd723790a6da96619af92d2f8d1c96338bf"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/docker-compose.local.yml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 15478,
+        "sha256": "7b4064cba0d90bc8fa0f7734b77b9d36256b2d4706a975879c26d135e12b6485"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 16303,
+        "sha256": "c6faa9f7622f86ee3b4cd9ed3ec4decb12e1c09dc49eaeadc14f4354e1c85e3c"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/docker-compose.standalone.yml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9790,
+        "sha256": "3bc85136866d0675cefe71f704a86b0c072115e3978b568b710fa08b50273466"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10615,
+        "sha256": "6c051726366dd4af0c63442d9d630f839ec8dac68dcde92db1c4b07a320fd1e1"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/docker-compose.yml",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 16832,
+        "sha256": "1a809141ea061c0396bf45dbd896957dc6e3069efce7ec540e46f6deffc4a930"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 17640,
+        "sha256": "6406ff4a0b67097ea68d84bd517a88f568882d1141e7a4fcc7cfe43695063266"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "deploy/tests/docker-runtime-resources-test.sh",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0755",
+        "size": 1015,
+        "sha256": "d54693e1cc5895507c811261fda902b40ec43a64edbd5e94f820ee4e0aa8dfc7"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0755",
+        "size": 1170,
+        "sha256": "3b2f4e431d84a715922e8e7b304f6cadab63c27b07b20aad43a28191b7709c48"
+      },
+      "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
     {
       "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-coordinate-decoupling-source-transition.json",
@@ -1666,7 +2278,7 @@
         "file_type": "regular",
         "mode": "0644",
         "size": 48226,
-        "sha256": "36d7078596349f3a4646ce264fae644fb36ba2eb89eb25014537087346b1f29b"
+        "sha256": "6256f663ac9a37848ec58a34f6e33aa550187a28e7cccbff4d6bd599838f70bd"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1738,7 +2350,7 @@
         "file_type": "regular",
         "mode": "0644",
         "size": 22575,
-        "sha256": "6034be1467cff26329e47136f0f6c7b12af9b69e94d59894ea128dbd6a11b0aa"
+        "sha256": "cf286e1a565d974a325186bba95209885b46fd1ccdb43c6a8a384b363e150b8b"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1756,7 +2368,7 @@
         "file_type": "regular",
         "mode": "0644",
         "size": 42114,
-        "sha256": "acc7fd0c1cc7bdc0f186dad699ee476382828f52892fd567c6c4a40731d88043"
+        "sha256": "56d7ee9d51c328a4b06de51f037628064c72e634537dc9221831a362cf20efcd"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1875,5 +2487,5 @@
     "current 0.151 受影响闭集测试"
   ],
   "result": "pending_current_worktree_reconciliation",
-  "identity_sha256": "f8d8cd3ed169537247e09e7f2ae9777f94a56d20ce86953cde580626cfc1576a"
+  "identity_sha256": "13a0f578322861bf075f5c43567b9a976a5501150513a1302df5dd3e4a3471b2"
 }

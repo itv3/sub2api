@@ -54,16 +54,22 @@ type officialOpenAIHTTPCallID struct {
 type officialOpenAIHTTPBodyContract struct {
 	instructionsPresent bool
 	instructions        any
-	clientMetadataSet   bool
-	clientMetadata      map[string]any
-	promptCacheKeySet   bool
-	promptCacheKey      string
-	additionalTools     []any
-	callIDs             []officialOpenAIHTTPCallID
-	includePresent      bool
-	include             any
-	parallelPresent     bool
-	parallelToolCalls   any
+	// generatedBody 表示契约来自兼容层已经生成的 Responses 正文，而不是
+	// 直接来自入口。兼容层生成的非 Lite instructions 仍属于正文语义；
+	// 入口契约缺失时新增的字段则没有来源，必须丢弃。
+	generatedBody                bool
+	generatedInstructionsPresent bool
+	generatedInstructions        any
+	clientMetadataSet            bool
+	clientMetadata               map[string]any
+	promptCacheKeySet            bool
+	promptCacheKey               string
+	additionalTools              []any
+	callIDs                      []officialOpenAIHTTPCallID
+	includePresent               bool
+	include                      any
+	parallelPresent              bool
+	parallelToolCalls            any
 }
 
 type officialOpenAIHTTPIdentity struct {
@@ -287,6 +293,17 @@ func bindGeneratedOfficialOpenAIHTTPBodyContract(
 	if err != nil {
 		return fmt.Errorf("decode generated OpenAI official egress body: %w", err)
 	}
+	contract.generatedBody = true
+	contract.generatedInstructions = nil
+	contract.generatedInstructionsPresent = false
+	if !contract.instructionsPresent {
+		if generated, present := payload["instructions"]; present {
+			if value, ok := generated.(string); ok && strings.TrimSpace(value) != "" {
+				contract.generatedInstructions = value
+				contract.generatedInstructionsPresent = true
+			}
+		}
+	}
 	contract.additionalTools = collectOfficialOpenAIAdditionalTools(payload)
 	contract.callIDs = collectOfficialOpenAICallIDs(payload)
 	if contract.promptCacheKey == "" {
@@ -298,7 +315,8 @@ func bindGeneratedOfficialOpenAIHTTPBodyContract(
 }
 
 // captureGeneratedOfficialOpenAIHTTPBodyContract 为未显式传递契约的兼容桥建立
-// 最终语义快照。旧链路生成的 instructions 没有入口所有权，必须由 Finalizer 删除。
+// 最终语义快照。兼容桥生成的非空 instructions 属于正文语义，但不拥有入口
+// 显式字段的所有权；Lite 与非 Lite 的投影由 Finalizer 按画像决定。
 func captureGeneratedOfficialOpenAIHTTPBodyContract(
 	body []byte,
 ) (*officialOpenAIHTTPBodyContract, error) {
@@ -306,11 +324,38 @@ func captureGeneratedOfficialOpenAIHTTPBodyContract(
 	if err != nil {
 		return nil, err
 	}
+	if generated, present := contract.instructions, contract.instructionsPresent; present {
+		if value, ok := generated.(string); ok && strings.TrimSpace(value) != "" {
+			contract.generatedInstructions = value
+			contract.generatedInstructionsPresent = true
+		}
+	}
 	contract.instructionsPresent = false
 	contract.instructions = nil
+	contract.generatedBody = true
 	contract.clientMetadataSet = false
 	contract.promptCacheKeySet = false
 	return contract, nil
+}
+
+// markGeneratedOfficialOpenAIHTTPInstructions 记录兼容层在入口契约捕获之后
+// 明确生成的系统指令。此类字段虽然不是客户端直接携带的，但属于兼容转换
+// 已确定的正文语义；Finalizer 可以据此在 Lite/非 Lite 画像之间安全投影，
+// 同时仍会删除没有任何生成记录的遗留字段。
+func markGeneratedOfficialOpenAIHTTPInstructions(
+	contract *officialOpenAIHTTPBodyContract,
+	instructions string,
+) {
+	if contract == nil || contract.instructionsPresent {
+		return
+	}
+	instructions = strings.TrimSpace(instructions)
+	if instructions == "" {
+		return
+	}
+	contract.generatedBody = true
+	contract.generatedInstructionsPresent = true
+	contract.generatedInstructions = instructions
 }
 
 func cloneOfficialOpenAIMap(source map[string]any) map[string]any {
@@ -529,6 +574,61 @@ func finalizeOfficialOpenAIHTTPBody(
 	}
 
 	modified := false
+	// 顶层 instructions 的所有权必须以入口契约为准，而不能由当前模型是否
+	// Responses Lite 反推。工具续接、模型能力刷新等路径可能把同一请求切到
+	// 非 Lite；这不改变官方 HTTP 画像不发送顶层 instructions 的事实。
+	//
+	// 入口明确提供的指令要无损保留，统一投影到 input 的 developer 消息；旧
+	// 链路在契约之外补出的默认指令没有来源，必须删除，避免把网关内部实现
+	// 泄漏到官方请求。处理放在 compact 顶层字段投影之前，防止 compact 画像
+	// 先删掉原字段后无法恢复其语义。
+	if currentInstructions, present := payload["instructions"]; present {
+		switch {
+		case useResponsesLite:
+			if contract.instructionsPresent || contract.generatedInstructionsPresent {
+				// Lite 画像没有顶层 instructions；入口显式值和兼容层生成的
+				// 非空系统指令都必须无损投影为 input developer 消息。
+				if _, err := moveOfficialOpenAIHTTPInstructionsToInput(payload, currentInstructions); err != nil {
+					return nil, false, err
+				}
+			} else {
+				// 当前字段不是入口契约，也不是兼容层生成的有效语义（例如
+				// 旧链路补入的空默认值），不能泄漏到官方请求。
+				delete(payload, "instructions")
+			}
+			modified = true
+		case !useResponsesLite && (contract.instructionsPresent || contract.generatedInstructionsPresent):
+			// 非 Lite 与 legacy compact 画像保留顶层 instructions。这里不
+			// 依据 isCompact 分叉：compact 只有在真实 Lite 能力下才迁移。
+		default:
+			// 当前字段不是入口契约，也不是兼容层生成的有效语义（例如
+			// 旧链路补入的空默认值），不能泄漏到官方请求。
+			delete(payload, "instructions")
+			modified = true
+		}
+	} else if contract.instructionsPresent {
+		// 某些兼容转换会先消费顶层字段；若入口契约明确拥有它，则按
+		// 当前画像恢复一次，避免系统指令因中间层改写而丢失。
+		if useResponsesLite {
+			if _, err := moveOfficialOpenAIHTTPInstructionsToInput(payload, contract.instructions); err != nil {
+				return nil, false, err
+			}
+		} else {
+			payload["instructions"] = contract.instructions
+		}
+		modified = true
+	} else if contract.generatedInstructionsPresent {
+		// 兼容层生成的指令也可能在中间转换中被消费；只在有明确生成记录
+		// 时恢复，避免把任意旧链路残留重新带入官方请求。
+		if useResponsesLite {
+			if _, err := moveOfficialOpenAIHTTPInstructionsToInput(payload, contract.generatedInstructions); err != nil {
+				return nil, false, err
+			}
+		} else {
+			payload["instructions"] = contract.generatedInstructions
+		}
+		modified = true
+	}
 	endpointID := officialCodexEndpointResponsesHTTP
 	if isCompact {
 		endpointID = officialCodexEndpointResponsesCompact
@@ -546,17 +646,6 @@ func finalizeOfficialOpenAIHTTPBody(
 			warnOfficialOpenAIProjectedTopLevelFields(removed, options.UserAgent, false)
 		}
 	}
-	currentInstructions, currentInstructionsPresent := payload["instructions"]
-	if currentInstructionsPresent && useResponsesLite {
-		instructionsModified, err := moveOfficialOpenAIHTTPInstructionsToInput(payload, currentInstructions)
-		if err != nil {
-			return nil, false, err
-		}
-		if instructionsModified {
-			modified = true
-		}
-	}
-
 	// 当前 Codex Release 的 Responses Lite Header 与 reasoning.context 是绑定契约：
 	// Header=true 时上游强制要求 context=all_turns。第三方入口通常不会提供该
 	// 字段，因此必须在同一个最终修正器中补齐，避免只伪装 Header 却发送非法 Body。
@@ -584,6 +673,19 @@ func finalizeOfficialOpenAIHTTPBody(
 		if profileModified {
 			modified = true
 		}
+	}
+	// 非 Lite 的 parallel_tool_calls 允许入口/兼容层显式值，但不得越过
+	// 当前模型能力；缺少显式值时才使用能力默认值。Lite 和 compact 始终
+	// 由画像收口为 false。
+	expectedParallel := supportsParallelTools && !useResponsesLite
+	if !isCompact && !useResponsesLite && contract.parallelPresent {
+		if explicitParallel, ok := contract.parallelToolCalls.(bool); ok {
+			expectedParallel = explicitParallel && supportsParallelTools
+		}
+	}
+	if currentParallel, ok := payload["parallel_tool_calls"].(bool); !ok || currentParallel != expectedParallel {
+		payload["parallel_tool_calls"] = expectedParallel
+		modified = true
 	}
 
 	if isCompact {

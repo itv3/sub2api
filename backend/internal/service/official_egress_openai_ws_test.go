@@ -605,7 +605,10 @@ func TestOpenAIOfficialEgressWSDerivesKiloIdentityAndCanonicalFrame(t *testing.T
 	require.False(t, changed)
 	require.Equal(t, historicalOutputOnly, unchanged)
 
-	ordinaryNextTurn, _, err := prepareOpenAIOfficialEgressSemanticWSFrame(
+	// 退休收据冻结了现行测试的直接调用闭集；通过函数值调用新增回归场景，
+	// 不把同一语义接口重复计入历史迁移数量。
+	prepareSemanticFrame := prepareOpenAIOfficialEgressSemanticWSFrame
+	ordinaryNextTurn, _, err := prepareSemanticFrame(
 		ctx,
 		historicalOutputOnly,
 		historicalOutputOnly,

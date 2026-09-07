@@ -207,8 +207,13 @@ func (c *officialUUIDV7LRUCache) resolve(key officialUUIDV7CacheKey) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if element, exists := c.entries[key]; exists {
-		entry := element.Value.(*officialUUIDV7CacheEntry)
-		if now.Sub(entry.lastUsed) <= c.ttl {
+		entry, valid := element.Value.(*officialUUIDV7CacheEntry)
+		if !valid {
+			// map 与链表理论上由同一把锁维护；若测试或未来改动破坏了
+			// 这个不变量，先移除损坏节点，再按未命中路径恢复，不能让
+			// 诊断缓存把整个请求 goroutine 置于 panic 状态。
+			c.removeLocked(element)
+		} else if now.Sub(entry.lastUsed) <= c.ttl {
 			entry.lastUsed = now
 			c.order.MoveToFront(element)
 			c.hits++
@@ -230,8 +235,13 @@ func (c *officialUUIDV7LRUCache) resolve(key officialUUIDV7CacheKey) string {
 }
 
 func (c *officialUUIDV7LRUCache) removeLocked(element *list.Element) {
-	entry := element.Value.(*officialUUIDV7CacheEntry)
-	delete(c.entries, entry.key)
+	if element == nil {
+		return
+	}
+	entry, valid := element.Value.(*officialUUIDV7CacheEntry)
+	if valid {
+		delete(c.entries, entry.key)
+	}
 	c.order.Remove(element)
 }
 
@@ -242,7 +252,11 @@ func (c *officialUUIDV7LRUCache) sweepExpiredLocked(now time.Time, limit int) {
 		if element == nil {
 			return
 		}
-		entry := element.Value.(*officialUUIDV7CacheEntry)
+		entry, valid := element.Value.(*officialUUIDV7CacheEntry)
+		if !valid {
+			c.removeLocked(element)
+			continue
+		}
 		if now.Sub(entry.lastUsed) <= c.ttl {
 			return
 		}
@@ -284,9 +298,4 @@ var officialUUIDV7Cache = newOfficialUUIDV7LRUCache(
 // UUIDv7 而不是把哈希位伪装成 v7 时间戳，避免出站身份与官方客户端形态不一致。
 func generateOfficialStableUUIDV7(key officialUUIDV7CacheKey) string {
 	return officialUUIDV7Cache.resolve(key)
-}
-
-// officialUUIDV7CacheStatsSnapshot 返回全局缓存指标，供诊断与测试使用。
-func officialUUIDV7CacheStatsSnapshot() officialUUIDV7CacheStats {
-	return officialUUIDV7Cache.stats()
 }

@@ -93,11 +93,6 @@ func marshalOfficialOpenAIHTTPJSONPreservingRaw(
 	return marshalOfficialOrderedJSONObjectPreservingRaw(payload, order, original)
 }
 
-func marshalOfficialOpenAIWSJSON(mode string, payload map[string]any) ([]byte, error) {
-	return marshalOfficialOpenAIWSJSONPreservingRaw(mode, payload, nil)
-
-}
-
 func marshalOfficialOpenAIWSJSONPreservingRaw(
 	mode string,
 	payload map[string]any,

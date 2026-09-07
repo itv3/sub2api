@@ -315,104 +315,94 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsUnsupportedTools(t *testing.T)
 	}
 }
 
-func TestOpenAIGatewayServiceForward_RejectsHostedWebSearchAsSingleTerminalError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	for _, tc := range []struct {
-		name               string
-		keepaliveCommitted bool
+func TestOpenAIResponsesLiteRequiresFullResponsesOnlyForHostedHistory(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
 	}{
-		{name: "JSON 400"},
-		{name: "compact 心跳已提交", keepaliveCommitted: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-			c.Request.Header.Set("User-Agent", "opencode/1.0.0")
+		{
+			name: "custom tool continuation remains lite",
+			body: `{"input":[{"type":"custom_tool_call","call_id":"c1"},{"type":"custom_tool_call_output","call_id":"c1"}]}`,
+			want: false,
+		},
+		{
+			name: "tool search continuation remains lite",
+			body: `{"input":[{"type":"tool_search_call","call_id":"s1"}]}`,
+			want: false,
+		},
+		{
+			name: "hosted web search history requires full responses",
+			body: `{"input":[{"type":"web_search_call","id":"ws1"}]}`,
+			want: true,
+		},
+		{
+			name: "hosted mcp history requires full responses",
+			body: `{"input":[{"type":"mcp_call","id":"mcp1"}]}`,
+			want: true,
+		},
+		{
+			name: "nested hosted declaration requires full responses",
+			body: `{"tools":[{"type":"namespace","name":"remote","tools":[{"type":"file_search"}]}]}`,
+			want: true,
+		},
+	}
 
-			tools := make([]any, 0, 20)
-			for range 19 {
-				tools = append(tools, map[string]any{
-					"type":       "function",
-					"name":       "local_tool",
-					"parameters": map[string]any{"type": "object"},
-				})
-			}
-			tools = append(tools, map[string]any{"type": "web_search"})
-			body, err := json.Marshal(map[string]any{
-				"model":        "gpt-5.6-sol",
-				"stream":       true,
-				"instructions": "test",
-				"input":        "hello",
-				"tools":        tools,
-			})
-			require.NoError(t, err)
-
-			upstream := &httpUpstreamRecorder{resp: &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
-			}}
-			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-			svc.openaiModelCapabilities.replaceFromManifest(502, []byte(
-				`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","use_responses_lite":true,"supports_parallel_tool_calls":true}]}`,
-			))
-			account := &Account{
-				ID: 502, Name: "responses-lite", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-				Concurrency: 1, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1),
-				Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"},
-			}
-			if tc.keepaliveCommitted {
-				MarkOpenAICompactClientStream(c)
-				stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
-				t.Cleanup(stop)
-				waitForKeepaliveBeats()
-			}
-
-			result, forwardErr := svc.Forward(context.Background(), c, account, body)
-
-			require.Nil(t, result)
-			require.ErrorContains(t, forwardErr, `responses Lite does not support top-level tool type "web_search" at index 19`)
-			require.True(t, IsResponseCommitted(c))
-			_, hasUpstreamStatus := c.Get(OpsUpstreamStatusCodeKey)
-			_, hasUpstreamMessage := c.Get(OpsUpstreamErrorMessageKey)
-			_, hasUpstreamDetail := c.Get(OpsUpstreamErrorDetailKey)
-			require.False(t, hasUpstreamStatus)
-			require.False(t, hasUpstreamMessage)
-			require.False(t, hasUpstreamDetail)
-			require.Nil(t, upstream.lastReq, "本地校验失败时不得请求上游")
-
-			if tc.keepaliveCommitted {
-				require.Equal(t, http.StatusOK, rec.Code)
-				require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
-				events := parseCompactBridgeSSE(t, stripKeepaliveComments(rec.Body.String()))
-				require.Len(t, events, 1)
-				require.Equal(t, "response.failed", events[0][0])
-				require.Equal(t, "invalid_request_error", gjson.Get(events[0][1], "response.error.code").String())
-				require.Equal(t,
-					`responses Lite does not support top-level tool type "web_search" at index 19`,
-					gjson.Get(events[0][1], "response.error.message").String(),
-				)
-				streamErr, ok := GetOpsStreamError(c)
-				require.True(t, ok)
-				require.Equal(t, "invalid_request_error", streamErr.ErrType)
-				require.Equal(t, http.StatusBadRequest, streamErr.IntendedStatus)
-				return
-			}
-
-			require.Equal(t, http.StatusBadRequest, rec.Code)
-			require.True(t, json.Valid(rec.Body.Bytes()), rec.Body.String())
-			require.Equal(t, "invalid_request_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
-			require.Equal(t, "tools", gjson.GetBytes(rec.Body.Bytes(), "error.param").String())
-			require.Equal(t,
-				`responses Lite does not support top-level tool type "web_search" at index 19`,
-				gjson.GetBytes(rec.Body.Bytes(), "error.message").String(),
-			)
-			require.NotContains(t, rec.Body.String(), "event:")
-			require.NotContains(t, rec.Body.String(), "data:")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, openAIResponsesLiteRequiresFullResponses([]byte(tt.body)))
 		})
 	}
+}
+
+func TestOpenAIGatewayServiceForward_RoutesHostedWebSearchOutOfLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set("User-Agent", "opencode/1.0.0")
+	// Hosted 工具必须离开 Lite；固定 HTTP 使本测试只验证能力路由，不拨真实 WS。
+	setOfficialCodexForceHTTPFallback(c, true)
+
+	tools := make([]any, 0, 20)
+	for range 19 {
+		tools = append(tools, map[string]any{
+			"type":       "function",
+			"name":       "local_tool",
+			"parameters": map[string]any{"type": "object"},
+		})
+	}
+	tools = append(tools, map[string]any{"type": "web_search"})
+	body, err := json.Marshal(map[string]any{
+		"model":        "gpt-5.6-sol",
+		"stream":       true,
+		"instructions": "test",
+		"input":        "hello",
+		"tools":        tools,
+	})
+	require.NoError(t, err)
+
+	upstream := &httpUpstreamRecorder{resp: newOfficialOpenAIHTTPSSECompletedResponse("resp_hosted_web_search")}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	svc.openaiModelCapabilities.replaceFromManifest(502, []byte(
+		`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","use_responses_lite":true,"supports_parallel_tool_calls":true}]}`,
+	))
+	account := &Account{
+		ID: 502, Name: "responses-lite", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Concurrency: 1, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1),
+		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"},
+	}
+
+	result, forwardErr := svc.Forward(context.Background(), c, account, body)
+
+	require.NoError(t, forwardErr)
+	require.NotNil(t, result)
+	require.NotNil(t, upstream.lastReq)
+	require.Empty(t, c.Request.Header.Get(responsesLiteHeader), "切换到完整 Responses 后不得伪造 Lite Header")
+	require.Equal(t, "web_search", gjson.GetBytes(upstream.lastBody, "tools.19.type").String())
+	require.Equal(t, "test", gjson.GetBytes(upstream.lastBody, "instructions").String())
+	require.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t *testing.T) {

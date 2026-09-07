@@ -11,10 +11,40 @@ import (
 var openAIResponsesLiteHostedToolTypes = map[string]struct{}{
 	"image_generation":     {},
 	"web_search":           {},
+	"web_search_preview":   {},
 	"x_search":             {},
 	"file_search":          {},
 	"code_interpreter":     {},
 	"computer_use_preview": {},
+}
+
+// Responses 的 hosted 工具在 input 历史中使用独立的 call 类型。这里必须
+// 使用显式集合，不能用“所有 *_call”这种宽匹配：Codex 的 custom_tool_call、
+// tool_search_call、local_shell_call 和 mcp_tool_call 都是 Lite 可以承载的
+// 客户端工具续接，误判会把正常请求切到另一条能力链路并破坏续接画像。
+var openAIResponsesLiteHostedToolCallTypes = map[string]struct{}{
+	"image_generation_call": {},
+	"web_search_call":       {},
+	"x_search_call":         {},
+	"file_search_call":      {},
+	"code_interpreter_call": {},
+	"computer_call":         {},
+	"computer_call_output":  {},
+	"mcp_call":              {},
+	"mcp_approval_request":  {},
+	"mcp_approval_response": {},
+	"mcp_list_tools":        {},
+	"mcp_list_tools_output": {},
+}
+
+func isOpenAIResponsesLiteHostedToolType(toolType string) bool {
+	_, hosted := openAIResponsesLiteHostedToolTypes[strings.TrimSpace(toolType)]
+	return hosted
+}
+
+func isOpenAIResponsesLiteHostedToolCallType(itemType string) bool {
+	_, hosted := openAIResponsesLiteHostedToolCallTypes[strings.TrimSpace(itemType)]
+	return hosted
 }
 
 // openAIResponsesLiteRequiresFullResponses 判断请求是否声明了 Lite 无法承载的
@@ -24,13 +54,26 @@ func openAIResponsesLiteRequiresFullResponses(body []byte) bool {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return false
 	}
-	containsHostedType := func(value gjson.Result) bool {
-		if !value.Exists() {
+	var containsHostedType func(gjson.Result) bool
+	containsHostedType = func(value gjson.Result) bool {
+		if !value.Exists() || !value.IsObject() {
 			return false
 		}
-		toolType := strings.TrimSpace(value.Get("type").String())
-		_, hosted := openAIResponsesLiteHostedToolTypes[toolType]
-		return hosted
+		if isOpenAIResponsesLiteHostedToolType(value.Get("type").String()) {
+			return true
+		}
+		// namespace/additional_tools 可能携带嵌套工具定义；只沿 tools
+		// 字段递归，避免把函数参数 schema 中同名字符串误判为 hosted。
+		nestedTools := value.Get("tools")
+		if !nestedTools.IsArray() {
+			return false
+		}
+		for _, nested := range nestedTools.Array() {
+			if containsHostedType(nested) {
+				return true
+			}
+		}
+		return false
 	}
 	tools := gjson.GetBytes(body, "tools")
 	if tools.IsArray() {
@@ -45,7 +88,7 @@ func openAIResponsesLiteRequiresFullResponses(body []byte) bool {
 		return true
 	}
 	if toolChoice.Type == gjson.String {
-		if _, hosted := openAIResponsesLiteHostedToolTypes[strings.TrimSpace(toolChoice.String())]; hosted {
+		if isOpenAIResponsesLiteHostedToolType(toolChoice.String()) {
 			return true
 		}
 	}
@@ -53,7 +96,7 @@ func openAIResponsesLiteRequiresFullResponses(body []byte) bool {
 	if input.IsArray() {
 		for _, item := range input.Array() {
 			itemType := strings.TrimSpace(item.Get("type").String())
-			if strings.HasSuffix(itemType, "_call") && itemType != "function_call" {
+			if isOpenAIResponsesLiteHostedToolCallType(itemType) {
 				return true
 			}
 		}

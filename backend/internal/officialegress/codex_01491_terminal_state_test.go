@@ -332,6 +332,20 @@ func loadOpenAIReplayOOMRepairTransition() (openAIReplayOOMRepairReceipt, error)
 }
 
 func readOpenAIReplayOOMRepairTransition() (openAIReplayOOMRepairReceipt, error) {
+	receipt, err := readOpenAIReplayOOMRepairTransitionRaw()
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateOpenAIReplayOOMRepairTransition(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+// readOpenAIReplayOOMRepairTransitionRaw 只读取并校验收据自身的编码与摘要，
+// 不递归校验其依赖链。依赖链校验期间只能使用这个无递归读取器，避免
+// sync.Once 正在加载当前收据时再次等待自身。
+func readOpenAIReplayOOMRepairTransitionRaw() (openAIReplayOOMRepairReceipt, error) {
 	var receipt openAIReplayOOMRepairReceipt
 	raw, err := os.ReadFile(codex01491TerminalRepoPath(openAIReplayOOMRepairTransitionPath))
 	if err != nil {
@@ -357,9 +371,6 @@ func readOpenAIReplayOOMRepairTransition() (openAIReplayOOMRepairReceipt, error)
 	canonical = append(canonical, '\n')
 	if upstreamMergeFrameworkDigest(canonical) != receipt.IdentitySHA256 {
 		return receipt, errors.New("OpenAI replay OOM 修复 transition 自摘要不一致")
-	}
-	if err := validateOpenAIReplayOOMRepairTransition(receipt); err != nil {
-		return receipt, err
 	}
 	return receipt, nil
 }
@@ -429,7 +440,9 @@ func validateOpenAIReplayOOMRepairTransition(receipt openAIReplayOOMRepairReceip
 			return errors.New("OpenAI replay OOM 修复 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		currentDigest := upstreamMergeFrameworkDigest(current)
+		if readErr != nil || (currentDigest != addition.SHA256 &&
+			!codex0151WorktreeSuccessorAfter(addition.Path, currentDigest)) {
 			return errors.New("OpenAI replay OOM 修复 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -453,7 +466,7 @@ func validateOpenAIReplayOOMRepairTransition(receipt openAIReplayOOMRepairReceip
 }
 
 func openAIReplayOOMRepairSupersedes(path, priorDigest, currentDigest string) bool {
-	receipt, err := loadOpenAIReplayOOMRepairTransition()
+	receipt, err := readOpenAIReplayOOMRepairTransitionRaw()
 	if err != nil {
 		return false
 	}
@@ -513,6 +526,22 @@ func readOpenAIWSCompatibilityGuardRepairTransition() (
 	openAIWSCompatibilityGuardRepairReceipt,
 	error,
 ) {
+	receipt, err := readOpenAIWSCompatibilityGuardRepairTransitionRaw()
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateOpenAIWSCompatibilityGuardRepairTransition(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+// readOpenAIWSCompatibilityGuardRepairTransitionRaw 只读取收据本身，供依赖链
+// 比对使用；它不调用任何前序 transition 验证器，保证加载过程无递归等待。
+func readOpenAIWSCompatibilityGuardRepairTransitionRaw() (
+	openAIWSCompatibilityGuardRepairReceipt,
+	error,
+) {
 	var receipt openAIWSCompatibilityGuardRepairReceipt
 	raw, err := os.ReadFile(codex01491TerminalRepoPath(
 		openAIWSCompatibilityGuardRepairTransitionPath,
@@ -540,9 +569,6 @@ func readOpenAIWSCompatibilityGuardRepairTransition() (
 	canonical = append(canonical, '\n')
 	if upstreamMergeFrameworkDigest(canonical) != receipt.IdentitySHA256 {
 		return receipt, errors.New("OpenAI WS 兼容守卫修复 transition 自摘要不一致")
-	}
-	if err := validateOpenAIWSCompatibilityGuardRepairTransition(receipt); err != nil {
-		return receipt, err
 	}
 	return receipt, nil
 }
@@ -624,7 +650,7 @@ func openAIWSCompatibilityGuardRepairSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
-	receipt, err := loadOpenAIWSCompatibilityGuardRepairTransition()
+	receipt, err := readOpenAIWSCompatibilityGuardRepairTransitionRaw()
 	if err != nil {
 		return false
 	}
@@ -638,7 +664,7 @@ func openAIWSCompatibilityGuardRepairSupersedes(
 		}
 	}
 	// 两个终态验证器已经由 OOM 收据接管；只允许本收据精确承接该中间摘要。
-	predecessor, err := loadOpenAIReplayOOMRepairTransition()
+	predecessor, err := readOpenAIReplayOOMRepairTransitionRaw()
 	if err != nil {
 		return false
 	}
@@ -700,6 +726,22 @@ func readOpenAIWSEmptyTerminalOutputRepairTransition() (
 	openAIWSEmptyTerminalOutputRepairReceipt,
 	error,
 ) {
+	receipt, err := readOpenAIWSEmptyTerminalOutputRepairTransitionRaw()
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateOpenAIWSEmptyTerminalOutputRepairTransition(receipt); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+// readOpenAIWSEmptyTerminalOutputRepairTransitionRaw 只读取收据自身，供依赖链
+// 比对使用；它不触发前序 transition 的 sync.Once 加载。
+func readOpenAIWSEmptyTerminalOutputRepairTransitionRaw() (
+	openAIWSEmptyTerminalOutputRepairReceipt,
+	error,
+) {
 	var receipt openAIWSEmptyTerminalOutputRepairReceipt
 	raw, err := os.ReadFile(codex01491TerminalRepoPath(
 		openAIWSEmptyTerminalOutputRepairTransitionPath,
@@ -727,9 +769,6 @@ func readOpenAIWSEmptyTerminalOutputRepairTransition() (
 	canonical = append(canonical, '\n')
 	if upstreamMergeFrameworkDigest(canonical) != receipt.IdentitySHA256 {
 		return receipt, errors.New("OpenAI WS 空终态输出修复 transition 自摘要不一致")
-	}
-	if err := validateOpenAIWSEmptyTerminalOutputRepairTransition(receipt); err != nil {
-		return receipt, err
 	}
 	return receipt, nil
 }
@@ -806,7 +845,7 @@ func openAIWSEmptyTerminalOutputRepairSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
-	receipt, err := loadOpenAIWSEmptyTerminalOutputRepairTransition()
+	receipt, err := readOpenAIWSEmptyTerminalOutputRepairTransitionRaw()
 	if err != nil {
 		return false
 	}

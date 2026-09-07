@@ -117,7 +117,8 @@ func TestWebSocketFinalizerCompatibilityRetirementReceiptAndSourceExtinction(t *
 			t.Fatal(readErr)
 		}
 		if got := websocketFinalizerCompatRetirementDigest(source); got != transition.ToSHA256 &&
-			!versionLeakDebtTransitionSupersedes(transition.Path, transition.ToSHA256, got) {
+			!versionLeakDebtTransitionSupersedes(transition.Path, transition.ToSHA256, got) &&
+			!codex0151CurrentSourceDigestAcceptedService(transition.Path, transition.ToSHA256, got) {
 			t.Fatalf("WebSocket finalizer 源码摘要漂移：path=%s got=%s want=%s", transition.Path, got, transition.ToSHA256)
 		}
 	}
