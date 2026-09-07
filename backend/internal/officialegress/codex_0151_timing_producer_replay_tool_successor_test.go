@@ -565,6 +565,9 @@ func validateCodex0151BwrapZstdReadinessToolSuccessor(receipt codex0151ToolReadi
 
 // codex0151BwrapZstdReadinessToolSuccessorSupersedes 只承接 bubblewrap 与 zstd 就绪工具后继的精确摘要边。
 func codex0151BwrapZstdReadinessToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151BwrapZstdReadinessToolSuccessor()
 	if err != nil {
 		return false
@@ -763,6 +766,9 @@ func validateCodex0151C2PAJobIdentityToolSuccessor(receipt codex0151ToolReadines
 
 // codex0151C2PAJobIdentityToolSuccessorSupersedes 只承接 C2PA Job 身份工具后继的精确摘要边。
 func codex0151C2PAJobIdentityToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151C2PAJobIdentityToolSuccessor()
 	if err != nil {
 		return false
@@ -977,6 +983,9 @@ func validateCodex0151FullJobReadinessToolSuccessor(receipt codex0151ToolReadine
 
 // codex0151FullJobReadinessToolSuccessorSupersedes 只承接完整 Job 就绪工具后继的精确摘要边。
 func codex0151FullJobReadinessToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151FullJobReadinessToolSuccessor()
 	if err != nil {
 		return false
@@ -1183,6 +1192,9 @@ func validateCodex0151EvidenceLabelPreflightToolSuccessor(receipt codex0151ToolR
 
 // codex0151EvidenceLabelPreflightToolSuccessorSupersedes 只承接证据标签前置工具后继的精确摘要边。
 func codex0151EvidenceLabelPreflightToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151EvidenceLabelPreflightToolSuccessor()
 	if err != nil {
 		return false

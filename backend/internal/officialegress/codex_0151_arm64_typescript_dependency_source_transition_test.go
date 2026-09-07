@@ -148,6 +148,9 @@ func validateCodex0151Arm64TypescriptDependencySourceTransition(receipt codex015
 }
 
 func codex0151Arm64TypescriptDependencySourceTransitionSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151Arm64TypescriptDependencySourceTransition()
 	if err != nil {
 		return false

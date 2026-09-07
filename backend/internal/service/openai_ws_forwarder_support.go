@@ -735,6 +735,8 @@ func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (stri
 		return "invalid_encrypted_content", true
 	case "previous_response_not_found":
 		return "previous_response_not_found", true
+	case "invalid_previous_response_id":
+		return "previous_response_not_found", true
 	}
 	if isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw) {
 		return "upstream_rate_limited", false
@@ -755,8 +757,18 @@ func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (stri
 		(strings.Contains(msg, "encrypted content") && strings.Contains(msg, "could not be verified")) {
 		return "invalid_encrypted_content", true
 	}
+	// 生产 WebSocket 实际返回过 `Invalid \`previous_response_id\`.`，
+	// 与旧版 previous_response_not_found 的语义相同：当前连接/存储作用域
+	// 不认识旧锚点，可在尚未向客户端输出时走一次安全 replay。
+	normalizedPreviousResponseMessage := strings.NewReplacer("`", "", "\"", "", "'", "").Replace(msg)
+	normalizedPreviousResponseMessage = strings.Join(strings.Fields(normalizedPreviousResponseMessage), " ")
 	if strings.Contains(msg, "previous_response_not_found") ||
 		(strings.Contains(msg, "previous response") && strings.Contains(msg, "not found")) {
+		return "previous_response_not_found", true
+	}
+	if strings.Contains(normalizedPreviousResponseMessage, "invalid previous_response_id") ||
+		strings.Contains(normalizedPreviousResponseMessage, "previous_response_id is invalid") ||
+		strings.Contains(normalizedPreviousResponseMessage, "previous response id is invalid") {
 		return "previous_response_not_found", true
 	}
 	if strings.Contains(errType, "server_error") || strings.Contains(code, "server_error") {

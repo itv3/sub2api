@@ -601,6 +601,9 @@ func codex0151BwrapZstdReadinessToolSuccessorSupersedesService(
 	priorDigest,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151BwrapZstdReadinessToolSuccessorService()
 	if err != nil {
 		return false
@@ -815,6 +818,9 @@ func codex0151C2PAJobIdentityToolSuccessorSupersedesService(
 	priorDigest,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151C2PAJobIdentityToolSuccessorService()
 	if err != nil {
 		return false
@@ -1044,6 +1050,9 @@ func codex0151FullJobReadinessToolSuccessorSupersedesService(
 	priorDigest,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151FullJobReadinessToolSuccessorService()
 	if err != nil {
 		return false
@@ -1265,6 +1274,9 @@ func codex0151EvidenceLabelPreflightToolSuccessorSupersedesService(
 	priorDigest,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151EvidenceLabelPreflightToolSuccessorService()
 	if err != nil {
 		return false

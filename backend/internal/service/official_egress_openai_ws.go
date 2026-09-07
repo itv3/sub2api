@@ -528,6 +528,19 @@ func prepareDerivedOpenAIOfficialEgressWSFrame(
 	}
 
 	originalCallIDs := collectOfficialOpenAICallIDs(payload)
+	// 不要仅凭完整历史中是否出现过工具输出就进入“工具续接”语义。
+	// 历史轮次可能包含 function_call_output，而当前轮只是普通用户消息；
+	// 这种请求必须生成新的普通轮次身份，否则后续会被误裁剪成空工具续接。
+	_, hasCurrentToolOutput, toolOutputTurnReliable, toolOutputTurnErr :=
+		classifyOfficialOpenAIWSToolOutputTurn(payload)
+	if toolOutputTurnErr != nil {
+		return nil, result, toolOutputTurnErr
+	}
+	if !toolOutputTurnReliable {
+		return nil, result, errors.New(
+			"OpenAI official egress WebSocket tool output turn cannot be determined reliably",
+		)
+	}
 	toolPresentationModified, err := officialCodexNormalizeDerivedToolPresentation(
 		egressContext.ProfileVersion(),
 		codexEndpointID(egressContext.CodexEndpointProfileID()),
@@ -572,7 +585,7 @@ func prepareDerivedOpenAIOfficialEgressWSFrame(
 	metadata, promptCacheKey, err := buildDerivedOfficialOpenAIWSFrameMetadataWithTurnPolicy(
 		egressContext,
 		payload,
-		openAIWSRawPayloadHasToolCallOutput(candidate),
+		hasCurrentToolOutput,
 	)
 	if err != nil {
 		return nil, result, err
@@ -803,7 +816,17 @@ func buildDerivedOpenAIOfficialEgressWSPrewarmFrame(
 		egressContext.openAIWSDerived == nil {
 		return nil, false, nil
 	}
-	if openAIWSRawPayloadHasToolCallOutput(candidate) {
+	hasAnyToolOutput, hasCurrentToolOutput, reliable, classifyErr :=
+		classifyOfficialOpenAIWSToolOutputTurnFromRaw(candidate)
+	if classifyErr != nil {
+		return nil, false, classifyErr
+	}
+	if !reliable {
+		return nil, false, errors.New(
+			"OpenAI official egress WebSocket tool output turn cannot be determined reliably",
+		)
+	}
+	if hasAnyToolOutput && hasCurrentToolOutput {
 		return nil, false, nil
 	}
 
@@ -950,6 +973,145 @@ func chainDerivedOpenAIOfficialEgressWSBusinessFrame(
 	return finalized, nil
 }
 
+// classifyOfficialOpenAIWSToolOutputTurn 根据当前帧的轮次元数据和 input
+// 分段判断工具输出是否属于当前轮。完整历史中存在旧轮 function_call_output
+// 并不代表当前请求就是工具续接；只有当前轮确实有工具输出时才允许最小化裁剪。
+// 返回值依次为：是否存在任意工具输出、是否存在当前轮工具输出、轮次判断是否可靠。
+func classifyOfficialOpenAIWSToolOutputTurn(payload map[string]any) (bool, bool, bool, error) {
+	if payload == nil {
+		return false, false, true, nil
+	}
+	input, ok := payload["input"].([]any)
+	if !ok {
+		// finalizeOfficialOpenAIWSInputTurnMetadata 会对缺少 input 的帧给出
+		// 更具体的协议错误；这里不把普通缺失字段误判成工具续接不可靠。
+		return false, false, true, nil
+	}
+
+	metadata, _ := payload["client_metadata"].(map[string]any)
+	currentTurnID := strings.TrimSpace(officialOpenAIString(metadata, "turn_id"))
+	segments := splitOfficialOpenAIWSInputTurnSegments(input)
+	currentSegment := make(map[int]struct{})
+	currentSegmentStart, currentSegmentEnd := 0, -1
+	if len(segments) > 0 {
+		lastSegment := segments[len(segments)-1]
+		if len(lastSegment) > 0 {
+			currentSegmentStart = lastSegment[0]
+			currentSegmentEnd = lastSegment[len(lastSegment)-1]
+		}
+		for _, index := range lastSegment {
+			currentSegment[index] = struct{}{}
+		}
+	}
+	// 预先计算“输出后是否还有普通项”和“输出前是否有未标注工具调用”，
+	// 避免对每个 output 重扫整个当前段；长上下文只做 O(n) 分类。
+	nonToolAfter := make([]bool, len(input))
+	seenNonTool := false
+	for index := len(input) - 1; index >= 0; index-- {
+		nonToolAfter[index] = seenNonTool
+		item, valid := input[index].(map[string]any)
+		if !valid || !isCodexToolCallOutputItemType(
+			strings.TrimSpace(officialOpenAIString(item, "type")),
+		) {
+			seenNonTool = true
+		}
+	}
+	unmarkedToolCallBefore := make([]bool, len(input))
+	seenUnmarkedToolCall := false
+	for index := currentSegmentStart; index <= currentSegmentEnd; index++ {
+		rawItem := input[index]
+		unmarkedToolCallBefore[index] = seenUnmarkedToolCall
+		item, valid := rawItem.(map[string]any)
+		if !valid || !isCodexToolCallContextItemType(
+			strings.TrimSpace(officialOpenAIString(item, "type")),
+		) {
+			continue
+		}
+		itemMetadata, hasMetadata := item[officialOpenAIWSItemTurnMetadata].(map[string]any)
+		if !hasMetadata || strings.TrimSpace(officialOpenAIString(itemMetadata, "turn_id")) == "" {
+			seenUnmarkedToolCall = true
+		}
+	}
+	hasCurrentSegment := len(currentSegment) > 0
+
+	hasAny := false
+	hasCurrent := false
+	reliable := true
+	for index, rawItem := range input {
+		item, valid := rawItem.(map[string]any)
+		if !valid || !isCodexToolCallOutputItemType(
+			strings.TrimSpace(officialOpenAIString(item, "type")),
+		) {
+			continue
+		}
+		hasAny = true
+
+		itemTurnID := ""
+		if rawItemMetadata, exists := item[officialOpenAIWSItemTurnMetadata]; exists {
+			itemMetadata, validMetadata := rawItemMetadata.(map[string]any)
+			if !validMetadata {
+				return hasAny, hasCurrent, false, errors.New(
+					"OpenAI official egress WebSocket tool output turn metadata must be object",
+				)
+			}
+			itemTurnID = strings.TrimSpace(officialOpenAIString(itemMetadata, "turn_id"))
+			if itemTurnID != "" {
+				if _, err := uuid.Parse(itemTurnID); err != nil {
+					return hasAny, hasCurrent, false, fmt.Errorf(
+						"OpenAI official egress WebSocket tool output turn_id must be UUID: %w",
+						err,
+					)
+				}
+			}
+		}
+
+		isCurrent := false
+		_, inCurrentSegment := currentSegment[index]
+		switch {
+		case currentTurnID != "" && itemTurnID != "":
+			isCurrent = itemTurnID == currentTurnID
+		case inCurrentSegment:
+			// 在帧尚未补齐逐项 metadata 时，位于当前输入段末尾的工具
+			// 输出可视为当前轮；若输出后又出现普通输入，则更像历史轮次。
+			// 但同一段此前还有未标注轮次的工具调用时，无法安全区分，
+			// 必须 fail-close，不能把整段历史误裁剪成工具续接。
+			if nonToolAfter[index] {
+				if unmarkedToolCallBefore[index] {
+					reliable = false
+				}
+				isCurrent = false
+			} else {
+				isCurrent = true
+			}
+		case hasCurrentSegment:
+			// 已能识别当前分段，位于其前的工具输出属于历史轮次。
+			isCurrent = false
+		default:
+			// 没有 metadata 且不在可识别的当前分段中，无法安全猜测归属。
+			reliable = false
+		}
+		if isCurrent {
+			hasCurrent = true
+		}
+	}
+
+	return hasAny, hasCurrent, reliable, nil
+}
+
+func classifyOfficialOpenAIWSToolOutputTurnFromRaw(payload []byte) (bool, bool, bool, error) {
+	if len(payload) == 0 {
+		return false, false, true, nil
+	}
+	decoded, err := decodeOfficialJSONObjectUseNumber(payload)
+	if err != nil {
+		return false, false, false, fmt.Errorf(
+			"decode OpenAI official egress WebSocket tool output turn: %w",
+			err,
+		)
+	}
+	return classifyOfficialOpenAIWSToolOutputTurn(decoded)
+}
+
 // buildDerivedOpenAIOfficialEgressWSToolContinuationFrame 把第三方客户端
 // 携带完整历史的工具结果帧收敛为 Codex CLI 的最小续链形态。
 //
@@ -962,8 +1124,22 @@ func buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
 	candidate []byte,
 	previousResponseID string,
 ) ([]byte, bool, error) {
-	if !isDerivedOpenAIOfficialEgressWSContext(ctx) ||
-		!openAIWSRawPayloadHasToolCallOutput(candidate) {
+	if !isDerivedOpenAIOfficialEgressWSContext(ctx) {
+		return candidate, false, nil
+	}
+	hasAnyToolOutput, hasCurrentToolOutput, reliable, classifyErr :=
+		classifyOfficialOpenAIWSToolOutputTurnFromRaw(candidate)
+	if classifyErr != nil {
+		return nil, false, classifyErr
+	}
+	if !reliable {
+		return nil, false, errors.New(
+			"OpenAI official egress WebSocket tool output turn cannot be determined reliably",
+		)
+	}
+	if !hasAnyToolOutput || !hasCurrentToolOutput {
+		// 历史轮次的工具输出不应触发当前轮工具续接；保留原帧，
+		// 让普通用户轮次按完整语义继续处理。
 		return candidate, false, nil
 	}
 	previousResponseID = strings.TrimSpace(previousResponseID)

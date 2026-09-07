@@ -583,6 +583,41 @@ func TestOpenAIOfficialEgressWSDerivesKiloIdentityAndCanonicalFrame(t *testing.T
 		"",
 	)
 	require.ErrorContains(t, err, "requires prior response ID or complete tool call context")
+
+	// 历史轮次有工具输出、当前轮只是普通用户消息时，不得再进入工具续接
+	// 分支，也不能因为历史 output 存在而复用旧轮次 Turn ID。
+	historicalOutputOnly := []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.6-luna",
+		"client_metadata":{"turn_id":"` + fullHistoryTurnID + `"},
+		"input":[
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"准备读取"}]},
+			{"type":"function_call_output","call_id":"call_old","output":"ok","internal_chat_message_metadata_passthrough":{"turn_id":"bee3cd38-4511-4497-899e-f19f04f953fd"}},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"继续说明结果"}]}
+		]
+	}`)
+	unchanged, changed, err := buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
+		ctx,
+		historicalOutputOnly,
+		"resp_previous",
+	)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, historicalOutputOnly, unchanged)
+
+	ordinaryNextTurn, _, err := prepareOpenAIOfficialEgressSemanticWSFrame(
+		ctx,
+		historicalOutputOnly,
+		historicalOutputOnly,
+		"resp_previous",
+		false,
+	)
+	require.NoError(t, err)
+	require.NotEqual(
+		t,
+		fullHistoryTurnID,
+		gjson.GetBytes(ordinaryNextTurn, "client_metadata.turn_id").String(),
+	)
 }
 
 func TestOpenAIOfficialEgressWSDerivedNonLiteUsesOfficialContract(t *testing.T) {

@@ -274,6 +274,12 @@ func (s *OpenAIGatewayService) resolveOpenAIModelCapabilities(
 			ReasoningDefaultsKnown:            true,
 		}
 	}
+	if value.UseResponsesLite && openAIResponsesLiteRequiresFullResponses(body) {
+		// Lite 只适用于有限的内置/函数工具。明确携带 hosted tool 或其
+		// 调用历史时必须走完整 Responses 能力链路，不能在 Lite 本地 400，
+		// 也不能静默删除真实工具意图。
+		value.UseResponsesLite = false
+	}
 	return value
 }
 

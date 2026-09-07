@@ -4,7 +4,62 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
+
+var openAIResponsesLiteHostedToolTypes = map[string]struct{}{
+	"image_generation":     {},
+	"web_search":           {},
+	"x_search":             {},
+	"file_search":          {},
+	"code_interpreter":     {},
+	"computer_use_preview": {},
+}
+
+// openAIResponsesLiteRequiresFullResponses 判断请求是否声明了 Lite 无法承载的
+// hosted tool。仅按顶层 tool type 和明确的 tool_choice/历史调用项判断；名为
+// web_search 的普通 function 仍是客户端函数，不应被误当成 hosted tool。
+func openAIResponsesLiteRequiresFullResponses(body []byte) bool {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	containsHostedType := func(value gjson.Result) bool {
+		if !value.Exists() {
+			return false
+		}
+		toolType := strings.TrimSpace(value.Get("type").String())
+		_, hosted := openAIResponsesLiteHostedToolTypes[toolType]
+		return hosted
+	}
+	tools := gjson.GetBytes(body, "tools")
+	if tools.IsArray() {
+		for _, tool := range tools.Array() {
+			if containsHostedType(tool) {
+				return true
+			}
+		}
+	}
+	toolChoice := gjson.GetBytes(body, "tool_choice")
+	if containsHostedType(toolChoice) {
+		return true
+	}
+	if toolChoice.Type == gjson.String {
+		if _, hosted := openAIResponsesLiteHostedToolTypes[strings.TrimSpace(toolChoice.String())]; hosted {
+			return true
+		}
+	}
+	input := gjson.GetBytes(body, "input")
+	if input.IsArray() {
+		for _, item := range input.Array() {
+			itemType := strings.TrimSpace(item.Get("type").String())
+			if strings.HasSuffix(itemType, "_call") && itemType != "function_call" {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 type openAIResponsesLiteValidationError struct {
 	param   string

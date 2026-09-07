@@ -166,6 +166,9 @@ func codex0151SystemProxyCaptureToolSuccessorSupersedesService(
 	priorDigest,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151SystemProxyCaptureToolSuccessorService()
 	if err != nil {
 		return false

@@ -36,6 +36,14 @@ func TestOpenAIModelCapabilitiesUseExactManifestBit(t *testing.T) {
 		account,
 		[]byte(`{"model":"unknown-model"}`),
 	))
+	require.False(t, service.resolveOpenAIResponsesLiteCapability(
+		account,
+		[]byte(`{"model":"gpt-5.6-luna","tools":[{"type":"web_search"}]}`),
+	), "明确 hosted web_search 必须离开 Responses Lite")
+	require.True(t, service.resolveOpenAIResponsesLiteCapability(
+		account,
+		[]byte(`{"model":"gpt-5.6-luna","tools":[{"type":"function","name":"web_search"}]}`),
+	), "普通 function 名称 web_search 仍可留在 Lite")
 }
 
 func TestOpenAIModelCapabilitiesRecordParallelToolBit(t *testing.T) {

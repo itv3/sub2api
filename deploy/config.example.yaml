@@ -228,6 +228,14 @@ gateway:
   max_body_size: 268435456
   # 纯文本端点请求体上限（embeddings、alpha/search），默认 32 MiB。
   text_max_body_size: 33554432
+  # Responses 在读取正文前使用的进程级加权内存预算（默认 384 MiB）。
+  request_memory_budget_bytes: 402653184
+  # Responses 单请求硬上限（默认 32 MiB）；0 表示回退到 text_max_body_size。
+  request_memory_max_request_bytes: 33554432
+  # 请求正文在解码、改写和转发链中的估算放大倍数。
+  request_memory_amplification: 5.0
+  # 每个 Responses 请求的固定内存预算（默认 8 MiB）。
+  request_memory_fixed_bytes: 8388608
   # Max bytes to read for non-stream upstream responses (default: 8MB)
   # 非流式上游响应体读取上限（默认 8MB）
   upstream_response_read_max_bytes: 8388608

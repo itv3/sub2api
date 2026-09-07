@@ -133,13 +133,15 @@ RUN mkdir -p /app/data && chown -R sub2api:sub2api /app
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 # 候选采集树会把脚本收紧为 700；仅补执行位不会恢复非 root 运行用户的读取权限。
 RUN chmod 755 /app/docker-entrypoint.sh
+COPY deploy/container-healthcheck.sh /app/container-healthcheck.sh
+RUN chmod 755 /app/container-healthcheck.sh
 
 # Expose port (can be overridden by SERVER_PORT env var)
 EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD wget -q -T 5 -O /dev/null http://localhost:${SERVER_PORT:-8080}/health || exit 1
+    CMD /app/container-healthcheck.sh
 
 # Run the application (entrypoint fixes /app/data ownership then execs as sub2api)
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

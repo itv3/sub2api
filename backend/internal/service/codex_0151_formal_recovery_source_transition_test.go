@@ -290,6 +290,9 @@ func validateCodex0151FormalRecoverySourceTransitionService(receipt codex0151Too
 }
 
 func codex0151FormalRecoverySourceTransitionSupersedesService(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151FormalRecoverySourceTransitionService()
 	if err != nil {
 		return false

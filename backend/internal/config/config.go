@@ -962,6 +962,16 @@ type GatewayConfig struct {
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
 	TextMaxBodySize int64 `mapstructure:"text_max_body_size"`
+	// RequestMemoryBudgetBytes 是 Responses 正文处理的进程级加权内存预算。
+	// 预算在读取正文前占用，覆盖读取、解码、改写和转发的生命周期。
+	RequestMemoryBudgetBytes int64 `mapstructure:"request_memory_budget_bytes"`
+	// RequestMemoryMaxRequestBytes 是 Responses 单请求硬上限；0 表示回退到
+	// TextMaxBodySize。超过上限的请求在读取正文前直接返回 413。
+	RequestMemoryMaxRequestBytes int64 `mapstructure:"request_memory_max_request_bytes"`
+	// RequestMemoryAmplification 是按正文大小估算转换链放大的倍数。
+	RequestMemoryAmplification float64 `mapstructure:"request_memory_amplification"`
+	// RequestMemoryFixedBytes 是每个 Responses 请求的固定内存预算。
+	RequestMemoryFixedBytes int64 `mapstructure:"request_memory_fixed_bytes"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
 	UpstreamResponseReadMaxBytes int64 `mapstructure:"upstream_response_read_max_bytes"`
 	// 上游模型列表响应体读取上限（字节）
@@ -1891,6 +1901,10 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.TextMaxBodySize > cfg.Gateway.MaxBodySize {
 		cfg.Gateway.TextMaxBodySize = cfg.Gateway.MaxBodySize
 	}
+	if !hasExplicitConfigOrEnv("gateway.request_memory_max_request_bytes", "GATEWAY_REQUEST_MEMORY_MAX_REQUEST_BYTES") &&
+		cfg.Gateway.RequestMemoryMaxRequestBytes > cfg.Gateway.MaxBodySize {
+		cfg.Gateway.RequestMemoryMaxRequestBytes = cfg.Gateway.MaxBodySize
+	}
 
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
@@ -2535,6 +2549,13 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
 	viper.SetDefault("gateway.text_max_body_size", int64(32*1024*1024))
+	// Responses 正文在完整读取前执行进程级加权内存准入，默认给 768 MiB
+	// 容器留下非 Go 内存、网络缓冲和运行时余量。生产可通过环境变量按压测
+	// 结果调整，0 的单请求上限回退到 text_max_body_size。
+	viper.SetDefault("gateway.request_memory_budget_bytes", int64(384*1024*1024))
+	viper.SetDefault("gateway.request_memory_max_request_bytes", int64(32*1024*1024))
+	viper.SetDefault("gateway.request_memory_amplification", 5.0)
+	viper.SetDefault("gateway.request_memory_fixed_bytes", int64(8*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.models_list_read_max_bytes", DefaultModelsListReadMaxBytes)
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
@@ -3342,6 +3363,20 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.TextMaxBodySize <= 0 || c.Gateway.TextMaxBodySize > c.Gateway.MaxBodySize {
 		return fmt.Errorf("gateway.text_max_body_size must be positive and no greater than gateway.max_body_size")
+	}
+	if c.Gateway.RequestMemoryBudgetBytes <= 0 {
+		return fmt.Errorf("gateway.request_memory_budget_bytes must be positive")
+	}
+	if c.Gateway.RequestMemoryMaxRequestBytes < 0 ||
+		(c.Gateway.RequestMemoryMaxRequestBytes > 0 &&
+			c.Gateway.RequestMemoryMaxRequestBytes > c.Gateway.MaxBodySize) {
+		return fmt.Errorf("gateway.request_memory_max_request_bytes must be non-negative and no greater than gateway.max_body_size")
+	}
+	if c.Gateway.RequestMemoryAmplification < 1 {
+		return fmt.Errorf("gateway.request_memory_amplification must be at least 1")
+	}
+	if c.Gateway.RequestMemoryFixedBytes < 0 {
+		return fmt.Errorf("gateway.request_memory_fixed_bytes must be non-negative")
 	}
 	if c.Gateway.UpstreamResponseReadMaxBytes <= 0 {
 		return fmt.Errorf("gateway.upstream_response_read_max_bytes must be positive")

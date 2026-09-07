@@ -1613,6 +1613,25 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		toolSignals := ToolContinuationSignals{
 			HasFunctionCallOutput: openAIWSRawPayloadHasToolCallOutput(currentPayload),
 		}
+		if isDerivedOpenAIOfficialEgressWSContext(ctx) {
+			_, hasCurrentToolOutput, reliable, classifyErr :=
+				classifyOfficialOpenAIWSToolOutputTurnFromRaw(currentPayload)
+			if classifyErr != nil {
+				return NewOpenAIWSClientCloseError(
+					coderws.StatusPolicyViolation,
+					"official egress websocket tool continuation classification failed",
+					classifyErr,
+				)
+			}
+			if !reliable {
+				return NewOpenAIWSClientCloseError(
+					coderws.StatusPolicyViolation,
+					"official egress websocket tool continuation turn is ambiguous",
+					errors.New("tool output turn cannot be determined reliably"),
+				)
+			}
+			toolSignals.HasFunctionCallOutput = hasCurrentToolOutput
+		}
 		if toolSignals.HasFunctionCallOutput {
 			var currentReqBody map[string]any
 			if err := json.Unmarshal(currentPayload, &currentReqBody); err == nil {

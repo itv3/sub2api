@@ -593,7 +593,7 @@ func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDoesNotDecodeBeforeError(
 	require.Equal(t, "summary_text", gjson.GetBytes(upstream.bodies[1], "input.0.summary.0.type").String())
 }
 
-func TestOpenAIGatewayService_Forward_StoreFalseReusesInvalidEncryptedDigest(t *testing.T) {
+func TestOpenAIGatewayService_Forward_StoreFalseReusesScopedInvalidEncryptedDigest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &httpUpstreamRecorder{
 		responses: []*http.Response{
@@ -636,7 +636,7 @@ func TestOpenAIGatewayService_Forward_StoreFalseReusesInvalidEncryptedDigest(t *
 		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 		return c
 	}
-	body := []byte(`{"model":"gpt-5","stream":false,"store":false,"input":[{"type":"reasoning","encrypted_content":"stale-cipher","summary":[{"type":"summary_text","text":"keep me"}]},{"type":"message","content":[{"type":"input_text","text":"hi"}]}]}`)
+	body := []byte(`{"model":"gpt-5","stream":false,"store":false,"prompt_cache_key":"cache-stale","input":[{"type":"reasoning","encrypted_content":"stale-cipher","summary":[{"type":"summary_text","text":"keep me"}]},{"type":"message","content":[{"type":"input_text","text":"hi"}]}]}`)
 
 	firstResult, firstErr := svc.Forward(context.Background(), newContext(), account, body)
 	require.NoError(t, firstErr)
@@ -645,7 +645,8 @@ func TestOpenAIGatewayService_Forward_StoreFalseReusesInvalidEncryptedDigest(t *
 	require.NoError(t, secondErr)
 	require.NotNil(t, secondResult)
 
-	// 第一次请求先失败再清洗重试；第二次请求应在首次上行前命中账号级摘要缓存。
+	// 第一次请求先失败再清洗重试；第二次请求应在首次上行前命中同一
+	// prompt_cache_key 作用域的摘要缓存，其他链路不会被账号级污染。
 	require.Len(t, upstream.bodies, 3)
 	require.Equal(t, "stale-cipher", gjson.GetBytes(upstream.bodies[0], "input.0.encrypted_content").String())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], `input.#(encrypted_content=="stale-cipher")`).Exists())

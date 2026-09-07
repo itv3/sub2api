@@ -153,6 +153,9 @@ func validateCodex0151SystemProxyCaptureToolSuccessor(receipt codex0151ToolReadi
 }
 
 func codex0151SystemProxyCaptureToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151SystemProxyCaptureToolSuccessor()
 	if err != nil {
 		return false

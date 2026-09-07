@@ -62,6 +62,82 @@ func TestOpenAIInvalidEncryptedAccountCacheBoundsAccountsAndDigests(t *testing.T
 	require.True(t, containsNewest, "容量已满时应优先保留新确认的坏摘要")
 }
 
+func TestOpenAIInvalidEncryptedScopedCacheIsolatedByModelProtocolEndpointAndChain(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	digest := openAIInvalidEncryptedDigestForTest("cipher-scoped")
+	baseBody := map[string]any{
+		"model":                "gpt-5.3-codex",
+		"previous_response_id": "resp-chain-a",
+	}
+	scope, ok := buildOpenAIInvalidEncryptedScope(
+		account,
+		"gpt-5.3-codex",
+		OpenAIUpstreamTransportHTTPSSE,
+		false,
+		false,
+		baseBody,
+		"",
+	)
+	require.True(t, ok)
+	svc.bindOpenAIInvalidEncryptedScope(account.ID, scope, map[openAIInvalidEncryptedDigest]struct{}{digest: {}})
+	require.Contains(t, svc.openAIInvalidEncryptedScopeDigests(account.ID, scope), digest)
+
+	for _, body := range []map[string]any{
+		{"model": "gpt-5.4", "previous_response_id": "resp-chain-a"},
+		{"model": "gpt-5.3-codex", "previous_response_id": "resp-chain-b"},
+	} {
+		other, otherOK := buildOpenAIInvalidEncryptedScope(
+			account,
+			firstNonEmptyString(body["model"]),
+			OpenAIUpstreamTransportHTTPSSE,
+			false,
+			false,
+			body,
+			"",
+		)
+		require.True(t, otherOK)
+		require.Empty(t, svc.openAIInvalidEncryptedScopeDigests(account.ID, other))
+	}
+	wsScope, wsOK := buildOpenAIInvalidEncryptedScope(
+		account,
+		"gpt-5.3-codex",
+		OpenAIUpstreamTransportResponsesWebsocketV2,
+		false,
+		false,
+		baseBody,
+		"",
+	)
+	require.True(t, wsOK)
+	require.Empty(t, svc.openAIInvalidEncryptedScopeDigests(account.ID, wsScope))
+}
+
+func TestOpenAIInvalidEncryptedScopeRequiresReliableChainKey(t *testing.T) {
+	account := &Account{ID: 8, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	if _, ok := buildOpenAIInvalidEncryptedScope(
+		account,
+		"gpt-5.3-codex",
+		OpenAIUpstreamTransportHTTPSSE,
+		false,
+		false,
+		map[string]any{"model": "gpt-5.3-codex"},
+		"",
+	); ok {
+		t.Fatal("缺少 previous_response_id/prompt_cache_key 时不应启用发送前缓存")
+	}
+	if _, ok := buildOpenAIInvalidEncryptedScope(
+		account,
+		"gpt-5.3-codex",
+		OpenAIUpstreamTransportHTTPSSE,
+		false,
+		false,
+		map[string]any{"model": "gpt-5.3-codex"},
+		"client-cache-key",
+	); !ok {
+		t.Fatal("调用方提供稳定 prompt_cache_key 时应启用作用域缓存")
+	}
+}
+
 func openAIInvalidEncryptedDigestForTest(value string) openAIInvalidEncryptedDigest {
 	digest, ok := openAIEncryptedReasoningItemDigest(map[string]any{
 		"type":              "reasoning",

@@ -405,23 +405,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		disablePatch()
 	}
 	invalidEncryptedDigests := map[openAIInvalidEncryptedDigest]struct{}(nil)
-	if account != nil {
-		knownInvalidEncryptedDigests := s.openAIInvalidEncryptedAccountDigests(account.ID)
-		if len(knownInvalidEncryptedDigests) > 0 {
-			decoded, decodeErr := ensureReqBody()
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			if trimOpenAIInvalidEncryptedReasoningItems(decoded, knownInvalidEncryptedDigests) {
-				markDecodedModified()
-				logOpenAIWSModeInfo(
-					"invalid_encrypted_content_cache_sanitize account_id=%d invalid_digest_count=%d action=drop_known_invalid_items",
-					account.ID,
-					len(knownInvalidEncryptedDigests),
-				)
-			}
-		}
-	}
+	// 该作用域在最终上游 model/body 已确定后计算；WS/HTTP 重试和成功绑定
+	// 都复用同一份初始作用域，避免清洗时删除 previous_response_id 后失去
+	// 原链路的关联关系。
+	invalidEncryptedScope := openAIInvalidEncryptedScope{}
+	invalidEncryptedScopeReady := false
 
 	apiKey := getAPIKeyFromContext(c)
 	imageGenerationAllowed := GroupAllowsImageGeneration(nil)
@@ -817,6 +805,51 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		requestView = newOpenAIRequestView(body)
 		reqBody = nil
 	}
+	// 只有最终上游请求的 model、传输协议和链路键都已确定后，才应用
+	// invalid_encrypted_content 的发送前预清洗。作用域不完整时保持关闭，
+	// 避免把一个账号/旧连接上的坏摘要误用于其他合法请求。
+	sanitizeKnownInvalidEncrypted := func(transport OpenAIUpstreamTransport) error {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return decodeErr
+		}
+		invalidEncryptedScope, invalidEncryptedScopeReady = buildOpenAIInvalidEncryptedScope(
+			account,
+			upstreamModel,
+			transport,
+			isCompactRequest,
+			passthroughEnabled,
+			decoded,
+			promptCacheKey,
+		)
+		if !invalidEncryptedScopeReady {
+			return nil
+		}
+		knownInvalidEncryptedDigests := s.openAIInvalidEncryptedScopeDigests(account.ID, invalidEncryptedScope)
+		if len(knownInvalidEncryptedDigests) == 0 || !trimOpenAIInvalidEncryptedReasoningItems(decoded, knownInvalidEncryptedDigests) {
+			return nil
+		}
+		serialized, marshalErr := marshalOfficialJSONObjectPreservingOrderAndRaw(decoded, body)
+		if marshalErr != nil {
+			return fmt.Errorf("serialize scoped invalid_encrypted_content sanitization: %w", marshalErr)
+		}
+		body = serialized
+		requestView = newOpenAIRequestView(body)
+		reqBody = decoded
+		bodyModified = false
+		logOpenAIWSModeInfo(
+			"invalid_encrypted_content_cache_sanitize account_id=%d model=%s protocol=%s endpoint=%s invalid_digest_count=%d action=drop_known_invalid_items",
+			account.ID,
+			normalizeOpenAIWSLogValue(invalidEncryptedScope.Model),
+			normalizeOpenAIWSLogValue(invalidEncryptedScope.Protocol),
+			normalizeOpenAIWSLogValue(invalidEncryptedScope.Endpoint),
+			len(knownInvalidEncryptedDigests),
+		)
+		return nil
+	}
+	if err := sanitizeKnownInvalidEncrypted(wsDecision.Transport); err != nil {
+		return nil, err
+	}
 	upstreamReqStream := reqStream
 	if isCompactRequest {
 		upstreamReqStream = false
@@ -1061,8 +1094,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if wsResult != nil {
 				requestID = strings.TrimSpace(wsResult.RequestID)
 			}
-			if len(invalidEncryptedDigests) > 0 {
-				s.bindOpenAIInvalidEncryptedAccount(account.ID, invalidEncryptedDigests)
+			if invalidEncryptedScopeReady && len(invalidEncryptedDigests) > 0 {
+				s.bindOpenAIInvalidEncryptedScopeWithResponseID(account.ID, invalidEncryptedScope, wsResult.RequestID, invalidEncryptedDigests)
 			}
 			logOpenAIWSModeDebug(
 				"forward_succeeded account_id=%d request_id=%s stream=%v has_first_token_ms=%v first_token_ms=%d ws_attempts=%d",
@@ -1115,6 +1148,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		requestView = newOpenAIRequestView(body)
 		reqBody = nil
+		// WS→HTTP bridge 是不同协议/端点作用域。重新计算作用域并执行一次
+		// 精确预清洗，避免把 WS 链路的坏摘要带入 HTTP，反之亦然。
+		if err := sanitizeKnownInvalidEncrypted(OpenAIUpstreamTransportHTTPSSE); err != nil {
+			return nil, err
+		}
 		officialOpenAIHTTPEnabled = officialEgressEnabled &&
 			account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth
 		if officialOpenAIHTTPEnabled {
@@ -1590,8 +1628,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if searchCount > 0 && account != nil && account.IsGrok() {
 			forwardResult.SearchCount = searchCount
 		}
-		if len(invalidEncryptedDigests) > 0 {
-			s.bindOpenAIInvalidEncryptedAccount(account.ID, invalidEncryptedDigests)
+		if invalidEncryptedScopeReady && len(invalidEncryptedDigests) > 0 {
+			s.bindOpenAIInvalidEncryptedScopeWithResponseID(account.ID, invalidEncryptedScope, responseID, invalidEncryptedDigests)
 		}
 		return forwardResult, nil
 	}

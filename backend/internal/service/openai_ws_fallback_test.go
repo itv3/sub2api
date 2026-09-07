@@ -108,6 +108,17 @@ func TestClassifyOpenAIWSErrorEvent(t *testing.T) {
 	reason, recoverable = classifyOpenAIWSErrorEvent([]byte(`{"type":"error","error":{"code":"previous_response_not_found","message":"not found"}}`))
 	require.Equal(t, "previous_response_not_found", reason)
 	require.True(t, recoverable)
+
+	for _, message := range []string{
+		"Invalid `previous_response_id`.",
+		"invalid previous_response_id",
+		"previous_response_id is invalid",
+		"Previous response id is invalid",
+	} {
+		reason, recoverable = classifyOpenAIWSErrorEvent([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"` + message + `"}}`))
+		require.Equal(t, "previous_response_not_found", reason, message)
+		require.True(t, recoverable, message)
+	}
 }
 
 func TestClassifyOpenAIWSReconnectReason(t *testing.T) {

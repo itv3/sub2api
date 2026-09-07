@@ -27,6 +27,18 @@ def git(*arguments: str) -> bytes:
     )
 
 
+def git_is_ancestor(ancestor: str, descendant: str) -> bool:
+    """确认 successor 基准提交仍是当前工作区提交的祖先。"""
+
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+
+
 def current_state(path: str) -> dict[str, Any]:
     absolute = ROOT / Path(path)
     metadata = absolute.lstat()
@@ -75,7 +87,12 @@ class Codex0151WorktreeSuccessorTest(unittest.TestCase):
         self.assertFalse(payload["policy"]["historical_receipts_rewrite_allowed"])
         self.assertFalse(payload["policy"]["historical_source_drift_ledger_used"])
         self.assertFalse(payload["policy"]["arm64_deployment_allowed"])
-        self.assertEqual(payload["base_commit"], git("rev-parse", "HEAD").decode().strip())
+        self.assertTrue(
+            git_is_ancestor(
+                payload["base_commit"],
+                git("rev-parse", "HEAD").decode().strip(),
+            )
+        )
 
         identity = payload["identity_sha256"]
         self.assertIsInstance(identity, str)

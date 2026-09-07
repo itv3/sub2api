@@ -41,6 +41,8 @@ type OpenAIGatewayHandler struct {
 	opsService                 *service.OpsService
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
+	requestMemoryMu            sync.Mutex
+	requestMemory              *requestMemoryAdmission
 	maxAccountSwitches         int
 	cfg                        *config.Config
 }
@@ -291,9 +293,75 @@ func NewOpenAIGatewayHandler(
 		opsService:               opsService,
 		concurrencyHelper:        NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
 		imageLimiter:             &imageConcurrencyLimiter{},
+		requestMemory:            newRequestMemoryAdmission(cfg),
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
 	}
+}
+
+func (h *OpenAIGatewayHandler) responsesRequestMemoryAdmission() *requestMemoryAdmission {
+	if h == nil || h.cfg == nil {
+		return nil
+	}
+	h.requestMemoryMu.Lock()
+	defer h.requestMemoryMu.Unlock()
+	if h.requestMemory == nil {
+		h.requestMemory = newRequestMemoryAdmission(h.cfg)
+	}
+	return h.requestMemory
+}
+
+// acquireResponsesRequestMemory 必须在读取正文前调用。预留覆盖整个 handler
+// 生命周期，避免正文先进入堆、再等待用户/账号并发槽而形成大请求队列。
+func (h *OpenAIGatewayHandler) acquireResponsesRequestMemory(
+	c *gin.Context,
+	reqLog *zap.Logger,
+) (func(), bool) {
+	if h == nil || h.cfg == nil || c == nil || c.Request == nil {
+		return func() {}, true
+	}
+	weight, tooLarge := requestMemoryWeight(c.Request, h.cfg)
+	admission := h.responsesRequestMemoryAdmission()
+	if tooLarge {
+		if admission != nil {
+			admission.tooLarge.Add(1)
+		}
+		maxRequest, _, _ := requestMemoryAdmissionConfig(h.cfg)
+		if reqLog != nil {
+			reqLog.Warn("openai.request_memory_rejected",
+				zap.String("reason", "single_request_limit"),
+				zap.Int64("content_length", c.Request.ContentLength),
+				zap.Int64("max_request_bytes", maxRequest),
+			)
+		}
+		h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxRequest))
+		return nil, false
+	}
+	reservation, acquired := admission.tryAcquire(weight)
+	if !acquired {
+		c.Header("Retry-After", strconv.Itoa(defaultRequestMemoryRetryAfter))
+		if reqLog != nil {
+			used, capacity, _, rejected, _ := admission.stats()
+			reqLog.Warn("openai.request_memory_rejected",
+				zap.String("reason", "budget_exhausted"),
+				zap.Int64("requested_weight_bytes", weight),
+				zap.Int64("used_bytes", used),
+				zap.Int64("capacity_bytes", capacity),
+				zap.Uint64("rejected_total", rejected),
+			)
+		}
+		h.errorResponse(c, http.StatusServiceUnavailable, "rate_limit_error", "Request memory budget is temporarily exhausted; retry later")
+		return nil, false
+	}
+	if reqLog != nil {
+		used, capacity, _, _, _ := admission.stats()
+		reqLog.Debug("openai.request_memory_admitted",
+			zap.Int64("requested_weight_bytes", weight),
+			zap.Int64("used_bytes", used),
+			zap.Int64("capacity_bytes", capacity),
+		)
+	}
+	return reservation.release, true
 }
 
 // Responses handles OpenAI Responses API endpoint
@@ -337,9 +405,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
+	requestMemoryRelease, requestMemoryAcquired := h.acquireResponsesRequestMemory(c, reqLog)
+	if !requestMemoryAcquired {
+		return
+	}
+	defer requestMemoryRelease()
 
 	// Read request body
-	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
+	body, err := readResponsesJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
