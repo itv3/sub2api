@@ -75,7 +75,8 @@ func validateCodex01491TerminalArtifact(artifact codex01491TerminalArtifact) err
 			artifact.Path,
 			artifact.SHA256,
 			currentDigest,
-		)) {
+		) && !codex0151WorktreeSuccessorAfter(artifact.Path, currentDigest) &&
+		!historicalSourceDriftSupersedes(artifact.Path, artifact.SHA256, currentDigest)) {
 		return errors.New("0.149.1 终态制品摘要不一致：" + artifact.Path)
 	}
 	return nil
@@ -194,7 +195,13 @@ func readCodex01491TerminalState() (codex01491TerminalReceipt, error) {
 					transition.Path,
 					transition.CurrentSHA256,
 					currentDigest,
-				)) {
+				) && !codex0151FormalRecoverySourceTransitionSupersedes(
+					transition.Path,
+					transition.CurrentSHA256,
+					currentDigest,
+				) && !codex0151WorktreeSuccessorAfter(transition.Path, currentDigest) &&
+					!historicalSourceDriftSupersedes(transition.Path, transition.CurrentSHA256, currentDigest) &&
+					!codex0151EvaluationRecoverySupersedes(transition.Path, transition.CurrentSHA256, currentDigest)) {
 				return receipt, errors.New("0.149.1 终态当前摘要不一致：" + transition.Path)
 			}
 		case "deleted":
@@ -215,10 +222,17 @@ func readCodex01491TerminalState() (codex01491TerminalReceipt, error) {
 // codex01491TerminalStateSupersedes 把已归档的逐轮 transition 压缩为一条精确终边。
 // 只接受收据登记的 path／历史摘要／当前摘要三元组，不放宽生产路径或 wire 规则。
 func codex01491TerminalStateSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	if openAIReplayOOMRepairSupersedes(path, priorDigest, currentDigest) ||
 		openAIWSCompatibilityGuardRepairSupersedes(path, priorDigest, currentDigest) ||
 		openAIWSEmptyTerminalOutputRepairSupersedes(path, priorDigest, currentDigest) ||
-		codex0151ToolReadinessTransitionSupersedes(path, priorDigest, currentDigest) {
+		codex0151ToolReadinessTransitionSupersedes(path, priorDigest, currentDigest) ||
+		codex0151FormalRecoverySourceTransitionSupersedes(path, priorDigest, currentDigest) ||
+		codex0151WorktreeSuccessorAfter(path, currentDigest) ||
+		historicalSourceDriftSupersedes(path, priorDigest, currentDigest) ||
+		codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest) {
 		return true
 	}
 	receipt, err := loadCodex01491TerminalState()
@@ -241,6 +255,10 @@ func codex01491TerminalStateSupersedes(path, priorDigest, currentDigest string) 
 				transition.CurrentSHA256,
 				currentDigest,
 			) || codex0151ToolReadinessTransitionSupersedes(
+				path,
+				transition.CurrentSHA256,
+				currentDigest,
+			) || codex0151FormalRecoverySourceTransitionSupersedes(
 				path,
 				transition.CurrentSHA256,
 				currentDigest,
@@ -395,6 +413,10 @@ func validateOpenAIReplayOOMRepairTransition(receipt openAIReplayOOMRepairReceip
 			transition.Path,
 			transition.ToSHA256,
 			currentDigest,
+		) && !codex0151FormalRecoverySourceTransitionSupersedes(
+			transition.Path,
+			transition.ToSHA256,
+			currentDigest,
 		)) {
 			return errors.New("OpenAI replay OOM 修复 transition 当前摘要不一致：" + transition.Path)
 		}
@@ -437,7 +459,10 @@ func openAIReplayOOMRepairSupersedes(path, priorDigest, currentDigest string) bo
 	}
 	for _, transition := range receipt.Transitions {
 		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
+			(transition.ToSHA256 == currentDigest ||
+				codex0151FormalRecoverySourceTransitionSupersedes(
+					path, transition.ToSHA256, currentDigest,
+				)) {
 			return true
 		}
 	}
@@ -577,7 +602,11 @@ func validateOpenAIWSCompatibilityGuardRepairTransition(
 				transition.Path,
 				transition.ToSHA256,
 				currentDigest,
-			)) {
+			) && !codex0151FormalRecoverySourceTransitionSupersedes(
+			transition.Path,
+			transition.ToSHA256,
+			currentDigest,
+		)) {
 			return errors.New("OpenAI WS 兼容守卫修复 transition 当前摘要不一致：" + transition.Path)
 		}
 		paths = append(paths, transition.Path)
@@ -601,7 +630,10 @@ func openAIWSCompatibilityGuardRepairSupersedes(
 	}
 	for _, transition := range receipt.Transitions {
 		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
+			(transition.ToSHA256 == currentDigest ||
+				codex0151FormalRecoverySourceTransitionSupersedes(
+					path, transition.ToSHA256, currentDigest,
+				)) {
 			return true
 		}
 	}

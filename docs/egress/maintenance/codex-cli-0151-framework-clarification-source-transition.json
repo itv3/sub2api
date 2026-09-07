@@ -6,25 +6,25 @@
   "predecessor": {
     "kind": "codex_cli_0151_evaluation_recovery",
     "path": "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
-    "sha256": "470a65c98fe4d7ecd1684cb2cb4346cd353b56363c36847b914e20f6b3ab274c"
+    "sha256": "ebdb5522ab0e544af7aac18c22010506467c95dfd45dc30ae1ba3f7c8e7303a0"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "0074ae9e33bdd83370885ebcd17f40733ca19aa416449f1e67e7dc767998093f",
-      "to_sha256": "4895527ac689c4c07c1650407e8cbd7f613bd6030abdb35265f123a4a09db9c5",
+      "to_sha256": "3b743a651b265b89ef2ffa68e3cd4f4746ff2eff9e4c52545b310d15cb3da7b4",
       "reason": "让评估恢复摘要图只追加承接本次框架澄清。"
     },
     {
       "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "a3dff98daf42daaecc1062ff287f09e0ac278ff16f935d7091009a9c923ebf88",
-      "to_sha256": "460f77f12d9af03c30fbdacdf02cbb36f7ebd1c8ea24bf4ed01bbba15361cd61",
+      "to_sha256": "6184c721ccc428f4a91ab671365845e38a24f12c409f5869e560256411890982",
       "reason": "让 service 独立重放同一只追加框架澄清。"
     },
     {
       "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
       "from_sha256": "74dc01ac86f6f44c77a508bc5834fe3a6699e92d436d9d0701fe00952e556b75",
-      "to_sha256": "23eae275384371ab00d5786b755110332e7f6159e955dd16bdee85b4b0097c9c",
+      "to_sha256": "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
       "reason": "固定受管原文件输入与仓库绝对 producer 路径，避免摘要漂移和错误执行根。"
     }
   ],
@@ -40,5 +40,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_framework_clarification",
-  "identity_sha256": "e4bdae1f624ae16beeb7e01192162eabfe9737dc6af19361ac9b2080d7a8f810"
+  "identity_sha256": "bbb50624f0dcee0da621f67a8f45f3d3ecc1e9bd80b26dfb2135b7d294f8d41e"
 }

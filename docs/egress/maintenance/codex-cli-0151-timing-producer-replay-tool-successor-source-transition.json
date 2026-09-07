@@ -6,49 +6,49 @@
   "predecessor": {
     "kind": "codex_cli_0151_container_path_recovery_tool_successor_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor-source-transition.json",
-    "sha256": "8d6b2360010d5e27fe28dba999848974e1a45b425ab996a6f68f5c69cfbcfd17"
+    "sha256": "734f756709f410c0642b92c288b4024ce68acb6d1e1d9f2eea399fafb259136e"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_container_path_recovery_tool_successor_test.go",
       "from_sha256": "8679f98b2c76494fef90903e193c7312b91ab69031c7af7ba4e82746154b7d83",
-      "to_sha256": "718faa5097fd5868c5f819f89410d6bf41767396b5cfdf0f10fb353e9ac14f0b",
+      "to_sha256": "467051fe9855c77cff57ec6ad1323026a9be55cb95a3702302090c1a1503beb1",
       "reason": "让容器路径恢复工具后继在 officialegress 包通过精确摘要继续承接计时生产者重放后继。"
     },
     {
       "path": "backend/internal/service/codex_0151_container_path_recovery_tool_successor_test.go",
       "from_sha256": "ad63813efa3f7059e46e30ed0fe3016a3db1eb73e9290ace58546a67da690505",
-      "to_sha256": "6796e5e6802f7eb816f26bc393185eb49c01273389dc3b6382e37e38cf7799ff",
+      "to_sha256": "a1ef9646cfc8ba82940c732a87a69a73dc9b380915cd0eb31010de317d7b0d76",
       "reason": "让容器路径恢复工具后继在 service 包独立重放同一计时生产者摘要链。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "d1ae527c8e0894e7adfef9ed2bafbd0127cd66961b6f2c45069ec0e57e806462",
-      "to_sha256": "25eefc5ff46abb6723550629d18f5f7b5bb42e360a48f3305a8b407d19393cfb",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "明确历史 checkpoint 保留原 producer 字节，并只通过同一精确后继链验证。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_timing_ledger.py",
       "from_sha256": "6dab54cddaf94e4d481c20d47392a8a36ce35d5f0aa49f0c2c2ea6334b18de68",
-      "to_sha256": "828a8ff86a4b021037d7e9068d80b1d422ff22d39fba89cb1c9ac04e451157e0",
+      "to_sha256": "33965cf60a809cfd9fea59e86ba6597daa5e133fd8b30e91d300512c02d591e5",
       "reason": "让旧 checkpoint 保留冻结 producer 原字节，同时以连续来源 transition 验证其可重放身份。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade_timing_ledger.py",
       "from_sha256": "7329cd0f169742ba17874f29afe15a2c65d7396223aabe94d6082e5d7f2c051e",
-      "to_sha256": "46d850b16dd00df68c4be7fa6e2c4fe3019a01a3351e2837e4eab8910304ddb9",
+      "to_sha256": "be09d12a67aa4dfdf0bc42b8a284d5461b02733f094d86536579be4f3f106798",
       "reason": "覆盖旧 checkpoint 跨已登记生产者后继重放和未知摘要失败关闭。"
     }
   ],
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
-      "sha256": "1156f91b30044ae9f80ba1abdca9d98d5ff3a21ae674ddaf545aa9564596e045",
+      "sha256": "f4b441602cb610c1b471d19a0339dc8c34b0907efaa0ab1fbc43d1c0067d0911",
       "reason": "在 officialegress 包重放计时生产者后继的完整摘要闭集与 mutation。"
     },
     {
       "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
-      "sha256": "57661d60f18e8d7a0b80c9c7bb78a253da68f91d492c2b052c7b7892360acf0c",
+      "sha256": "13db553d910e86f0cbf49d77411bc4e47a66a1432d340add665a207437bd9d90",
       "reason": "在 service 包独立重放同一计时生产者后继闭集与 mutation。"
     },
     {
@@ -69,5 +69,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_timing_producer_replay_tool_successor",
-  "identity_sha256": "1adf40515d96ea354d20b3f22fb44a4cfdb2a4c4cddc889533a434d527cf467f"
+  "identity_sha256": "d10984fe9a6056b6618cf1cbcbba1eeddcc813449151f2e9994738caad2d00aa"
 }

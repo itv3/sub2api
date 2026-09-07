@@ -133,9 +133,10 @@ func claudeOfflineReleaseRepairTargetMatches(path string, want string) bool {
 	}
 	sum := sha256.Sum256(raw)
 	current := hex.EncodeToString(sum[:])
-	return current == want || claudeOfflineCIStabilizationTransitionSupersedes(
-		path, want, current,
-	)
+	return codex0151CurrentSourceDigestAccepted(path, want, current) ||
+		claudeOfflineCIStabilizationTransitionSupersedes(
+			path, want, current,
+		)
 }
 
 // claudeOfflineReleaseRepairTransitionSupersedes 只接受固定修复收据中的精确

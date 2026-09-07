@@ -6,61 +6,61 @@
   "predecessor": {
     "kind": "codex_cli_0151_arm64_typescript_dependency_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-arm64-typescript-dependency-source-transition.json",
-    "sha256": "8c831db2f33016adbc820e23384fb29b3f7599d80e642ee5add70199e312964d"
+    "sha256": "12d154d380a10427d23e8eca6f5250640958313c97e27eec1a43aafc2dbca62f"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_arm64_typescript_dependency_source_transition_test.go",
       "from_sha256": "2bd5b745ce91290050670e0d29896b7d9be70d0ada509f0ff0997059efd4941e",
-      "to_sha256": "655c88d388df3520c03189464867d04c31c3857d14dc2c753c6281930737f911",
+      "to_sha256": "b4b503c5343621d8082df09086c0bfbd6bdbdb54cd2700117f93c1957af364a6",
       "reason": "让 officialegress 的 ARM64 依赖 transition 承接停线 Ledger 恢复后继。"
     },
     {
       "path": "backend/internal/service/codex_0151_arm64_typescript_dependency_source_transition_test.go",
       "from_sha256": "9ec557844b6404ec71f6d603087010182b07d24b0022b2df5a5c74e106c63c8c",
-      "to_sha256": "5583bae40a346073c859e5f72ac33808f5e39d36db908a77cc9e1be27214ef76",
+      "to_sha256": "10fd2bf15de11c637a92433514bec87cc2153336ac652feef13604c5b2919c8a",
       "reason": "让 service 的 ARM64 依赖 transition 独立承接停线 Ledger 恢复后继。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "58a94e545deaae489c1b7fc562c9b3eff50f53783ab7461e98d23bb838c30890",
-      "to_sha256": "efeb347285ee3d3fa74fd7e3471455fcf3f0b92b52ad7f252d3709d8eacee9f1",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "补充旧 Ledger 停线后的受管恢复命令边界。"
     },
     {
       "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
       "from_sha256": "c326a4e43f04692dace778410cc95f155687dab80d577231a18955be100ce9d4",
-      "to_sha256": "d053fb4841683e372da3b24961f9be0ba30c57cf85178a6d468ae13bb6e1c9e2",
+      "to_sha256": "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
       "reason": "规定旧停线 checkpoint 与新恢复 P0 控制链必须同时保留。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "ac9d51ce5fa01bc067371f5cf1198b6290eb241438c0b35d00b4fb08bfe1f585",
-      "to_sha256": "955e61bc012e25575f8c93462a5fc988267736cc7a6cd886774ab92959a1ec1f",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "新增 v6 predecessor import，验证停线事实、新恢复 P0 和同一 preflight 演练。"
     },
     {
       "path": "tools/official_client_capture/tests/control_receipt_fixtures.py",
       "from_sha256": "0e139cd8f5a61a4d89e483dbd5bc59a0d11759d171192b1ddf3406b9dc156c8b",
-      "to_sha256": "0bcb3462ef00fab2c5153600f064efc21608adcd7876433e1d834c7ab16e4b8e",
+      "to_sha256": "99c5f45bb13c112770bce2acbfeea7dfd4508d3394b9e075f46f5af2efe52a06",
       "reason": "允许测试夹具构造独立恢复 upgrade-id。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "b4a1d1183d383e1316a5466ecf380b27784619eb9b15d9365cef3dcbad46cc7a",
-      "to_sha256": "a4074100b278b817a6c20a2c6859435649f250c64aee11f0d6ac423b37da39bf",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖停线 Ledger 恢复 successor 的成功路径和失败关闭边界。"
     }
   ],
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_stopped_ledger_recovery_source_transition_test.go",
-      "sha256": "b0500ed0780f3d6110935943615ce4162d5835100be3afc7486972f1bbfa86e1",
+      "sha256": "4a1e0533d3a1d48b7949add59a2018eb2b262377a69ef4ff9ec83f7a7b9a36ef",
       "reason": "在 officialegress 包冻结并变异测试停线 Ledger 恢复 transition。"
     },
     {
       "path": "backend/internal/service/codex_0151_stopped_ledger_recovery_source_transition_test.go",
-      "sha256": "512f8162c5ecec8de00ac1552e8d52c6c5f191741c2a8cf03b3eb40586fcae12",
+      "sha256": "9a1bd8658deb4f0c289723e9b961b0893cc03eb701e83d5fb6bd3e2ae1ed2a6c",
       "reason": "在 service 包独立重放同一停线 Ledger 恢复 transition。"
     },
     {
@@ -81,5 +81,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_stopped_ledger_recovery",
-  "identity_sha256": "b1abc85b4931feee1e59c83cf401744c47b6994fd95bdeff377ca76b684c890e"
+  "identity_sha256": "f761e8bfc418e56738a16fa57eafb174e7e8382d330d2575d7e112899a93dbe3"
 }

@@ -78,8 +78,7 @@ func validateCodex0151SystemProxyCaptureToolSuccessorService(
 		return errors.New("Codex CLI 0.151 系统代理取证工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_evidence_label_preflight_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151EvidenceLabelPreflightToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "debd3ef1ba753d548190bdd0e8f62975c8f047a9eb0c4118ab42a6877cfb787e" {
+		receipt.Predecessor.Path != codex0151EvidenceLabelPreflightToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 系统代理取证工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(

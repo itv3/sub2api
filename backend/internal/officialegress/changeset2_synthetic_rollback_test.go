@@ -443,7 +443,7 @@ func compileSyntheticChangeset2Endpoint(
 	identityFacts := executorInvocationIdentityFacts(t)
 	identityFacts.Conditions.BetaFeaturesPresent = true
 	routingHint := CodexRoutingHintFacts{}
-	if bundle.Version() == "0.149.1" && officialCodexRoutingHintEndpoint(endpointID) {
+	if officialCodexRoutingHintEndpoint(endpointID) {
 		routingHint, err = ParseOfficialCodexRoutingHintFacts(endpointID, []byte(semanticBody))
 		if err != nil {
 			t.Fatal(err)

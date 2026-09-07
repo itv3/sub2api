@@ -76,7 +76,13 @@ func loadCodex01491TerminalServiceState() (codex01491TerminalServiceReceipt, err
 					transition.Path,
 					transition.CurrentSHA256,
 					currentDigest,
-				)) {
+				) && !codex0151FormalRecoverySourceTransitionSupersedesService(
+					transition.Path,
+					transition.CurrentSHA256,
+					currentDigest,
+				) && !codex0151WorktreeSuccessorAfterService(transition.Path, currentDigest) &&
+					!historicalSourceDriftSupersedes(transition.Path, transition.CurrentSHA256, currentDigest) &&
+					!codex0151EvaluationRecoverySupersedesService(transition.Path, transition.CurrentSHA256, currentDigest)) {
 					codex01491TerminalServiceLoadErr = errors.New(
 						"0.149.1 终态当前摘要不一致：" + transition.Path,
 					)
@@ -99,10 +105,17 @@ func loadCodex01491TerminalServiceState() (codex01491TerminalServiceReceipt, err
 }
 
 func codex01491TerminalStateSupersedesService(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	if openAIReplayOOMRepairSupersedesService(path, priorDigest, currentDigest) ||
 		openAIWSCompatibilityGuardRepairSupersedesService(path, priorDigest, currentDigest) ||
 		openAIWSEmptyTerminalOutputRepairSupersedesService(path, priorDigest, currentDigest) ||
-		codex0151ToolReadinessTransitionSupersedesService(path, priorDigest, currentDigest) {
+		codex0151ToolReadinessTransitionSupersedesService(path, priorDigest, currentDigest) ||
+		codex0151FormalRecoverySourceTransitionSupersedesService(path, priorDigest, currentDigest) ||
+		codex0151WorktreeSuccessorAfterService(path, currentDigest) ||
+		historicalSourceDriftSupersedes(path, priorDigest, currentDigest) ||
+		codex0151EvaluationRecoverySupersedesService(path, priorDigest, currentDigest) {
 		return true
 	}
 	receipt, err := loadCodex01491TerminalServiceState()
@@ -125,6 +138,10 @@ func codex01491TerminalStateSupersedesService(path, priorDigest, currentDigest s
 				transition.CurrentSHA256,
 				currentDigest,
 			) || codex0151ToolReadinessTransitionSupersedesService(
+				path,
+				transition.CurrentSHA256,
+				currentDigest,
+			) || codex0151FormalRecoverySourceTransitionSupersedesService(
 				path,
 				transition.CurrentSHA256,
 				currentDigest,
@@ -302,6 +319,10 @@ func validateOpenAIReplayOOMRepairTransitionService(
 				transition.ToSHA256,
 				currentDigest,
 			) && !openAIWSCompatibilityGuardRepairSupersedesService(
+			transition.Path,
+			transition.ToSHA256,
+			currentDigest,
+		) && !codex0151FormalRecoverySourceTransitionSupersedesService(
 			transition.Path,
 			transition.ToSHA256,
 			currentDigest,
@@ -502,7 +523,11 @@ func validateOpenAIWSCompatibilityGuardRepairTransitionService(
 				transition.Path,
 				transition.ToSHA256,
 				currentDigest,
-			)) {
+			) && !codex0151FormalRecoverySourceTransitionSupersedesService(
+			transition.Path,
+			transition.ToSHA256,
+			currentDigest,
+		)) {
 			return errors.New("OpenAI WS 兼容守卫修复 transition 当前摘要不一致：" + transition.Path)
 		}
 		paths = append(paths, transition.Path)
@@ -526,7 +551,10 @@ func openAIWSCompatibilityGuardRepairSupersedesService(
 	}
 	for _, transition := range receipt.Transitions {
 		if transition.Path == path && transition.FromSHA256 == priorDigest &&
-			transition.ToSHA256 == currentDigest {
+			(transition.ToSHA256 == currentDigest ||
+				codex0151FormalRecoverySourceTransitionSupersedesService(
+					path, transition.ToSHA256, currentDigest,
+				)) {
 			return true
 		}
 	}

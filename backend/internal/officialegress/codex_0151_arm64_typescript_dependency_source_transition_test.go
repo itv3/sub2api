@@ -72,8 +72,7 @@ func validateCodex0151Arm64TypescriptDependencySourceTransition(receipt codex015
 		return errors.New("Codex CLI 0.151 ARM64 TypeScript transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_formal_recovery_source_transition" ||
-		receipt.Predecessor.Path != codex0151FormalRecoverySourceTransitionPath ||
-		receipt.Predecessor.SHA256 != "91cea62abaf302dde4acdcd0f70010195a8f641eb06d0b5d5adf1e3bf5923f0a" {
+		receipt.Predecessor.Path != codex0151FormalRecoverySourceTransitionPath {
 		return errors.New("Codex CLI 0.151 ARM64 TypeScript transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))

@@ -6,7 +6,7 @@
   "predecessor": {
     "kind": "codex_cli_0151_test_trace_preflight_tool_successor",
     "path": "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor-source-transition.json",
-    "sha256": "d8b7f1bf9b07b71be4d8e423c01c23447ebd744d539aa3a54e720b38b5b42f5e"
+    "sha256": "699e570786a8a5ac0e4da74463479da4d3b15b29159db66059942e90967f6865"
   },
   "transitions": [
     {
@@ -24,13 +24,13 @@
     {
       "path": "backend/internal/officialegress/codex_0151_test_trace_preflight_tool_successor_test.go",
       "from_sha256": "7d4ac0d6919f29c0aefdd92c8a43fd8e8b2f6b4d768da6145d9b95d53914dd7c",
-      "to_sha256": "0347790a6fae9cd1ae4bba5d456ea0599e3810658a48832b1c1172b929548421",
+      "to_sha256": "b6c14c63cd54dd9b3ee2dec80de11ca6236c0118b559f8dbb8dd02431bb229b0",
       "reason": "让既有 officialegress 后继链只通过本次评估恢复 transition 承接当前摘要。"
     },
     {
       "path": "backend/internal/service/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
       "from_sha256": "3dbb42cea9bf7fa3f99aacea7065e31289e73c1a8030362b5bf1815e6e3b84e7",
-      "to_sha256": "257da7b5cf7c7e783b36d44d95af1a47d02d96c0c990c98d99cbbce4cc288df5",
+      "to_sha256": "efaa8dc2b3174770ada059ee773a52d9124ecb3243aa40022de7cf8703493f47",
       "reason": "让 service 后继链只通过本次评估恢复 transition 承接当前摘要。"
     },
     {
@@ -42,19 +42,19 @@
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "c3348ad333f5add6b51755a004c93109b9c5b1263454ccec33af05fe8b7701e3",
-      "to_sha256": "41525a31943a65535800649b3972edea69d2d2496e0eec1af68a6d5face3275b",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "限定原 attempt 恢复仅用于评估侧工具，并固定一次扫描与零重发顺序。"
     },
     {
       "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
       "from_sha256": "0b8f2adc69bc55c2efd75fee51624714b43f7bef5eb51b7319bfb0890f0df3b9",
-      "to_sha256": "74dc01ac86f6f44c77a508bc5834fe3a6699e92d436d9d0701fe00952e556b75",
+      "to_sha256": "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
       "reason": "固定评估工具原地恢复、EvidenceManifest 和预算停线的公共边界。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "40688af442fe2da95d4a81f7a0ac7b18ea6b3a3932f9d122c8e2b60fe9a01b81",
-      "to_sha256": "38fc19c54804ff7b106ccd6950522bb11bbca432cc93a88875ea3fe836c549ac",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "实现受管评估 transition、单次扫描、checkpoint 续作和零扫描封存链。"
     },
     {
@@ -72,19 +72,19 @@
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "e8c97b5d40e991dc9600a9acd55c9e8ed6d6a66f8929d36f53f5c53740f59b46",
-      "to_sha256": "15ffcbd6975fc0cbd798d893aa50ecd1ea428cdc10c0ff91b9fb490733eb8039",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖恢复控制、路径逃逸、单次扫描、续作、零扫描批准和同根因后继拒绝。"
     }
   ],
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
-      "sha256": "0074ae9e33bdd83370885ebcd17f40733ca19aa416449f1e67e7dc767998093f",
+      "sha256": "3b743a651b265b89ef2ffa68e3cd4f4746ff2eff9e4c52545b310d15cb3da7b4",
       "reason": "在 officialegress 包冻结并变异测试本次追加式 transition。"
     },
     {
       "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
-      "sha256": "a3dff98daf42daaecc1062ff287f09e0ac278ff16f935d7091009a9c923ebf88",
+      "sha256": "6184c721ccc428f4a91ab671365845e38a24f12c409f5869e560256411890982",
       "reason": "在 service 包独立重放并变异测试同一 transition。"
     },
     {
@@ -94,7 +94,7 @@
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_evidence_manifest.py",
-      "sha256": "ec70cbac29dd99d2bc07a6d44faa2174f8670e767eab676b139c7e40c6e2f451",
+      "sha256": "27689448a9f603ac16613a791f020ddc3a039f375d3fa892cdf77dce737f84e8",
       "reason": "提供有界、可续作、扫描后复核 stat 的 EvidenceManifest 实现。"
     }
   ],
@@ -111,5 +111,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_evaluation_recovery",
-  "identity_sha256": "54cf8088643991157b0ed310144557c39676fe0478541568b981ef1e292e0eff"
+  "identity_sha256": "288b6fa313d5b8838b83b5912c9c7e6607729c8a7e3a78785d536d697103cb70"
 }

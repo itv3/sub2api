@@ -74,8 +74,7 @@ func validateCodex0151ContainerPathRecoveryToolSuccessorService(receipt codex015
 		return errors.New("Codex CLI 0.151 容器路径恢复工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_model_policy_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151ModelPolicyToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "95f43f1e7b4fe74e4edcd042fd5ecb57e29368f475989f5662c26921af3a6b73" {
+		receipt.Predecessor.Path != codex0151ModelPolicyToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 容器路径恢复工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(

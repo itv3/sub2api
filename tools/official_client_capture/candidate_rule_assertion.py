@@ -67,7 +67,7 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 2026-09-03 主手册补充恢复审计约束后再次重绑第二部分摘要；0.149.1
 # 基线规则、场景与机器判据载荷保持不变。
 FROZEN_PROFILE_SHA256 = (
-    "15e69c5e3ae1bde030776af673c325b40f722b0d6de1083b43329bc1079832d0"
+    "1fd5f0758b90ada72813a68641d20a3fdee7ec66e4895089b4704d9b229b8429"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 RULE_ID_RE = re.compile(r"^SPEC-[A-Z0-9]+-[0-9]{3}$")

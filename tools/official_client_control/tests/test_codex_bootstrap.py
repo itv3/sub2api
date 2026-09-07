@@ -98,7 +98,7 @@ class CodexBootstrapTests(unittest.TestCase):
             },
         )
         snapshot_path = self.repo / (
-            "backend/internal/officialegress/catalogdata/runtime/profiles/0.147.0/"
+            "backend/internal/officialegress/catalogdata/version-route-migration-artifacts/frozen-profiles/"
             "94071c8eb93cfd337ac6eabc291d878084e3dcec8a9e618e04e6f68792d1a7bc.json"
         )
         snapshot_document = json.loads(snapshot_path.read_text(encoding="utf-8"))

@@ -6,19 +6,19 @@
   "predecessor": {
     "kind": "codex_cli_0151_tool_readiness_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
-    "sha256": "6571d18697e789da234476740b537f6301c918bd245a71b5573bed3765a49d69"
+    "sha256": "ea0eeb464a8ddc4e67e6be79919fffb87bc3603d23efa7d8ae350e193c0aaf6c"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
       "from_sha256": "79bd57af20de63eb6b45cdda6509e8843ae5b9dd5d416465af05b57310af60d3",
-      "to_sha256": "997e4fab24374ab80c46d4f0e91e5f7f580f02cf4f02f1f089174162196d9278",
+      "to_sha256": "0e794a99f80746a8b8ecefc244c1ae0f3a63c194e472e287c051dfaad6cc2da4",
       "reason": "让旧工具就绪收据通过精确后继摘要承接 C2PA 抓包与清单工具变更。"
     },
     {
       "path": "backend/internal/service/codex_01491_terminal_state_test.go",
       "from_sha256": "8bcca0b49d4ccf90c0db38b54549864891a3f9272310b5428d49d0c26148b7aa",
-      "to_sha256": "d5f16d2aa0a9a5adb76deb6c1c0671921148fc33cf9ccbaca1653f22586c20df",
+      "to_sha256": "2c0b3d6cc6fa3e14c6c91d0fbc41b154255c23e8dd09b87bb155000ce6c3c6ca",
       "reason": "在 service 包独立重放同一后继摘要链，避免跨包隐式承接。"
     },
     {
@@ -36,13 +36,13 @@
     {
       "path": "tools/official_client_capture/run_candidate_aux_capture.sh",
       "from_sha256": "3af73b725243de71109ab51910d8b5d4e919dd53112c7a42622761d191944fae",
-      "to_sha256": "97e7cfd21b108533525055f9e1525294102c54bd1eb09f6ab0c3c16608bbce4b",
+      "to_sha256": "7f10cf115a211b17a0230ca050933e56b6580da5de7490f50bc17a67f2715e6f",
       "reason": "让 0.151 候选辅助链固定执行 negative,positive 两次三跳对拍。"
     },
     {
       "path": "tools/official_client_capture/run_official_relay_scenario.sh",
       "from_sha256": "f7fbe312381cc373332f0809ba23eeeecb4cbed6c63baaf33ac23333c1ed3e8c",
-      "to_sha256": "fed7e44ccabb844c597b56be64788c0e4662bf86e5e0fa043b2f55396df6c57b",
+      "to_sha256": "b3b6a3dc5ebdafb79a632c4efbab210331200b1baf871bca3bdb85bff1268e78",
       "reason": "让官方 A14 job 分别冻结 C2PA negative／positive 条件并签发独立收据。"
     },
     {
@@ -60,7 +60,7 @@
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "2f29e29a06c082d36ece4c59b022ea206f81e4bf92d5f83c63e62069b908cf06",
-      "to_sha256": "c15862fc4d709bc2fc732abc70346bf3674ef5765ca2feaa686e9ec336ff3b24",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖 0.151 规则、场景加载、A14 独立证据根与双分支 Campaign 绑定。"
     },
     {
@@ -85,12 +85,12 @@
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_c2pa_capture_tool_successor_test.go",
-      "sha256": "e1d155184fd9bffb5b98660d7469f3e045675fef564f3167c0cf3f0385f7e1ad",
+      "sha256": "682545ad02d1425d7c2e99eb115346c67839c3c62f42999e7f4d03a6bd2113c1",
       "reason": "在 officialegress 包重放 C2PA 工具后继的完整摘要闭集与 mutation。"
     },
     {
       "path": "backend/internal/service/codex_0151_c2pa_capture_tool_successor_test.go",
-      "sha256": "0b1842a1ba57a91b16523484dd25d377aeb4e25844c594eccfd37de377934d7a",
+      "sha256": "81ae86ddc5946bbe344412a1d440ae72ed4e1ba35e2dd8d5202a7492c7e03b70",
       "reason": "在 service 包独立重放同一后继摘要闭集与 mutation。"
     },
     {
@@ -105,7 +105,7 @@
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
-      "sha256": "314e7f36a3569efbd51bf6f5feab740d448c25942e6ab541c1d318ba22c3b843",
+      "sha256": "300be786f0468d8ce0fce907b6e4f09cdc2a9c781fb2ad633275f9283525ec18",
       "reason": "冻结 0.151 A14 正反官方 job 与候选双分支任务清单。"
     }
   ],
@@ -121,5 +121,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_c2pa_capture_tool_successor",
-  "identity_sha256": "ec79c2044fdf2f8afba2e77d1e2a149f21442d6fe3f56a11eed5ecf762a7d064"
+  "identity_sha256": "441f7e77b6250ff6e18a40f53e5aca380a506c36d643b568913aab85649deed7"
 }

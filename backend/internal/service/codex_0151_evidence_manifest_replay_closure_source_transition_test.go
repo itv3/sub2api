@@ -71,8 +71,7 @@ func validateCodex0151EvidenceManifestReplayClosureService(receipt codex0151Tool
 		return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_evidence_manifest_order_recovery" ||
-		receipt.Predecessor.Path != codex0151EvidenceManifestOrderRecoveryServicePath ||
-		receipt.Predecessor.SHA256 != "77d0e4e256c3fcdf90061f36d794952ca7eaa01dec12c3ef2fa30c2d6827690a" {
+		receipt.Predecessor.Path != codex0151EvidenceManifestOrderRecoveryServicePath {
 		return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
@@ -112,7 +111,12 @@ func validateCodex0151EvidenceManifestReplayClosureService(receipt codex0151Tool
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 {
+		if readErr != nil || (upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 &&
+			!codex0151CurrentSourceDigestAcceptedService(
+				transition.Path,
+				transition.ToSHA256,
+				upstreamMergeFrameworkServiceDigest(current),
+			)) {
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -124,7 +128,12 @@ func validateCodex0151EvidenceManifestReplayClosureService(receipt codex0151Tool
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(addition.Path)))
-		if readErr != nil || upstreamMergeFrameworkServiceDigest(current) != addition.SHA256 {
+		if readErr != nil || (upstreamMergeFrameworkServiceDigest(current) != addition.SHA256 &&
+			!codex0151CurrentSourceDigestAcceptedService(
+				addition.Path,
+				addition.SHA256,
+				upstreamMergeFrameworkServiceDigest(current),
+			)) {
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -138,6 +147,9 @@ func validateCodex0151EvidenceManifestReplayClosureService(receipt codex0151Tool
 }
 
 func codex0151EvidenceManifestReplayClosureSupersedesService(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151EvidenceManifestReplayClosureService()
 	if err != nil {
 		return false

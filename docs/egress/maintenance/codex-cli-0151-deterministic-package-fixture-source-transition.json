@@ -6,37 +6,37 @@
   "predecessor": {
     "kind": "codex_cli_0151_stopped_ledger_recovery_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
-    "sha256": "9da261eaae555c192aa963bbefc756617341a1a5879993087cb2233ec595a445"
+    "sha256": "499942fade55536c2d083c17b04a41fcacbea2714327ff3ed4e32ba541a61378"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_stopped_ledger_recovery_source_transition_test.go",
       "from_sha256": "b0500ed0780f3d6110935943615ce4162d5835100be3afc7486972f1bbfa86e1",
-      "to_sha256": "f5aad8fc9b1a5e9cf0ae0d700346ecd30b34bcfaa954c7d8d58011c0d9779864",
+      "to_sha256": "4a1e0533d3a1d48b7949add59a2018eb2b262377a69ef4ff9ec83f7a7b9a36ef",
       "reason": "让 officialegress 的停线恢复 transition 承接确定性包夹具后继。"
     },
     {
       "path": "backend/internal/service/codex_0151_stopped_ledger_recovery_source_transition_test.go",
       "from_sha256": "512f8162c5ecec8de00ac1552e8d52c6c5f191741c2a8cf03b3eb40586fcae12",
-      "to_sha256": "f6049d57e57e0f8f6a1a0d7191152054cdaaafb8513f971a287eb4c564ecef0b",
+      "to_sha256": "9a1bd8658deb4f0c289723e9b961b0893cc03eb701e83d5fb6bd3e2ae1ed2a6c",
       "reason": "让 service 的停线恢复 transition 独立承接确定性包夹具后继。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "a4074100b278b817a6c20a2c6859435649f250c64aee11f0d6ac423b37da39bf",
-      "to_sha256": "349b024d590e3d3f540e9fa0033027c95d76bfa08992ec0cb9e284c69dd80396",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "固定合成包 gzip 时间并覆盖跨秒摘要稳定性。"
     }
   ],
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_deterministic_package_fixture_source_transition_test.go",
-      "sha256": "b92954e5b3466366808982c1e84de174a86b9ec9a2e40c3244835ab0e3375424",
+      "sha256": "e84f08a9c4d257b817e0378d2123aa993c4de2e0a17293d5677525e8f5092be7",
       "reason": "在 officialegress 包冻结并变异测试确定性包夹具 transition。"
     },
     {
       "path": "backend/internal/service/codex_0151_deterministic_package_fixture_source_transition_test.go",
-      "sha256": "dc66a00b49e893137f0e2b360896ce919448007bb30d406e1fe982671a912ddb",
+      "sha256": "1523b189cd7789d907e50ae93e18b7b3ce3613197dde5573d25377a5cb4f6cba",
       "reason": "在 service 包独立重放同一确定性包夹具 transition。"
     },
     {
@@ -57,5 +57,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_deterministic_package_fixture",
-  "identity_sha256": "ea8f16061e1d931c4db75d72b0acca3dd267d026fd15c0a428cfdcd03f0c2077"
+  "identity_sha256": "726391ee68f68c3d5f967287d758bea4625fdad0be4f96f66d3de9c6096df97e"
 }

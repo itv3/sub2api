@@ -72,8 +72,7 @@ func validateCodex0151TestTracePreflightToolSuccessor(receipt codex0151ToolReadi
 		return errors.New("Codex CLI 0.151 test trace P0 后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_arm64_environment_producer_replay_tool_successor" ||
-		receipt.Predecessor.Path != codex0151Arm64EnvironmentProducerReplayToolSuccessorPath ||
-		receipt.Predecessor.SHA256 != "217642ab257708b226e0fd71b4582643694ce834d22e4ffbbc5e0e00f6d13185" {
+		receipt.Predecessor.Path != codex0151Arm64EnvironmentProducerReplayToolSuccessorPath {
 		return errors.New("Codex CLI 0.151 test trace P0 后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))

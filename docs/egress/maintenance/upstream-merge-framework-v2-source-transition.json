@@ -765,7 +765,7 @@
       "predecessor_sha256s": [
         "e9045c5e6bcb9ed5e65befd5fa1afab61680f4c9d89b7dabeac497f3afe0f795"
       ],
-      "to_sha256": "77c3529fec4b2796926671d81c2923a5647010e4b7cf43ec67960b4688898fc5",
+      "to_sha256": "7d53ef96ef02fdceaef513a4c8a91cec3a0ffbf1bd64daaa487ca5aba2a429a5",
       "reason": "将客户端门禁、生成策略、批准和激活事实绑定到不可变身份与可重放收据。"
     },
     {
@@ -929,5 +929,5 @@
     "go test ./internal/service"
   ],
   "result": "passed",
-  "identity_sha256": "f8f6b8c60b2b5ead02a8725b5f9fbf60224408ef1b64457fa402b8aeb59d3da7"
+  "identity_sha256": "3aabb95ad3340128c501cdc72b4fc79cd156f2868be40e7f2d2c95fdca137066"
 }

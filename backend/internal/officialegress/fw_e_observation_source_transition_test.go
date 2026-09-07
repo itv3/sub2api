@@ -88,6 +88,9 @@ func fwEObservationSourceTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, raw, err := readFWEObservationSourceTransition()
 	if err != nil || validateFWEObservationSourceTransition(receipt, raw) != nil {
 		return false

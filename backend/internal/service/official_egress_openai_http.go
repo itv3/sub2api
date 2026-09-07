@@ -1304,7 +1304,9 @@ func deriveOfficialOpenAIHTTPIdentity(
 	identityKind, subagent, ingressParentThreadID, memoryGenerate :=
 		resolveDerivedOfficialOpenAIConditionalKind(c, contract)
 
-	firstUserAnchor, lastUserAnchor := officialOpenAIHTTPUserAnchors(body)
+	// 用户锚点只以摘要形态参与身份推导：只读扫描 body，不再为锚点完整解码正文，
+	// 用户消息全文也不再进入缓存键（docs/bug.md 问题五）。
+	anchors := officialOpenAIUserAnchorsFromBody(body)
 	sessionAnchor := officialOpenAIHTTPSessionAnchor(c)
 	// 分别记录 session/turn 的来源：兜底锚点只保证“同内容得到同 ID”，
 	// 不保证“同 ID 属于同一个会话”。
@@ -1321,15 +1323,14 @@ func deriveOfficialOpenAIHTTPIdentity(
 		// 内容相同的独立会话间串用，P7 的隔离等于失效。
 		sessionAnchorExplicit = contract.promptCacheKeySet && sessionAnchor != ""
 	}
-	if sessionAnchor == "" {
-		sessionAnchor = "first_user=" + firstUserAnchor
+	sessionSeed := newOfficialUUIDV7Seed(officialUUIDV7DomainSession).WriteString(clientScope)
+	if sessionAnchor != "" {
+		sessionSeed.WriteString("anchor").WriteString(sessionAnchor)
+	} else {
+		// 内容兜底只写入首条用户消息的摘要。
+		sessionSeed.WriteFirstUserDigest(anchors.first, anchors.firstFound)
 	}
-	sessionID := generateOfficialStableUUIDV7(
-		"openai-official-egress-session|" + clientScope + "|" + sessionAnchor,
-	)
-	if lastUserAnchor == "" {
-		lastUserAnchor = firstUserAnchor
-	}
+	sessionID := generateOfficialStableUUIDV7(sessionSeed.Key())
 	threadID := sessionID
 	if identityKind != officialOpenAIIdentityKindRoot {
 		childAnchor := strings.TrimSpace(c.GetHeader("thread-id"))
@@ -1337,11 +1338,19 @@ func deriveOfficialOpenAIHTTPIdentity(
 			childAnchor = officialOpenAIString(contract.clientMetadata, "thread_id")
 		}
 		threadID = generateOfficialStableUUIDV7(
-			"openai-official-egress-child|" + sessionID + "|" + string(identityKind) + "|" + childAnchor,
+			newOfficialUUIDV7Seed(officialUUIDV7DomainChild).
+				WriteString(sessionID).
+				WriteString(string(identityKind)).
+				WriteString(childAnchor).
+				Key(),
 		)
 	}
+	// Turn 按末条用户消息稳定；没有用户文本时同一线程共用一个空锚点，与旧种子一致。
 	turnID := generateOfficialStableUUIDV7(
-		"openai-official-egress-turn|" + threadID + "|" + lastUserAnchor,
+		newOfficialUUIDV7Seed(officialUUIDV7DomainTurn).
+			WriteString(threadID).
+			WriteUserAnchor(anchors.last, anchors.lastFound).
+			Key(),
 	)
 	sessionProvenance := officialOpenAIProvenanceContentFallback
 	turnProvenance := officialOpenAIProvenanceContentFallback
@@ -1626,39 +1635,6 @@ func officialOpenAIHTTPSessionAnchor(c *gin.Context) string {
 		}
 	}
 	return ""
-}
-
-func officialOpenAIHTTPUserAnchors(body []byte) (string, string) {
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", ""
-	}
-	input, ok := payload["input"].([]any)
-	if !ok {
-		if text, ok := payload["input"].(string); ok {
-			text = strings.TrimSpace(text)
-			return text, "0:" + text
-		}
-		return "", ""
-	}
-	first := ""
-	last := ""
-	for index, rawItem := range input {
-		item, ok := rawItem.(map[string]any)
-		if !ok || officialOpenAIString(item, "type") != "message" ||
-			officialOpenAIString(item, "role") != "user" {
-			continue
-		}
-		text := officialOpenAIHTTPMessageContentText(item["content"])
-		if text == "" {
-			continue
-		}
-		if first == "" {
-			first = text
-		}
-		last = strconv.Itoa(index) + ":" + text
-	}
-	return first, last
 }
 
 func officialOpenAIHTTPMessageContentText(content any) string {

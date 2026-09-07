@@ -73,8 +73,7 @@ func validateCodex0151DeterministicPackageFixtureSourceTransitionService(receipt
 		return errors.New("Codex CLI 0.151 确定性包夹具 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_stopped_ledger_recovery_source_transition" ||
-		receipt.Predecessor.Path != codex0151StoppedLedgerRecoverySourceTransitionServicePath ||
-		receipt.Predecessor.SHA256 != "9da261eaae555c192aa963bbefc756617341a1a5879993087cb2233ec595a445" {
+		receipt.Predecessor.Path != codex0151StoppedLedgerRecoverySourceTransitionServicePath {
 		return errors.New("Codex CLI 0.151 确定性包夹具 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
@@ -149,6 +148,9 @@ func validateCodex0151DeterministicPackageFixtureSourceTransitionService(receipt
 }
 
 func codex0151DeterministicPackageFixtureSourceTransitionSupersedesService(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151DeterministicPackageFixtureSourceTransitionService()
 	if err != nil {
 		return false

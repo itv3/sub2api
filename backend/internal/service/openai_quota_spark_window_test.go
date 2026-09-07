@@ -812,9 +812,14 @@ func TestCodexWhamRequestsUseClosedBackendClientProfile(t *testing.T) {
 		require.Equal(t, "Bearer token-wham-profile", request.Header.Get("Authorization"))
 		require.Equal(t, "acct-wham-profile", request.Header.Get("Chatgpt-Account-Id"))
 		require.Equal(t, "*/*", request.Header.Get("Accept"))
+		activeUA := activeOpenAICodexUserAgentForTest()
+		platformStart := strings.IndexByte(activeUA, '(')
+		platformEnd := strings.IndexByte(activeUA, ')')
+		require.GreaterOrEqual(t, platformStart, 0)
+		require.Greater(t, platformEnd, platformStart)
 		require.Equal(
 			t,
-			"codex-tui/"+activeOpenAICodexVersionForTest()+" (Ubuntu 24.4.0; x86_64) xterm-256color",
+			"codex-tui/"+activeOpenAICodexVersionForTest()+" "+activeUA[platformStart:platformEnd+1]+" xterm-256color",
 			request.Header.Get("User-Agent"),
 		)
 		require.True(t, HTTPUpstreamRedirectsDisabled(request.Context()))

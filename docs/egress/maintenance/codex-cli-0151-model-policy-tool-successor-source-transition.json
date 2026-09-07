@@ -6,19 +6,19 @@
   "predecessor": {
     "kind": "codex_cli_0151_c2pa_capture_tool_successor_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-c2pa-capture-tool-successor-source-transition.json",
-    "sha256": "b53217ae5decf79064337e7111b153f75f27b0b5d533ccb6931a7422f3a74dde"
+    "sha256": "2c5514940da98481aae9abc555b48109396f952519254d1cbf6c766bb49eea05"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_c2pa_capture_tool_successor_test.go",
       "from_sha256": "e1d155184fd9bffb5b98660d7469f3e045675fef564f3167c0cf3f0385f7e1ad",
-      "to_sha256": "7faa11ace2ba11bff23509fb88ff7b9b583855db3763cecfd82194dada723b98",
+      "to_sha256": "682545ad02d1425d7c2e99eb115346c67839c3c62f42999e7f4d03a6bd2113c1",
       "reason": "让 C2PA 工具后继在 officialegress 包通过精确摘要继续承接模型政策工具后继。"
     },
     {
       "path": "backend/internal/service/codex_0151_c2pa_capture_tool_successor_test.go",
       "from_sha256": "0b1842a1ba57a91b16523484dd25d377aeb4e25844c594eccfd37de377934d7a",
-      "to_sha256": "092df47f142096c59a7bdc8d543a1f6a72109377eda96cec43a08bc482077049",
+      "to_sha256": "81ae86ddc5946bbe344412a1d440ae72ed4e1ba35e2dd8d5202a7492c7e03b70",
       "reason": "让 C2PA 工具后继在 service 包独立重放同一模型政策后继摘要链。"
     },
     {
@@ -30,13 +30,13 @@
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "da84e04034b0583bd48ae3f5dafbbb29e3f2cc5f8d12b922a7a7eeec5cc1ad67",
-      "to_sha256": "93fdecaec04ba6e92fb1b55008faa55b263f739413c38defa5a9e248d1c08bb2",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "登记 0.149.1→0.151.0 升级对，并让全部未知升级对显式失败关闭。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "c15862fc4d709bc2fc732abc70346bf3674ef5765ca2feaa686e9ec336ff3b24",
-      "to_sha256": "07e83941855530c71fc548a93662a73e99bb2745113338e5d284b08ab7803606",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖 0.151 正确值、空值、错误值和未知升级对 mutation，并迁移通用测试夹具。"
     },
     {
@@ -49,12 +49,12 @@
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_model_policy_tool_successor_test.go",
-      "sha256": "c1f9ea41f1d9d2a320929d485e4f2e0ea79a554bc118de104973d17667e99440",
+      "sha256": "66757b04192221cc91a5071ad2ede1d498fdd9b561216b5080d14a387f77ce30",
       "reason": "在 officialegress 包重放模型政策工具后继的完整摘要闭集与 mutation。"
     },
     {
       "path": "backend/internal/service/codex_0151_model_policy_tool_successor_test.go",
-      "sha256": "84057e4904cbcbea1aedfb734ce8ac844e076ddac100627d41850f5b79aacc0e",
+      "sha256": "4d8a572ce84c36afa47038cd2eeddfbc16d2423cf6c498b9a588aa00d4722dfb",
       "reason": "在 service 包独立重放同一模型政策工具后继闭集与 mutation。"
     },
     {
@@ -75,5 +75,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_model_policy_tool_successor",
-  "identity_sha256": "93b5aef1e849999b37a7551c4f8c2e631ac3940545ae79028a341d69689d8f08"
+  "identity_sha256": "2f35fb25d0bfe8819ab6a070b538e41dad54725690a4fd1ac6ef3dce3c2c73ec"
 }

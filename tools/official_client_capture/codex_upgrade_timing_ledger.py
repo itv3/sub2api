@@ -58,6 +58,9 @@ RFC3339_RE = re.compile(
 )
 MAX_JSON_BYTES = 4 * 1024 * 1024
 PRODUCER_TOOL_RELATIVE = "tools/official_client_capture/codex_upgrade_timing_ledger.py"
+CURRENT_WORKTREE_SUCCESSOR_RELATIVE = (
+    "docs/egress/maintenance/codex-cli-0151-worktree-successor.json"
+)
 PRODUCER_SUCCESSOR_TRANSITIONS = (
     {
         "path": "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor-source-transition.json",
@@ -386,6 +389,55 @@ def _producer_tool_coordinate(value: Any) -> tuple[str, ...] | None:
     return relative
 
 
+def _load_current_worktree_successor_edge(
+    repository_root: Path,
+) -> tuple[str, str] | None:
+    """读取当前 0.151 工作区对计时工具追加的唯一摘要边。"""
+
+    path = _repository_file(
+        repository_root,
+        CURRENT_WORKTREE_SUCCESSOR_RELATIVE,
+        "current worktree successor",
+    )
+    try:
+        payload = json.loads(path.read_bytes())
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise TimingLedgerError("current worktree successor 不是合法 JSON") from error
+    if payload.get("schema_version") != "sub2apiplus-codex-cli-0151-worktree-successor/v1":
+        raise TimingLedgerError("current worktree successor schema 漂移")
+    identity = payload.get("identity_sha256")
+    unsigned = dict(payload)
+    unsigned.pop("identity_sha256", None)
+    pretty = (json.dumps(unsigned, ensure_ascii=False, indent=2) + "\n").encode()
+    if not isinstance(identity, str) or not SHA256_RE.fullmatch(identity):
+        raise TimingLedgerError("current worktree successor 自摘要非法")
+    if _sha256_bytes(pretty) != identity:
+        raise TimingLedgerError("current worktree successor 自摘要不一致")
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise TimingLedgerError("current worktree successor entries 非法")
+    matches = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("path") == PRODUCER_TOOL_RELATIVE
+    ]
+    if len(matches) != 1:
+        raise TimingLedgerError("current worktree successor 未唯一登记计时工具")
+    entry = matches[0]
+    before = (entry.get("before") or {}).get("sha256")
+    after = (entry.get("after") or {}).get("sha256")
+    if (
+        not isinstance(before, str)
+        or not SHA256_RE.fullmatch(before)
+        or not isinstance(after, str)
+        or not SHA256_RE.fullmatch(after)
+        or before == after
+        or _sha256_file(repository_root / PRODUCER_TOOL_RELATIVE) != after
+    ):
+        raise TimingLedgerError("current worktree successor 计时工具摘要边非法")
+    return before, after
+
+
 def _producer_identity_matches(frozen: Any, current: dict[str, str]) -> bool:
     """按规范坐标和内容摘要承接历史 producer，不绑定工作树绝对根。"""
 
@@ -417,21 +469,26 @@ def _producer_identity_matches(frozen: Any, current: dict[str, str]) -> bool:
         _load_producer_successor_edge(repository_root, descriptor)
         for descriptor in PRODUCER_SUCCESSOR_TRANSITIONS
     ]
+    current_edge = _load_current_worktree_successor_edge(repository_root)
+    if current_edge is not None:
+        edges.append(current_edge)
     if not edges:
         return False
-    # 先验证登记的 transition 本身是一条连续、无分叉的摘要链；然后
-    # 允许历史台账从链上的任意节点开始承接到当前节点。
-    nodes = [edges[0][0]]
+    # 每份旧台账都必须沿已登记的摘要边走到当前工具。历史边可以分叉，
+    # 但从一个具体前序摘要出发不得出现两条不同后继。
+    successors: dict[str, str] = {}
     for before, after in edges:
-        if before != nodes[-1] or after == before or after in nodes:
+        if after == before or (before in successors and successors[before] != after):
             return False
-        nodes.append(after)
-    try:
-        frozen_index = nodes.index(frozen_sha256)
-        current_index = nodes.index(current["tool_sha256"])
-    except ValueError:
-        return False
-    return frozen_index < current_index
+        successors[before] = after
+    visited: set[str] = set()
+    node = frozen_sha256
+    while node != current["tool_sha256"]:
+        if node in visited or node not in successors:
+            return False
+        visited.add(node)
+        node = successors[node]
+    return True
 
 
 def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:

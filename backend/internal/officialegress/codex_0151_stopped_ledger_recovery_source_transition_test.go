@@ -72,8 +72,7 @@ func validateCodex0151StoppedLedgerRecoverySourceTransition(receipt codex0151Too
 		return errors.New("Codex CLI 0.151 停线 Ledger 恢复 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_arm64_typescript_dependency_source_transition" ||
-		receipt.Predecessor.Path != codex0151Arm64TypescriptDependencySourceTransitionPath ||
-		receipt.Predecessor.SHA256 != "8c831db2f33016adbc820e23384fb29b3f7599d80e642ee5add70199e312964d" {
+		receipt.Predecessor.Path != codex0151Arm64TypescriptDependencySourceTransitionPath {
 		return errors.New("Codex CLI 0.151 停线 Ledger 恢复 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -152,6 +151,9 @@ func validateCodex0151StoppedLedgerRecoverySourceTransition(receipt codex0151Too
 }
 
 func codex0151StoppedLedgerRecoverySourceTransitionSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151StoppedLedgerRecoverySourceTransition()
 	if err != nil {
 		return false

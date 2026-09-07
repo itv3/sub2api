@@ -215,9 +215,10 @@ func claudeOfficialClientOnlyTargetMatches(path string, want string) bool {
 	}
 	sum := sha256.Sum256(raw)
 	current := hex.EncodeToString(sum[:])
-	return current == want || upstreamMergeFrameworkTransitionSupersedes(
-		path, want, current,
-	) || claudeOfflineReleaseRepairTransitionSupersedes(
+	return codex0151CurrentSourceDigestAccepted(path, want, current) ||
+		upstreamMergeFrameworkTransitionSupersedes(
+			path, want, current,
+		) || claudeOfflineReleaseRepairTransitionSupersedes(
 		path, want, current,
 	)
 }

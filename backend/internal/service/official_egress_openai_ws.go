@@ -1223,7 +1223,8 @@ func resolveOfficialOpenAIWSHistoricalTurnID(
 	segmentIndex int,
 ) (string, error) {
 	existingTurnID := ""
-	lastUserAnchor := ""
+	var lastUserAnchor officialOpenAIUserAnchor
+	lastUserFound := false
 	for _, itemIndex := range segment {
 		item, valid := input[itemIndex].(map[string]any)
 		if !valid {
@@ -1233,8 +1234,10 @@ func resolveOfficialOpenAIWSHistoricalTurnID(
 			)
 		}
 		if role := strings.TrimSpace(officialOpenAIString(item, "role")); role == "user" {
-			if text := officialOpenAIHTTPMessageContentText(item["content"]); text != "" {
-				lastUserAnchor = strconv.Itoa(itemIndex) + ":" + text
+			// 只保留用户文本的摘要与下标，用户全文不再拼入种子。
+			if digest, found := digestOfficialOpenAIMessageContent(item["content"]); found {
+				lastUserAnchor = officialOpenAIUserAnchor{index: itemIndex, digest: digest}
+				lastUserFound = true
 			}
 		}
 		itemMetadata, exists := item[officialOpenAIWSItemTurnMetadata]
@@ -1269,12 +1272,17 @@ func resolveOfficialOpenAIWSHistoricalTurnID(
 	if existingTurnID != "" {
 		return existingTurnID, nil
 	}
-	if lastUserAnchor == "" {
+	seed := newOfficialUUIDV7Seed(officialUUIDV7DomainTurn).WriteString(sessionID)
+	if lastUserFound {
+		seed.WriteUserAnchor(lastUserAnchor, true)
+	} else {
+		// 没有用户文本的历史片段以其确定性 JSON 编码的摘要作兜底锚点。编码结果
+		// 直接流入 SHA-256，不再生成两倍体积的十六进制字符串驻留在缓存键中。
 		segmentPayload := make([]any, 0, len(segment))
 		for _, itemIndex := range segment {
 			segmentPayload = append(segmentPayload, input[itemIndex])
 		}
-		segmentBytes, err := marshalOpenAIUpstreamJSON(segmentPayload)
+		digest, err := digestOfficialJSONValue(segmentPayload)
 		if err != nil {
 			return "", fmt.Errorf(
 				"encode OpenAI official egress WebSocket historical turn %d: %w",
@@ -1282,11 +1290,9 @@ func resolveOfficialOpenAIWSHistoricalTurnID(
 				err,
 			)
 		}
-		lastUserAnchor = fmt.Sprintf("%x", segmentBytes)
+		seed.WriteString("segment_json").WriteDigest(digest)
 	}
-	return generateOfficialStableUUIDV7(
-		"openai-official-egress-turn|" + sessionID + "|" + lastUserAnchor,
-	), nil
+	return generateOfficialStableUUIDV7(seed.Key()), nil
 }
 
 func buildDerivedOfficialOpenAIWSFrameMetadata(
@@ -1349,30 +1355,34 @@ func buildDerivedOfficialOpenAIWSFrameMetadataWithTurnPolicy(
 	requestKind := "prewarm"
 	if !prewarm {
 		requestKind = "turn"
-		_, lastUserAnchor := officialOpenAIHTTPUserAnchorsFromPayload(
-			egressContext.ProfileMode(), payload,
-		)
+		// 已有结构化 payload，直接遍历 input 提取锚点摘要；不得再先编码整帧、
+		// 随后又解码来提取用户锚点。
+		anchors := officialOpenAIUserAnchorsFromInput(payload["input"])
 		state := egressContext.openAIWSDerived
 		state.mu.Lock()
 		var seedErr error
-		if !preserveCurrentTurn && lastUserAnchor != "" {
+		if !preserveCurrentTurn && anchors.lastFound {
 			state.lastTurnID = generateOfficialStableUUIDV7(
-				"openai-official-egress-turn|" + sessionID + "|" + lastUserAnchor,
+				newOfficialUUIDV7Seed(officialUUIDV7DomainTurn).
+					WriteString(sessionID).
+					WriteUserAnchor(anchors.last, true).
+					Key(),
 			)
 			state.lastTurnStartedAtMS = time.Now().UnixMilli()
 		} else if state.lastTurnID == "" {
-			// 没有用户锚点时以整帧内容做 seed。marshal 失败不能静默退化成空
-			// seed：那会让本会话此后所有帧共用同一个 Turn ID，而定型链路其余
-			// 环节都观察不到异常。这里把错误交回调用方按定型失败处理。
-			frameBytes, marshalErr := marshalOfficialOpenAIWSJSON(
-				egressContext.ProfileMode(), payload,
-			)
-			if marshalErr != nil {
-				seedErr = fmt.Errorf("构造 WebSocket Turn ID seed：%w", marshalErr)
+			// 没有用户锚点时以整帧内容的 JSON 摘要做 seed。编码失败不能静默退化
+			// 成空 seed：那会让本会话此后所有帧共用同一个 Turn ID，而定型链路
+			// 其余环节都观察不到异常。这里把错误交回调用方按定型失败处理。
+			digest, digestErr := digestOfficialJSONValue(payload)
+			if digestErr != nil {
+				seedErr = fmt.Errorf("构造 WebSocket Turn ID seed：%w", digestErr)
 			} else {
 				state.lastTurnID = generateOfficialStableUUIDV7(
-					"openai-official-egress-turn|" + sessionID + "|" +
-						fmt.Sprintf("%x", frameBytes),
+					newOfficialUUIDV7Seed(officialUUIDV7DomainTurn).
+						WriteString(sessionID).
+						WriteString("frame_json").
+						WriteDigest(digest).
+						Key(),
 				)
 				state.lastTurnStartedAtMS = time.Now().UnixMilli()
 			}
@@ -1421,15 +1431,4 @@ func buildDerivedOfficialOpenAIWSFrameMetadataWithTurnPolicy(
 		metadata[responsesLiteWSMetadataKey] = "true"
 	}
 	return metadata, sessionID, nil
-}
-
-func officialOpenAIHTTPUserAnchorsFromPayload(
-	mode string,
-	payload map[string]any,
-) (string, string) {
-	body, err := marshalOfficialOpenAIWSJSON(mode, payload)
-	if err != nil {
-		return "", ""
-	}
-	return officialOpenAIHTTPUserAnchors(body)
 }

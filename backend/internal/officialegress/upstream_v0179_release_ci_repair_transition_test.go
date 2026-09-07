@@ -138,6 +138,9 @@ func upstreamV0179ReleaseCIRepairTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	if upstreamV0180SourceTransitionSupersedes(path, priorDigest, currentDigest) {
 		return true
 	}

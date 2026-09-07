@@ -196,7 +196,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_openai_http.go",
-          "sha256": "d38f0c9f2286b06400f769a50a762bbb6b95dce5710c7a81e723615e5f8d9b70"
+          "sha256": "1a11ceaa660ce0d0ea142cf1b3ac63e2a50df0f7af46363cb7635205d08e8f56"
         },
         {
           "path": "backend/internal/service/openai_ws_forwarder_payload.go",
@@ -248,7 +248,7 @@
         },
         {
           "path": "backend/internal/service/official_egress_openai_ws.go",
-          "sha256": "69f4ae554f120d6d5847d7caf39871062a149789a760b6c175d98556767d64fd"
+          "sha256": "3ea98e8a455fa9d84317a2bd025f587e423b68557d04101825f22ffce5cf8e2a"
         }
       ],
       "facts": [
@@ -587,7 +587,7 @@
       "package": "github.com/Wei-Shaw/sub2api/internal/service",
       "name": "TestUploadOfficialCodexFileExecutesProfileDrivenThreeStepFlow",
       "test_file": "backend/internal/service/official_egress_codex_files_test.go",
-      "test_file_sha256": "18bcf5755e3294e044d31e91a78fe6ca4486ec547238a7d02eeafc8a2839999b",
+      "test_file_sha256": "7310cff4cca40e12ad4059238bfe014bf365f758e2490e7e2286cf2b2342a209",
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_codex_files.go",
@@ -629,7 +629,7 @@
       "package": "github.com/Wei-Shaw/sub2api/internal/service",
       "name": "TestUploadOfficialCodexFileC2PAReservationReusesCreateBodyOnRetry",
       "test_file": "backend/internal/service/official_egress_codex_files_test.go",
-      "test_file_sha256": "18bcf5755e3294e044d31e91a78fe6ca4486ec547238a7d02eeafc8a2839999b",
+      "test_file_sha256": "7310cff4cca40e12ad4059238bfe014bf365f758e2490e7e2286cf2b2342a209",
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_codex_files.go",

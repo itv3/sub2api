@@ -6,49 +6,49 @@
   "predecessor": {
     "kind": "codex_cli_0151_full_job_readiness_tool_successor_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-full-job-readiness-tool-successor-source-transition.json",
-    "sha256": "9aa4d23d05520cb6820b8c959b706c9858b53f6076f889497e21e594dba76b0b"
+    "sha256": "9855bb8690a93badb4c09c67fa55ba9d115b2f810e00c305c8a13bfce922b3ac"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "583b633b924d7b4043956a549ba79d06aeb9f6c65555b2603b7d59c564b902bd",
-      "to_sha256": "b001f4f22926765cd2ca918686f23801d0c44da677836c2180823abbc83fc11c",
+      "to_sha256": "f4b441602cb610c1b471d19a0339dc8c34b0907efaa0ab1fbc43d1c0067d0911",
       "reason": "在 officialegress 包登记证据标签前置工具后继，并连续承接完整 Job 就绪摘要。"
     },
     {
       "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "24f0c77983a5d0a749d29a5e40a07d68e23021cb6183dab37bb63813b1b260ea",
-      "to_sha256": "b3888319a829bdbf02953753dfb42eba8af63387af565fa581a6480a10445d11",
+      "to_sha256": "13db553d910e86f0cbf49d77411bc4e47a66a1432d340add665a207437bd9d90",
       "reason": "在 service 包独立重放同一证据标签前置摘要闭集与 mutation 门禁。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "5eb3541c0cade2736e79657f205d41c2d2002d4f5c8fb125c53e98005aabd3d5",
-      "to_sha256": "fa0f44f5509e2d31c350f3b6ef893bafaadfaad35a55647c5e608161cc07b2ba",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "补充受管工具树同步顺序、P0 标签声明、冻结 producer 绝对路径和 official seal 前 assertion bundle 硬门禁。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.py",
       "from_sha256": "c72128c2594c043d3c347ca237cc8e3ed6c8fbce107ca43494fa9b76b7622020",
-      "to_sha256": "a81d921587b3293bc0d4932ebed3ec24b1bae7330823e62d720b78291bffbd18",
+      "to_sha256": "e4abeeeb326825196088f6404ce1de1a362fafa0b7f2d04fc702c88dc6ca20ca",
       "reason": "把目标证据标签声明摘要纳入 rehearsal 执行合同 v2，并校验 Job 与阶段闭集。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_job_rehearsal_receipt.schema.json",
       "from_sha256": "c9613e0d0a31d8fde3fc5b215c19e88343e1193588e905974edfb4377a39c2cd",
-      "to_sha256": "0fbdf0067c9fdb4061ad4bc5abe729f10c7e6227b38a415644b61879e6bab7de",
+      "to_sha256": "90d068b61597fa2442ec8f9095588863bde02057873ca9eafceea81a4d943a72",
       "reason": "冻结 rehearsal 执行合同 v2 的证据标签声明摘要字段。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "f104aeef4fff9181925903fbedb708ad9683e61e56184295b44999316ed8df8e",
-      "to_sha256": "3df8d26a1264bacb899188fa2d69954968a90f91aab4aff11151c7193c45841f",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "仅在 0.147 离线合成夹具中冻结标签摘要，不放宽生产目标声明校验。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade_job_rehearsal_receipt.py",
       "from_sha256": "2d2e6f18baf53992b71b8ff917a3df3a2a71ce2298a9e4697ae3f7cba16b7472",
-      "to_sha256": "0c6c1acd21e0b76a9a7bae1d95ecb7e596fc3649db410e7d83da69094b09d703",
+      "to_sha256": "b6dcc8a04b3d09c0cfe9b9f0158ad528af1ca6335a34db6df1c17495cd315289",
       "reason": "覆盖 0.151 标签声明摘要、缺失声明和 Job 闭集不完整的失败关闭。"
     }
   ],
@@ -60,7 +60,7 @@
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_evidence_labels_0_151_0.json",
-      "sha256": "2ba171df550bca8cd5e9a97627abc0363092544312ec586803635f83570d1e70",
+      "sha256": "c12d984bfec6d5c0b746482eee54c0bb46a6baa726b21b419f536a989bae68ce",
       "reason": "新增与 0.151 全部 38 个 official 与 candidate Job 精确一致的证据标签声明。"
     }
   ],
@@ -76,5 +76,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_evidence_label_preflight_tool_successor",
-  "identity_sha256": "8f6cfe104001f1e4883435edce3479c59944ede3073089942eb332bddca6b502"
+  "identity_sha256": "ecde321ca9c9c4c48d1b9363c6182b4b18f5a266ed21db549134ed22a679c781"
 }

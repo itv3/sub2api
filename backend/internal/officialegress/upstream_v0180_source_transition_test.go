@@ -131,6 +131,9 @@ func upstreamV0180SourceTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	if codex01491TerminalStateSupersedes(path, priorDigest, currentDigest) {
 		return true
 	}

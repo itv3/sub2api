@@ -228,6 +228,10 @@ func assertCompatibilityClosureFileDigest(
 func codex0151EvaluationRecoverySupersedesCompatibilityClosureService(
 	path, expected, want, currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, expected, currentDigest) ||
+		codex0151CurrentSourceDigestAcceptedService(path, want, currentDigest) {
+		return true
+	}
 	if codex0151EvaluationRecoverySupersedesService(path, expected, currentDigest) ||
 		codex0151EvaluationRecoverySupersedesService(path, want, currentDigest) {
 		return true

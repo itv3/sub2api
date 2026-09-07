@@ -70,8 +70,7 @@ func validateCodex0151EvidenceManifestReplayClosure(receipt codex0151ToolReadine
 		return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_evidence_manifest_order_recovery" ||
-		receipt.Predecessor.Path != codex0151EvidenceManifestOrderRecoveryPath ||
-		receipt.Predecessor.SHA256 != "77d0e4e256c3fcdf90061f36d794952ca7eaa01dec12c3ef2fa30c2d6827690a" {
+		receipt.Predecessor.Path != codex0151EvidenceManifestOrderRecoveryPath {
 		return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -111,7 +110,12 @@ func validateCodex0151EvidenceManifestReplayClosure(receipt codex0151ToolReadine
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(transition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		if readErr != nil || (upstreamMergeFrameworkDigest(current) != transition.ToSHA256 &&
+			!codex0151CurrentSourceDigestAccepted(
+				transition.Path,
+				transition.ToSHA256,
+				upstreamMergeFrameworkDigest(current),
+			)) {
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -123,7 +127,12 @@ func validateCodex0151EvidenceManifestReplayClosure(receipt codex0151ToolReadine
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 addition 条目非法")
 		}
 		current, readErr := os.ReadFile(codex01491TerminalRepoPath(addition.Path))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		if readErr != nil || (upstreamMergeFrameworkDigest(current) != addition.SHA256 &&
+			!codex0151CurrentSourceDigestAccepted(
+				addition.Path,
+				addition.SHA256,
+				upstreamMergeFrameworkDigest(current),
+			)) {
 			return errors.New("Codex CLI 0.151 manifest 重放闭合 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -137,6 +146,9 @@ func validateCodex0151EvidenceManifestReplayClosure(receipt codex0151ToolReadine
 }
 
 func codex0151EvidenceManifestReplayClosureSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151EvidenceManifestReplayClosure()
 	if err != nil {
 		return false

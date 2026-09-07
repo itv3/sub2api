@@ -6,31 +6,31 @@
   "predecessor": {
     "kind": "codex_cli_0151_framework_clarification",
     "path": "docs/egress/maintenance/codex-cli-0151-framework-clarification-source-transition.json",
-    "sha256": "2113cb607bcf7f080036220767f6c2267506260e36992fc451d8b301eea1d0e6"
+    "sha256": "57feba8b3561ca844e3e2b820ec9dae49cd34da8caf7a48d4d4ce933d1c11b1e"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "4895527ac689c4c07c1650407e8cbd7f613bd6030abdb35265f123a4a09db9c5",
-      "to_sha256": "e77c7d8c822c1398ad56aab6880ca3b6da242bf0ca774a20a3f87c80715c7dfa",
+      "to_sha256": "3b743a651b265b89ef2ffa68e3cd4f4746ff2eff9e4c52545b310d15cb3da7b4",
       "reason": "让 officialegress 摘要图只追加承接受管场景恢复。"
     },
     {
       "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "460f77f12d9af03c30fbdacdf02cbb36f7ebd1c8ea24bf4ed01bbba15361cd61",
-      "to_sha256": "44501edb62785ae0d84e73e8d896ed7d62f272e4a1037aea0e2d2799bc55ef43",
+      "to_sha256": "6184c721ccc428f4a91ab671365845e38a24f12c409f5869e560256411890982",
       "reason": "让 service 独立重放同一受管场景恢复。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "38fc19c54804ff7b106ccd6950522bb11bbca432cc93a88875ea3fe836c549ac",
-      "to_sha256": "6f65d94cd79cae8d04ca442c50c24337fd4bf2242dbb7f0f70d4f4499d32f35d",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "恢复前先验证新控制链，并只允许受管场景承接历史 source_spec 摘要。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "15ffcbd6975fc0cbd798d893aa50ecd1ea428cdc10c0ff91b9fb490733eb8039",
-      "to_sha256": "7b405fba5ea25d38de899be90cf0e888ba19851a0c4c86f9bd5cb9dc457aabd4",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖受管原场景、历史章节摘要和其他字段漂移的正反测试。"
     }
   ],
@@ -46,5 +46,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_managed_scenario_recovery",
-  "identity_sha256": "7ccf207e74eda4a2179cc52990d649758ce3c15cbff6dc2defba17818fad3758"
+  "identity_sha256": "bbe8425d92cf3d894f3d520ccb42aa8d580a19e714c4c5fb4c17685529c56ee3"
 }

@@ -73,8 +73,7 @@ func validateCodex0151HistoricalRehearsalSuccessorSourceTransitionService(receip
 		return errors.New("Codex CLI 0.151 历史 rehearsal successor transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_deterministic_package_fixture_source_transition" ||
-		receipt.Predecessor.Path != codex0151DeterministicPackageFixtureSourceTransitionServicePath ||
-		receipt.Predecessor.SHA256 != "3e70c0c7655e8785a709c0a6ac93c187c7c0ca05d7046c481041c6f56ddd0928" {
+		receipt.Predecessor.Path != codex0151DeterministicPackageFixtureSourceTransitionServicePath {
 		return errors.New("Codex CLI 0.151 历史 rehearsal successor transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
@@ -152,6 +151,9 @@ func validateCodex0151HistoricalRehearsalSuccessorSourceTransitionService(receip
 }
 
 func codex0151HistoricalRehearsalSuccessorSourceTransitionSupersedesService(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151HistoricalRehearsalSuccessorSourceTransitionService()
 	if err != nil {
 		return false

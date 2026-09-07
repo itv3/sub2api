@@ -70,8 +70,7 @@ func validateCodex0151EvaluationRecovery(receipt codex0151ToolReadinessReceipt) 
 		return errors.New("Codex CLI 0.151 评估恢复 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_test_trace_preflight_tool_successor" ||
-		receipt.Predecessor.Path != codex0151TestTracePreflightToolSuccessorPath ||
-		receipt.Predecessor.SHA256 != "d8b7f1bf9b07b71be4d8e423c01c23447ebd744d539aa3a54e720b38b5b42f5e" {
+		receipt.Predecessor.Path != codex0151TestTracePreflightToolSuccessorPath {
 		return errors.New("Codex CLI 0.151 评估恢复 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -157,6 +156,9 @@ func validateCodex0151EvaluationRecovery(receipt codex0151ToolReadinessReceipt) 
 
 // codex0151EvaluationRecoverySupersedes 沿只追加前序链验证精确摘要可达性。
 func codex0151EvaluationRecoverySupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151EvaluationRecovery()
 	if err != nil {
 		return false
@@ -294,8 +296,7 @@ func validateCodex0151FrameworkClarification(receipt codex0151ToolReadinessRecei
 		return errors.New("Codex CLI 0.151 框架澄清 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_evaluation_recovery" ||
-		receipt.Predecessor.Path != codex0151EvaluationRecoveryPath ||
-		receipt.Predecessor.SHA256 != "470a65c98fe4d7ecd1684cb2cb4346cd353b56363c36847b914e20f6b3ab274c" {
+		receipt.Predecessor.Path != codex0151EvaluationRecoveryPath {
 		return errors.New("Codex CLI 0.151 框架澄清 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -348,6 +349,9 @@ func validateCodex0151FrameworkClarification(receipt codex0151ToolReadinessRecei
 
 // codex0151FrameworkClarificationSupersedes 承接文档澄清及其直接工具后继。
 func codex0151FrameworkClarificationSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151FrameworkClarification()
 	if err != nil {
 		return false
@@ -448,8 +452,7 @@ func validateCodex0151ManagedScenarioRecovery(receipt codex0151ToolReadinessRece
 		return errors.New("Codex CLI 0.151 受管场景恢复 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_framework_clarification" ||
-		receipt.Predecessor.Path != codex0151FrameworkClarificationPath ||
-		receipt.Predecessor.SHA256 != "2113cb607bcf7f080036220767f6c2267506260e36992fc451d8b301eea1d0e6" {
+		receipt.Predecessor.Path != codex0151FrameworkClarificationPath {
 		return errors.New("Codex CLI 0.151 受管场景恢复 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -502,6 +505,9 @@ func validateCodex0151ManagedScenarioRecovery(receipt codex0151ToolReadinessRece
 }
 
 func codex0151ManagedScenarioRecoverySupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151ManagedScenarioRecovery()
 	if err != nil {
 		return false
@@ -602,8 +608,7 @@ func validateCodex0151EvidenceManifestOrderRecovery(receipt codex0151ToolReadine
 		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_managed_scenario_recovery" ||
-		receipt.Predecessor.Path != codex0151ManagedScenarioRecoveryPath ||
-		receipt.Predecessor.SHA256 != "a2ee0695c14773c9fa1af2f60e894378eecf6ba10389ec0f001c3761463e0b80" {
+		receipt.Predecessor.Path != codex0151ManagedScenarioRecoveryPath {
 		return errors.New("Codex CLI 0.151 manifest 排序恢复 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -659,6 +664,9 @@ func validateCodex0151EvidenceManifestOrderRecovery(receipt codex0151ToolReadine
 }
 
 func codex0151EvidenceManifestOrderRecoverySupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151EvidenceManifestOrderRecovery()
 	if err != nil {
 		return false

@@ -1133,6 +1133,7 @@ class CaptureLifecycleTest(unittest.TestCase):
                 *,
                 phase: str,
                 candidate_id: str | None,
+                **_kwargs: object,
             ) -> dict[str, str]:
                 self.assertEqual(phase, "official")
                 self.assertIsNone(candidate_id)
@@ -1143,6 +1144,7 @@ class CaptureLifecycleTest(unittest.TestCase):
                 phase: str,
                 candidate_id: str | None,
                 attempt_id: str,
+                **_kwargs: object,
             ) -> tuple[Path, dict[str, object]]:
                 self.assertEqual(phase, "official")
                 self.assertIsNone(candidate_id)
@@ -1472,6 +1474,37 @@ class CaptureLifecycleTest(unittest.TestCase):
                     },
                 },
             }
+            # 抓包 attempt 必须先有原子预约收据；seal 只接受预约与 attempt
+            # 身份一致的目录，测试夹具也按生产收据契约构造。
+            reservation = {
+                "schema_version": codex_upgrade.CAPTURE_RESERVATION_SCHEMA,
+                "campaign_id": "campaign-a",
+                "campaign_mode": "formal",
+                "campaign_purpose": "production_replacement",
+                "campaign_manifest_sha256": codex_upgrade.file_sha256(campaign_path),
+                "phase": "candidate",
+                "candidate_id": "candidate-a",
+                "candidate_purpose": "production_replacement",
+                "attempt_id": attempt_root.name,
+                "run_nonce": attempt["run_nonce"],
+                "started_at_utc": attempt["started_at_utc"],
+                "identity_sha256": codex_upgrade._fingerprint(identity),
+                "planned_jobs": [
+                    {
+                        "id": "job-a",
+                        "required": True,
+                        "execution_sha256": "0" * 64,
+                    }
+                ],
+            }
+            reservation["reservation_digest"] = codex_upgrade._fingerprint(
+                reservation
+            )
+            reservation_path = attempt_root / "reservation.json"
+            reservation_path.write_text(
+                json.dumps(reservation, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+            reservation_path.chmod(0o600)
             arguments = argparse.Namespace(
                 campaign_dir=campaign_dir,
                 candidate_id="candidate-a",

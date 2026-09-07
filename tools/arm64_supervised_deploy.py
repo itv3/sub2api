@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping
 
 
 DEFAULT_TOOL_DIGEST = (
-    "e2236bcdddeb2d59abbda2b576359f723680e254fa50cb8b437203387fcde932"
+    "d73e1a5c341324591cdf11c7d5a8974cfbe47cb0e265011997b9d484bebe0ef3"
 )
 DEFAULT_SUPERVISOR_DIGEST = (
     "bec3322056c66a3dfdb8ad570dafdb2ec322fbbb4219f09b0e6b2b6a58421703"

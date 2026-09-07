@@ -6,55 +6,55 @@
   "predecessor": {
     "kind": "codex_cli_0151_evidence_manifest_order_recovery",
     "path": "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
-    "sha256": "77d0e4e256c3fcdf90061f36d794952ca7eaa01dec12c3ef2fa30c2d6827690a"
+    "sha256": "6738e5c2a3d8375b54dd3072bc91249727bffde85bceb121d2b6d145de8834bd"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "fa1f8582cfa96d09d094c112f515502f766e25e0f9ee2ae2bfb3aa2ce0f719c5",
-      "to_sha256": "e3920c8b45c8f1b265b1036ba3d22a4537ce1ab9fceb9fe1caa5063beb04bcdd",
+      "to_sha256": "3b743a651b265b89ef2ffa68e3cd4f4746ff2eff9e4c52545b310d15cb3da7b4",
       "reason": "承接最终闭合 transition 的只追加摘要边。"
     },
     {
       "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "1168a0a0fbf475649251f9bb4d8dbe6476bf686c494d0cd37a4483b58475f7e9",
-      "to_sha256": "4a25d28940e86ebd006bfb600aa434989ba17fa66af70b3b489646dc62ce166d",
+      "to_sha256": "6184c721ccc428f4a91ab671365845e38a24f12c409f5869e560256411890982",
       "reason": "独立承接最终闭合 transition 的只追加摘要边。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "ec71ba5605953f9b4584032efe595cc2fbb7aca062d0148846643cd5ca54b8ac",
-      "to_sha256": "b6d1529be6f35b7822a58a9da380dbd19f1b7cd1da04c585b6c90c0ec7026acd",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "要求历史导入夹具跑通完整只读重放链，并固定三份 transition 上限。"
     },
     {
       "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
       "from_sha256": "6ab93d7f3aa01f5c14163cf3c2a13004951a8b53b24dce4bc36457567d3aee58",
-      "to_sha256": "488def30d1dccccf4daa5080da71d7fc083e2e9ce2aa95878628ab44c8ab76ba",
+      "to_sha256": "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
       "reason": "允许一次最终闭合修复，同时以第三份失败永久停线阻断循环。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "9388177d89a380b9a0d6e3fa575a00ec60393e796a60658bfe9249359017a72e",
-      "to_sha256": "4fc0d42b3f42fe513e1fd02fc4992b45d5d5e848f405eda35f02849f26b9dd6c",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "让 compare 共用重放入口仅对历史导入阶段接受条目全集相同的排序差异。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "848ce51843cf6076c8730530887a64a33f5b0a7f6778f18c559ae37ea5a40fa8",
-      "to_sha256": "d7d78efb07598c5b1e8e7d317b29820089b8344a28c953534d19742c151b361d",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖下游阶段重放、内容漂移拒绝、第三份闭合和第四份拒绝。"
     }
   ],
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_evidence_manifest_replay_closure_source_transition_test.go",
-      "sha256": "f7e5e78fa07d211695efd0b0ba4725be0575b3f8c6e6d3e0b4500aa982e0563d",
+      "sha256": "3f597140dc6b1475414705a6bdf164bb17f260b10fb3739405750a3e1eab2095",
       "reason": "在 officialegress 独立重放最终闭合 source transition。"
     },
     {
       "path": "backend/internal/service/codex_0151_evidence_manifest_replay_closure_source_transition_test.go",
-      "sha256": "23d03ea802a3d9f81b9866a8b9b8a83a941a6b7d090155984a4408211e4f39bb",
+      "sha256": "5e210cc6ad79f22511bd2518db019994138f0e00578b564110c47494b8adf5ab",
       "reason": "在 service 独立重放最终闭合 source transition。"
     }
   ],
@@ -71,5 +71,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_evidence_manifest_replay_closure",
-  "identity_sha256": "dfc65c2517b7b54f56d1b3a0fa3e44ddd7052c2b53b5aecc02f83797e33bd2ba"
+  "identity_sha256": "37e48c901947d69e9ac46ae5674dda9f8cf0bf653f267a0c87c76701d6bc9153"
 }

@@ -6,37 +6,37 @@
   "predecessor": {
     "kind": "codex_cli_0151_evidence_label_preflight_tool_successor_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor-source-transition.json",
-    "sha256": "debd3ef1ba753d548190bdd0e8f62975c8f047a9eb0c4118ab42a6877cfb787e"
+    "sha256": "ee694a5d3cc18cfdfdd333b07b7f1f1b956db44af1250f7de7a7ba56d2f793b5"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "b001f4f22926765cd2ca918686f23801d0c44da677836c2180823abbc83fc11c",
-      "to_sha256": "23b8826f9a4222a263b9f388d20ec85b84284b9adfd71a9722cf5f4fde969e68",
+      "to_sha256": "f4b441602cb610c1b471d19a0339dc8c34b0907efaa0ab1fbc43d1c0067d0911",
       "reason": "让 officialegress 后继链承接系统代理取证工具摘要，并独立重放新 transition。"
     },
     {
       "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "b3888319a829bdbf02953753dfb42eba8af63387af565fa581a6480a10445d11",
-      "to_sha256": "6a569031e968f839c3bc5f948d443c001b280b0107324d3fb371987673fb75e2",
+      "to_sha256": "13db553d910e86f0cbf49d77411bc4e47a66a1432d340add665a207437bd9d90",
       "reason": "让 service 后继链独立承接同一系统代理取证工具摘要。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "fa0f44f5509e2d31c350f3b6ef893bafaadfaad35a55647c5e608161cc07b2ba",
-      "to_sha256": "5025a988e5dee9dcb6fc653c238c3c3803f0f2fe6588d5e243d7b83e5f3e6f77",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "要求 P0 验证模型目录代理路由，并在临时清理前回传失败原因。"
     },
     {
       "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
       "from_sha256": "6e9db8b6600c2b108bb7aef7d8b1c408c20c2448f26e2e45af4df7b6dc81f05a",
-      "to_sha256": "f836ec63336f2f4c178a5617e6208e22a6573d7416938d6bb389e31856cc4eb3",
+      "to_sha256": "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
       "reason": "补充代理取证兼容性和失败日志持久化的公共执行约束。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
       "from_sha256": "6ff00b0cc9d3388ce7b67733312a200b3a270eab98e5950d2f210618a2e928cb",
-      "to_sha256": "a431a562e347e0d7faf7106456e171facdab09edeb4367ca91630bdc30cc30f1",
+      "to_sha256": "300be786f0468d8ce0fce907b6e4f09cdc2a9c781fb2ad633275f9283525ec18",
       "reason": "让 0.151 official-core 的 MITM 模型目录补采显式启用系统代理并回传失败日志。"
     },
     {
@@ -55,12 +55,12 @@
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_system_proxy_capture_tool_successor_test.go",
-      "sha256": "831d49a2917282857e2e075771ad7e1d39f97edd017b27a5824e831855086bdb",
+      "sha256": "7088617a9dee2e07eea8b42a7ae3696dc7b99854d46afce960f7a02f94089b52",
       "reason": "在 officialegress 包冻结并变异测试系统代理取证工具后继。"
     },
     {
       "path": "backend/internal/service/codex_0151_system_proxy_capture_tool_successor_test.go",
-      "sha256": "b8def6b7002949dc50eb6b4c072b12406d5a57ceba119e01a66d4c11f2146acd",
+      "sha256": "b9479bf5eca02940eb7fea479c0df332fdff988030b32c23df004bf6480e8eda",
       "reason": "在 service 包独立重放同一系统代理取证工具后继。"
     },
     {
@@ -81,5 +81,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_system_proxy_capture_tool_successor",
-  "identity_sha256": "fc4980d2b63aedcfc2918ed928f72eac2bf070e0fbe233b42e0cdd073a8c4964"
+  "identity_sha256": "849ec14e7022ec3d19f644dd2a01e46d233f391df5b6e0f6c1f759b4d123a0c1"
 }

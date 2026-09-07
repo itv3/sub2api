@@ -102,6 +102,9 @@ func upstreamMergeFrameworkTransitionSupersedesService(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	if codex01491TerminalStateSupersedesService(
 		path, priorDigest, currentDigest,
 	) {

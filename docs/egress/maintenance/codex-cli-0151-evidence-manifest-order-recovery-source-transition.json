@@ -6,43 +6,43 @@
   "predecessor": {
     "kind": "codex_cli_0151_managed_scenario_recovery",
     "path": "docs/egress/maintenance/codex-cli-0151-managed-scenario-recovery-source-transition.json",
-    "sha256": "a2ee0695c14773c9fa1af2f60e894378eecf6ba10389ec0f001c3761463e0b80"
+    "sha256": "fa9cadd49d038cc9098c6d65b8b1bdce66d3bb3c832ea5c71e0edbad0db10e7f"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "e77c7d8c822c1398ad56aab6880ca3b6da242bf0ca774a20a3f87c80715c7dfa",
-      "to_sha256": "fa1f8582cfa96d09d094c112f515502f766e25e0f9ee2ae2bfb3aa2ce0f719c5",
+      "to_sha256": "3b743a651b265b89ef2ffa68e3cd4f4746ff2eff9e4c52545b310d15cb3da7b4",
       "reason": "让 officialegress 只追加承接历史 Inventory 排序恢复。"
     },
     {
       "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
       "from_sha256": "44501edb62785ae0d84e73e8d896ed7d62f272e4a1037aea0e2d2799bc55ef43",
-      "to_sha256": "1168a0a0fbf475649251f9bb4d8dbe6476bf686c494d0cd37a4483b58475f7e9",
+      "to_sha256": "6184c721ccc428f4a91ab671365845e38a24f12c409f5869e560256411890982",
       "reason": "让 service 独立重放同一排序恢复边界。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "41525a31943a65535800649b3972edea69d2d2496e0eec1af68a6d5face3275b",
-      "to_sha256": "ec71ba5605953f9b4584032efe595cc2fbb7aca062d0148846643cd5ca54b8ac",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "固定排序差异与替代 transition 的执行边界。"
     },
     {
       "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
       "from_sha256": "23eae275384371ab00d5786b755110332e7f6159e955dd16bdee85b4b0097c9c",
-      "to_sha256": "6ab93d7f3aa01f5c14163cf3c2a13004951a8b53b24dce4bc36457567d3aee58",
+      "to_sha256": "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
       "reason": "只允许条目全集相同的排序兼容并限制替代次数。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "6f65d94cd79cae8d04ca442c50c24337fd4bf2242dbb7f0f70d4f4499d32f35d",
-      "to_sha256": "9388177d89a380b9a0d6e3fa575a00ec60393e796a60658bfe9249359017a72e",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "按条目内容比较历史 Inventory，并支持一次只追加替代 transition。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "7b405fba5ea25d38de899be90cf0e888ba19851a0c4c86f9bd5cb9dc457aabd4",
-      "to_sha256": "848ce51843cf6076c8730530887a64a33f5b0a7f6778f18c559ae37ea5a40fa8",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖排序兼容、内容漂移拒绝和两次 transition 上限。"
     }
   ],
@@ -59,5 +59,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_evidence_manifest_order_recovery",
-  "identity_sha256": "73423098a77a9d9fe37f2c30fd2c38dab3a4dd7ed974f293bdb88b05fc6965ae"
+  "identity_sha256": "93a85d2e95b22f49bade1d19f473a04d2a06e1b7bd35ccdb919b7ca103e8cecb"
 }

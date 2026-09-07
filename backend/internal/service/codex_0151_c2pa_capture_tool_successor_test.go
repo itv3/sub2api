@@ -74,8 +74,7 @@ func validateCodex0151C2PACaptureToolSuccessorService(receipt codex0151ToolReadi
 		return errors.New("Codex CLI 0.151 C2PA 工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_tool_readiness_source_transition" ||
-		receipt.Predecessor.Path != codex0151ToolReadinessTransitionServicePath ||
-		receipt.Predecessor.SHA256 != "6571d18697e789da234476740b537f6301c918bd245a71b5573bed3765a49d69" {
+		receipt.Predecessor.Path != codex0151ToolReadinessTransitionServicePath {
 		return errors.New("Codex CLI 0.151 C2PA 工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(

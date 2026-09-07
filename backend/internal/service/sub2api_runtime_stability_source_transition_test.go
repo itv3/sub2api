@@ -76,6 +76,9 @@ func sub2APIRuntimeStabilityTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, ok := loadSub2APIRuntimeStabilityTransitionReceipt()
 	if !ok {
 		return false

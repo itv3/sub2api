@@ -6,7 +6,7 @@
   "source_spec": {
     "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
     "fragment": "第二章",
-    "sha256": "6b7e4eeb9aa4725559730e3129faebf926dbd53e2697c000787258f034e179b3"
+    "sha256": "aa719cc8a5d7cb63b8edb84ad89a5bee6f79d6ddc00dd04c7c5740acbf935a23"
   },
   "rule_manifest": {
     "path": "tools/official_client_capture/codex_upgrade_rules_0_149_1.json",

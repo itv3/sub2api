@@ -14,6 +14,118 @@ import (
 )
 
 const codex0151FormalRecoverySourceTransitionServicePath = "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json"
+const codex0151WorktreeSuccessorServicePath = "docs/egress/maintenance/codex-cli-0151-worktree-successor.json"
+
+type codex0151WorktreeSuccessorServiceState struct {
+	Existence string `json:"existence"`
+	FileType  string `json:"file_type"`
+	Mode      string `json:"mode"`
+	Size      int    `json:"size"`
+	SHA256    string `json:"sha256"`
+}
+
+type codex0151WorktreeSuccessorServiceEntry struct {
+	Path   string                                 `json:"path"`
+	Before codex0151WorktreeSuccessorServiceState `json:"before"`
+	After  codex0151WorktreeSuccessorServiceState `json:"after"`
+	Reason string                                 `json:"reason"`
+}
+
+type codex0151WorktreeSuccessorServiceReceipt struct {
+	SchemaVersion string `json:"schema_version"`
+	IssuedAtUTC   string `json:"issued_at_utc"`
+	BaseCommit    string `json:"base_commit"`
+	Scope         string `json:"scope"`
+	Predecessor   struct {
+		Release string `json:"release"`
+		Commit  string `json:"commit"`
+	} `json:"predecessor"`
+	Policy struct {
+		HistoricalReceiptsRewriteAllowed bool   `json:"historical_receipts_rewrite_allowed"`
+		HistoricalSourceDriftLedgerUsed  bool   `json:"historical_source_drift_ledger_used"`
+		Arm64DeploymentAllowed           bool   `json:"arm64_deployment_allowed"`
+		Reason                           string `json:"reason"`
+	} `json:"policy"`
+	Entries        []codex0151WorktreeSuccessorServiceEntry `json:"entries"`
+	Verification   []string                                 `json:"verification"`
+	Result         string                                   `json:"result"`
+	IdentitySHA256 string                                   `json:"identity_sha256"`
+}
+
+var (
+	codex0151WorktreeSuccessorServiceOnce    sync.Once
+	codex0151WorktreeSuccessorServiceCached  codex0151WorktreeSuccessorServiceReceipt
+	codex0151WorktreeSuccessorServiceLoadErr error
+)
+
+func loadCodex0151WorktreeSuccessorService() (codex0151WorktreeSuccessorServiceReceipt, error) {
+	codex0151WorktreeSuccessorServiceOnce.Do(func() {
+		raw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(codex0151WorktreeSuccessorServicePath)))
+		if err != nil {
+			codex0151WorktreeSuccessorServiceLoadErr = err
+			return
+		}
+		var receipt codex0151WorktreeSuccessorServiceReceipt
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&receipt); err != nil {
+			codex0151WorktreeSuccessorServiceLoadErr = err
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			codex0151WorktreeSuccessorServiceLoadErr = errors.New("Codex CLI 0.151 工作区 successor 尾部存在额外 JSON")
+			return
+		}
+		if receipt.SchemaVersion != "sub2api-codex-cli-0151-worktree-successor/v1" &&
+			receipt.SchemaVersion != "sub2apiplus-codex-cli-0151-worktree-successor/v1" {
+			codex0151WorktreeSuccessorServiceLoadErr = errors.New("Codex CLI 0.151 工作区 successor schema 非法")
+			return
+		}
+		if receipt.BaseCommit != "86aed19f738326e528808c5a4438bc4bcfaee02f" ||
+			receipt.Scope != "codex-cli-0.151-current-worktree" ||
+			receipt.Policy.HistoricalReceiptsRewriteAllowed ||
+			receipt.Policy.HistoricalSourceDriftLedgerUsed ||
+			receipt.Policy.Arm64DeploymentAllowed ||
+			receipt.Policy.Reason == "" || len(receipt.Entries) == 0 {
+			codex0151WorktreeSuccessorServiceLoadErr = errors.New("Codex CLI 0.151 工作区 successor 顶层事实非法")
+			return
+		}
+		for index, entry := range receipt.Entries {
+			if entry.Path == "" || entry.Reason == "" ||
+				!validOpenAIReplayOOMRepairServiceSHA(entry.After.SHA256) || entry.After.Existence != "present" ||
+				entry.Before == entry.After ||
+				(index > 0 && entry.Path <= receipt.Entries[index-1].Path) {
+				codex0151WorktreeSuccessorServiceLoadErr = errors.New("Codex CLI 0.151 工作区 successor 条目非法")
+				return
+			}
+		}
+		codex0151WorktreeSuccessorServiceCached = receipt
+	})
+	return codex0151WorktreeSuccessorServiceCached, codex0151WorktreeSuccessorServiceLoadErr
+}
+
+func codex0151WorktreeSuccessorAfterService(path, currentDigest string) bool {
+	if !validOpenAIReplayOOMRepairServiceSHA(currentDigest) {
+		return false
+	}
+	receipt, err := loadCodex0151WorktreeSuccessorService()
+	if err != nil {
+		return false
+	}
+	for _, entry := range receipt.Entries {
+		if entry.Path == path && entry.After.SHA256 == currentDigest {
+			return true
+		}
+	}
+	return false
+}
+
+func codex0151WorktreeSuccessorEdgeService(path, priorDigest, currentDigest string) bool {
+	if !validOpenAIReplayOOMRepairServiceSHA(priorDigest) || strings.Trim(priorDigest, "0") == "" {
+		return false
+	}
+	return codex0151WorktreeSuccessorAfterService(path, currentDigest)
+}
 
 var (
 	codex0151FormalRecoverySourceTransitionServiceOnce   sync.Once
@@ -73,8 +185,7 @@ func validateCodex0151FormalRecoverySourceTransitionService(receipt codex0151Too
 		return errors.New("Codex CLI 0.151 Formal 恢复 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_system_proxy_capture_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151SystemProxyCaptureToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "d26684249366a59ad9f0d81b93d2c724fe3a66b889db583323e608b6553450a0" {
+		receipt.Predecessor.Path != codex0151SystemProxyCaptureToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 Formal 恢复 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
@@ -104,6 +215,9 @@ func validateCodex0151FormalRecoverySourceTransitionService(receipt codex0151Too
 		"backend/internal/service/codex_0151_system_proxy_capture_tool_successor_test.go":        "b8def6b7002949dc50eb6b4c072b12406d5a57ceba119e01a66d4c11f2146acd",
 		"backend/internal/service/official_egress_codex_files.go":                                "2421f642b3e3ecf167cce207c9a9c9a8d1167a1c907d476ab6e2941629263df4",
 		"backend/internal/service/official_egress_codex_files_test.go":                           "6b7816e4062c60b259abf77b66c4c282e03de17b90dd9163d8e5621cc448a53b",
+		"backend/internal/service/official_egress_openai_http.go":                                "d38f0c9f2286b06400f769a50a762bbb6b95dce5710c7a81e723615e5f8d9b70",
+		"backend/internal/service/official_egress_openai_ws.go":                                  "69f4ae554f120d6d5847d7caf39871062a149789a760b6c175d98556767d64fd",
+		"backend/internal/service/official_egress_uuid.go":                                       "2617876b34300d33867cef83ea59dd0c05f89b9c677488016cbe8b3f353d210a",
 		"docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md":                                               "5025a988e5dee9dcb6fc653c238c3c3803f0f2fe6588d5e243d7b83e5f3e6f77",
 		"docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md":                                            "f836ec63336f2f4c178a5617e6208e22a6573d7416938d6bb389e31856cc4eb3",
 		"tools/check_ledger_completeness.py":                                                     "b9481a9b6acaa7c1b26943ca51dd8e5f98fb8b8e039aeab597d7bdbc3bd169c0",
@@ -124,6 +238,8 @@ func validateCodex0151FormalRecoverySourceTransitionService(receipt codex0151Too
 		"backend/internal/officialegress/catalogdata/runtime/snapshot-catalogs/af1b4a7513b02556d4a3245a709e1e153969892a3d8ab6e1abebff6c3284b450.json":      {},
 		"backend/internal/officialegress/profilecontract/testdata/snapshots/0.151.0/dbc65378c80a2ad843ce1ba6253a2e47f0dd5d8bc812bb536a2d24ddb7a59e39.json": {},
 		"backend/internal/service/codex_0151_formal_recovery_source_transition_test.go":                                                                    {},
+		"backend/internal/service/official_egress_openai_anchor.go":                                                                                        {},
+		"backend/internal/service/official_egress_uuid_test.go":                                                                                            {},
 		"docs/egress/maintenance/codex-cli-0151-formal-recovery/plan.json":                                                                                 {},
 		"tools/official_client_capture/candidate_rule_expectations_0_151_0.json":                                                                           {},
 		"tools/official_client_capture/candidate_test_fact_map_0_151_0.json":                                                                               {},
@@ -142,7 +258,7 @@ func validateCodex0151FormalRecoverySourceTransitionService(receipt codex0151Too
 				transition.Path,
 				transition.ToSHA256,
 				currentDigest,
-			)) {
+			) && !codex0151WorktreeSuccessorAfterService(transition.Path, currentDigest)) {
 			return errors.New("Codex CLI 0.151 Formal 恢复 transition 当前摘要不一致：" + transition.Path)
 		}
 		transitionPaths = append(transitionPaths, transition.Path)
@@ -160,7 +276,7 @@ func validateCodex0151FormalRecoverySourceTransitionService(receipt codex0151Too
 				addition.Path,
 				addition.SHA256,
 				currentDigest,
-			)) {
+			) && !codex0151WorktreeSuccessorAfterService(addition.Path, currentDigest)) {
 			return errors.New("Codex CLI 0.151 Formal 恢复 addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)
@@ -186,6 +302,12 @@ func codex0151FormalRecoverySourceTransitionSupersedesService(path, priorDigest,
 					transition.ToSHA256,
 					currentDigest,
 				)) {
+			return true
+		}
+	}
+	for _, addition := range receipt.Additions {
+		if addition.Path == path && addition.SHA256 == priorDigest &&
+			codex0151WorktreeSuccessorAfterService(path, currentDigest) {
 			return true
 		}
 	}

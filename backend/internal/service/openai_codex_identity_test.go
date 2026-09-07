@@ -2,6 +2,7 @@ package service
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -315,8 +316,9 @@ func TestNormalizeCodexClientVersion(t *testing.T) {
 }
 
 func TestBuildCodexCLIUserAgent(t *testing.T) {
+	want := strings.ReplaceAll(codexCLIUserAgent, codexCLIVersion, "0.200.1")
 	require.Equal(t,
-		"codex_exec/0.200.1 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.200.1)",
+		want,
 		buildCodexCLIUserAgent("0.200.1"),
 	)
 	// 非法版本号必须回退到内置 UA，不能拼出畸形身份。

@@ -1,0 +1,1861 @@
+{
+  "schema_version": "sub2apiplus-codex-cli-0151-worktree-successor/v1",
+  "issued_at_utc": "2026-09-06T23:12:15Z",
+  "base_commit": "86aed19f738326e528808c5a4438bc4bcfaee02f",
+  "scope": "codex-cli-0.151-current-worktree",
+  "predecessor": {
+    "release": "v0.1.180-4",
+    "commit": "86aed19f738326e528808c5a4438bc4bcfaee02f"
+  },
+  "policy": {
+    "historical_receipts_rewrite_allowed": false,
+    "historical_source_drift_ledger_used": false,
+    "arm64_deployment_allowed": false,
+    "reason": "仅承接当前 0.151 工作区；历史漂移 ledger 与旧 transition 收据只读。"
+  },
+  "entries": [
+    {
+      "path": "Makefile",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 14381,
+        "sha256": "b9a18cf90b229f91f49a1d78d51e4b0ff5de345ad42f1b6528d907789aec83f4"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 14438,
+        "sha256": "460cb1464501eca6ecbe59ee38fb4de721076ce2ef7cfb74f66f9d0d2cbf24ee"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/catalog_retirements_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 15535,
+        "sha256": "faf01f281a90aec462f9b023c35131b4d9cb7a832679e1f6fd616a5e33ce98bd"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 15629,
+        "sha256": "6fd1997f5d350c02ae65029ea1ff572662b16d81d8d794c3081b3a202441d126"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/changeset2_synthetic_rollback_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 23381,
+        "sha256": "aa4161cb0adcbaa5231991ab6eb2cd75144eeff8ae32eeac1bf7b53bcaccda86"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 23348,
+        "sha256": "b7c5d5c795e67e9d66fe516e66ce470a5c32e311ed99e72cfb2842ffa2cf3bdb"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_fw_h_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9243,
+        "sha256": "d3f3c5011c03cc5915cfbf4b5c5c55bcbf7671646a220ef707cef946e68faf4f"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9337,
+        "sha256": "2185caa6c1f92624f7a110f94834516706a3862512fc35d58159d3f7b41a5e61"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_official_client_only_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10742,
+        "sha256": "9fadd328ac7823c558e858f376d4f5d53ee6eeb8c56fd5ae72f9d49b27101520"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10788,
+        "sha256": "d25f5d647b9e35b8fc617288e81961978a37b992c08aea0b60b73adbfc2c29e2"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_offline_release_repair_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6492,
+        "sha256": "5b8c34d1b412434d5af10adf614397a1ba8a1700f39c25bda02506d4cffd29d3"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6538,
+        "sha256": "114574ac4a18b5c828fc475f1bff9ca93a8bf96dc5c12844f56a12823d78cae1"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_persona_release_catalog_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9300,
+        "sha256": "356c481f6add4afff14871da01b66c1876a95d02ec4cdb0718ddaa6c8fa65d54"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9363,
+        "sha256": "4d0cd59cd424d063acf4768642b4170f6e82a649449e631a97418e846a5f5841"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 45211,
+        "sha256": "123a55c011292d39d1d1449a2144cb4b71087abd96a3056880905c469d9ad767"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 46743,
+        "sha256": "373e4e5604fbdca346e210d9d784aef07cc3f7d4a8383d094f8aa0e207ea1f68"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9483,
+        "sha256": "32eb73ce99ee58c8e4be71d2431a4e54c02ac1c32e2d2cedbd509da70dbcc30a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9381,
+        "sha256": "f9145f59090eee6a7505288c0172621f388b7e03036fedbe671e49b5c8017b07"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_arm64_typescript_dependency_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8631,
+        "sha256": "655c88d388df3520c03189464867d04c31c3857d14dc2c753c6281930737f911"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8529,
+        "sha256": "b4b503c5343621d8082df09086c0bfbd6bdbdb54cd2700117f93c1957af364a6"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_c2pa_capture_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10285,
+        "sha256": "7faa11ace2ba11bff23509fb88ff7b9b583855db3763cecfd82194dada723b98"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10183,
+        "sha256": "682545ad02d1425d7c2e99eb115346c67839c3c62f42999e7f4d03a6bd2113c1"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_container_path_recovery_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10209,
+        "sha256": "718faa5097fd5868c5f819f89410d6bf41767396b5cfdf0f10fb353e9ac14f0b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10107,
+        "sha256": "467051fe9855c77cff57ec6ad1323026a9be55cb95a3702302090c1a1503beb1"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_deterministic_package_fixture_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8981,
+        "sha256": "3aec934c20f9620728eeb682dba70ac36855eb8779569f32a567dbfb56a448a0"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8973,
+        "sha256": "586cafc335104b3cd812292e108b4f11326a02c1be574311e2a694a4bd8cf82b"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_evaluation_recovery_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 32582,
+        "sha256": "e3920c8b45c8f1b265b1036ba3d22a4537ce1ab9fceb9fe1caa5063beb04bcdd"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 32550,
+        "sha256": "b5b6412b5c6e403da74bc24f8339b431366c0706d97f6f12232a44ca34febb27"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_evidence_manifest_replay_closure_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8417,
+        "sha256": "f7e5e78fa07d211695efd0b0ba4725be0575b3f8c6e6d3e0b4500aa982e0563d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8685,
+        "sha256": "7b184075d50c5d7ccbc1eb14804f748598ceb3b8480742812a55c22ac30ed548"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_formal_recovery_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13002,
+        "sha256": "bd2b5c66f7e5121590520f3e4d91191de9710514572f4c380971bed4389b0581"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 18320,
+        "sha256": "7ed436968aa1708dd35d29de69e8fb2faf7cb9e957ed074404aaed59accea791"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_historical_rehearsal_successor_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9495,
+        "sha256": "f47b07100c7202b9cdeef3b0c43d5cf6c9e0638f9865d944e984394e10f4cd14"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9487,
+        "sha256": "b04a412a407b5ee25623c8d78ea399e0189f1b27bf2cfb9e02a91f06a69f4bbf"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_model_policy_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9413,
+        "sha256": "3f4115d9e82d34bce4ceef0e3f444fc3470632a6c7eec2ef1d4090470992fe8b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9405,
+        "sha256": "6ed01456733ae8160bdabc5187b8c1ecea75c26c828ebe3d68c0caf1b55de8e3"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_r9_candidate_readiness_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10157,
+        "sha256": "43c29886254d6a8d261091f66558354d59086707e4fb679816d5891911bf751d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10055,
+        "sha256": "59c81822d819d71a45f626f3505a1113a5d06c352c0eee67750a5d113715b0ed"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_stopped_ledger_recovery_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9412,
+        "sha256": "f5aad8fc9b1a5e9cf0ae0d700346ecd30b34bcfaa954c7d8d58011c0d9779864"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9404,
+        "sha256": "346a6d546cc6b4136d13751f2ccf1d09c7ab792951b9e915aabedbf3962bbe91"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_system_proxy_capture_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9871,
+        "sha256": "b9e5497a42094f4b9d7b1aec7a0c575873054799554c0d6578412bf851954373"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9769,
+        "sha256": "7088617a9dee2e07eea8b42a7ae3696dc7b99854d46afce960f7a02f94089b52"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_test_trace_preflight_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8756,
+        "sha256": "0347790a6fae9cd1ae4bba5d456ea0599e3810658a48832b1c1172b929548421"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8654,
+        "sha256": "b6c14c63cd54dd9b3ee2dec80de11ca6236c0118b559f8dbb8dd02431bb229b0"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 58571,
+        "sha256": "23b8826f9a4222a263b9f388d20ec85b84284b9adfd71a9722cf5f4fde969e68"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 58053,
+        "sha256": "b67823c4e96fa1e4db95e1a8b4a29a70160098383cf2f8f9971cbe19b7c3cf57"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/fw_e_observation_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5050,
+        "sha256": "2d15e35e00d03c1e5f9c4c9b0cbaf21a35bb9daebf0900d848de8a01e31c2307"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5144,
+        "sha256": "2e358eef560f3d1d325f376daeb2b1369923279de60f2d9fa5e6beb7e8605798"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/historical_source_drift_successor_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 7437,
+        "sha256": "b793ebfbcfe762935b1c685d5cfe6583930b2d230a23497e0351083fb35fde70"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/releasecontract/testdata/release-graph.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4527,
+        "sha256": "bce35dba2d095f74ee4357bf93b0f356f5b785aeab23dd725a3d4df9f8506dad"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4563,
+        "sha256": "9e8a211a397bec52e40e35c7cb6599172022ece85bd9f7241a6e53c9ce58daf3"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；生成发布图随画像切换更新，历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/source_transition_digest_acceptance_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 614,
+        "sha256": "1c2f952bd7ed834b0ffc49826a9ac29e399c945d4eace07dc59d76c05327ce5d"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_merge_framework_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6849,
+        "sha256": "3c3fce6bcb8f0dd3f5c1dbb18b39b7887680ab56c059df8c1f532760a6941102"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6943,
+        "sha256": "a79f2fc9412851ac04e0f1362f86b6903eeb3d2c5407e6beb21e709172d5c68b"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v0179_release_ci_repair_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6776,
+        "sha256": "7ed25330efa408d276a3a59fdf0d360782b51a777249321cbc0fe3ba619584dc"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6870,
+        "sha256": "72afba5312bf37919dd28d77dca89b3ab5d8a5c46600186b9cadfec363f3bea3"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v0180_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5337,
+        "sha256": "feeec0fdf046b205f9745496951590690fe72a94a87be5874d1c7b2e53f49027"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5431,
+        "sha256": "a6f731cbe9fb220163f3cbbbefc924eaf6623462204ed0dbd1f8d11b219576ef"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/server/api_contract_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 108598,
+        "sha256": "f77d818f6669f5d4a53fdcaa470b8a4cd82995f3e607d901274eb3d75c8e79c5"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 108598,
+        "sha256": "e90f413946f1bd898b31f075ae0810bad69f043cc5b06459f4479718cfa5d533"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/claude_fw_h_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5527,
+        "sha256": "0983cda9fb876c383749660e81f32829d4e27d44dd7971424c670b02d58b5f92"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5628,
+        "sha256": "aed440f91801cd70ddd9e715598b5cb6b46f6f591e307e324cdf1a15859dac35"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_01491_terminal_state_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 40813,
+        "sha256": "5c3015450960ea21170ce071d56a2b097747a9c51326bf4307efc9f55b8b60df"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 42158,
+        "sha256": "6545b9d729c4ce1b902dc0e9b93c7503ffda2e31d19fe05715c5896c5f4e05b4"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9837,
+        "sha256": "257da7b5cf7c7e783b36d44d95af1a47d02d96c0c990c98d99cbbce4cc288df5"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9735,
+        "sha256": "efaa8dc2b3174770ada059ee773a52d9124ecb3243aa40022de7cf8703493f47"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_arm64_typescript_dependency_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9022,
+        "sha256": "5583bae40a346073c859e5f72ac33808f5e39d36db908a77cc9e1be27214ef76"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9021,
+        "sha256": "50650250be4dcefc167b5e33fee9ed971e1449bc0366e0d7bdd88ab9ae617330"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_c2pa_capture_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10734,
+        "sha256": "092df47f142096c59a7bdc8d543a1f6a72109377eda96cec43a08bc482077049"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10632,
+        "sha256": "81ae86ddc5946bbe344412a1d440ae72ed4e1ba35e2dd8d5202a7492c7e03b70"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_container_path_recovery_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10658,
+        "sha256": "6796e5e6802f7eb816f26bc393185eb49c01273389dc3b6382e37e38cf7799ff"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10556,
+        "sha256": "a1ef9646cfc8ba82940c732a87a69a73dc9b380915cd0eb31010de317d7b0d76"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_deterministic_package_fixture_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9372,
+        "sha256": "1c044bd07ec07d3b14e6132d6b719a37e78804bc4226320dd88bfea99a61176f"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9371,
+        "sha256": "41efb038c908fa3f78fb5b5caef151fd8e6267ebc0b091751f4cc6ec6f0d2641"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_evaluation_recovery_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 34257,
+        "sha256": "4a25d28940e86ebd006bfb600aa434989ba17fa66af70b3b489646dc62ce166d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 34253,
+        "sha256": "3cbd387e326a6bd05d485376f35e2d92134b8db702a67c421b73f221896f56e9"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_evidence_manifest_replay_closure_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8780,
+        "sha256": "23d03ea802a3d9f81b9866a8b9b8a83a941a6b7d090155984a4408211e4f39bb"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9083,
+        "sha256": "fb5a0d097c7ae41d377603adfdffc840540ee3ba7b8bca635fd8735a29785db9"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_formal_recovery_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13428,
+        "sha256": "1d0e468e72dcc78c36e9c7a38f20d69182ba96aac16d9e252996cdd2c9d7e645"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 19093,
+        "sha256": "9a3aa083893215bd94c911da4b469b2ebb3e487308c5cca5a3b2397efc9bdaa0"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_historical_rehearsal_successor_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9886,
+        "sha256": "2544a4bea24dff232f337e9c54df0913e437dc2626a0590a9d36a0aa89378a57"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9885,
+        "sha256": "7dc1980aee5160de4137b88fbefa4a6fccd3c68f8192800e54395b65d42a8518"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_model_policy_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9862,
+        "sha256": "5467e42521a6c91da0350c613207cb9924632ed821177a78211def42e34ffd8a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9861,
+        "sha256": "a86cc70d0338657ac998c79152a9f8fdb98f16bea56c0ae81941652443f65ce5"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_r9_candidate_readiness_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10548,
+        "sha256": "6671867cef531273c3dc9a6a9c777b8cf7af5cde27c262c29bedfc206209c46d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10446,
+        "sha256": "6b2f508d2ab849bc7d9f7c218f63e96e65312fe86139c03c7c36b50d7dcc99fa"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_stopped_ledger_recovery_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9803,
+        "sha256": "f6049d57e57e0f8f6a1a0d7191152054cdaaafb8513f971a287eb4c564ecef0b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 9802,
+        "sha256": "99af7f49f4c85c133e635723e3538faae637219872350b6d3bd62dfc4c7ed609"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_system_proxy_capture_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10351,
+        "sha256": "76b28f55a279317fc8e29322396abdcbc853ff18d8413e8ea1db1a658fa10c4a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10249,
+        "sha256": "b9479bf5eca02940eb7fea479c0df332fdff988030b32c23df004bf6480e8eda"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 61338,
+        "sha256": "6a569031e968f839c3bc5f948d443c001b280b0107324d3fb371987673fb75e2"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 60827,
+        "sha256": "1e26a330ab022b15b467ac5fecbe6381ce73b777cc7ffaee5b9a0aaf212c502a"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/compatibility_code_retirement_closure_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 19564,
+        "sha256": "cb24f66960018283cb228330f0046728ab8ae56088aba03a717b64a26b52cad5"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 19738,
+        "sha256": "b7084a5d07443fd8b0b3cd0ba9315703f82e3758fc0a16cc781b31c81eaf8f5c"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/grok_oauth_service_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 11961,
+        "sha256": "e29e8837353aab802f57aec6ab71c1a9a1647b0ed9ea930be52625697e85bba3"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 11960,
+        "sha256": "ff65c7271c736bb4ee4aafcc3f538ac6b0ae2951bba62099b3e4b3db0b3a2f0a"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/historical_source_drift_successor_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 7430,
+        "sha256": "5ec3b047cd3647a2d4effc680b6da121876c1cd2d54d638578bbd33f1ee00c73"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_anchor.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8538,
+        "sha256": "6e4324e896a706c0d37232c6d9b02ea8791ffb769cc478fbdbf52e2ebe47cea7"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_http.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 64862,
+        "sha256": "d38f0c9f2286b06400f769a50a762bbb6b95dce5710c7a81e723615e5f8d9b70"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 64616,
+        "sha256": "1a11ceaa660ce0d0ea142cf1b3ac63e2a50df0f7af46363cb7635205d08e8f56"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_ws.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 48010,
+        "sha256": "69f4ae554f120d6d5847d7caf39871062a149789a760b6c175d98556767d64fd"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 48400,
+        "sha256": "3ea98e8a455fa9d84317a2bd025f587e423b68557d04101825f22ffce5cf8e2a"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_uuid.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1673,
+        "sha256": "2617876b34300d33867cef83ea59dd0c05f89b9c677488016cbe8b3f353d210a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10026,
+        "sha256": "48a9f973796d44b35191643255d8123df5750c52b9bfbf4ae14047563a1a3b35"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_uuid_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 23021,
+        "sha256": "bb1b2ae3256c6198e4a5d77ff6bdb47c4557ea5543e83f59e9f92a69e940e814"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_codex_identity_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13215,
+        "sha256": "de2a979da9589791cc8b429444e4185116dec3a8b63e10fbefa5082eb8832268"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13231,
+        "sha256": "2e9b5cc73b235838af4ba5cba35492b6e2d068acc00b3f00c719b535bd2d533b"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_codex_version_sync_service_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 19003,
+        "sha256": "e36360d1edcb432507db8f0c1a8aa0ee81194cee8ecd508c0a366baa47c2654c"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 19012,
+        "sha256": "206480f346defe94e2409fc5b582c7197d2c0340954ebc758b7fde61d9458c52"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_quota_spark_window_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 35482,
+        "sha256": "e75e16e6e4e1cee297c0048b8009a10f878448c35e74cc07eddf171446f7b930"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 35747,
+        "sha256": "13f6ecaa9ee291113b13b7fa6b633bcd9d0ea4cd0e6d6d8acb0772341521d98e"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/source_transition_digest_acceptance_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 628,
+        "sha256": "e0d8c11109d5ca90fae5161224cec5c5204c0821e3150547ae054b41dad550dd"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/sub2api_runtime_stability_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4999,
+        "sha256": "0a253c009006379e0874745b6ad0d686a2f3825668940a04d72c3583078cad5c"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5100,
+        "sha256": "bda5c3102a8ebf62fe70d365c0fdd5c411621be26b7ac6ebc6993d2968d3ba8e"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/upstream_merge_framework_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4953,
+        "sha256": "e134c9d9f357c7210cff0629ae50b551980809cff8888e39067869c9d5f0fd6b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5054,
+        "sha256": "4c64990e25e3c2b70546f00e2466ab61afe7646a270534971dedf0c4d38900b3"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v0179_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 10997,
+        "sha256": "781aeee1b1489bebe4d672341049a4fd90f894551d2b985bc01dc3971bbefac7"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 11098,
+        "sha256": "ebdf5a98aa5c1387c0c06c511e469617e33dee66243b9ca59b1c523459c6b959"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v0180_source_transition_test.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3887,
+        "sha256": "ca615387e7c56effa6f65f1b6c9a4bffefcf7976c07c8f56a309bf6d729ce775"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3988,
+        "sha256": "cfc6dfb0161044f83dc659ad8724f4bd5f692471a591d9d165355da88dd52d49"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-coordinate-decoupling-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1774,
+        "sha256": "d119e4568cbab733d2643bae65e69b43816c98d5abbe6b5726e53a13b4cf1850"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1774,
+        "sha256": "4f27e26d3f8f73027ea539ad56a316b83821789d4fcf853678e725746a506882"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4269,
+        "sha256": "217642ab257708b226e0fd71b4582643694ce834d22e4ffbbc5e0e00f6d13185"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4269,
+        "sha256": "87c9fb135662bb071329e5a0e10ce441a386f0745698ce7c4ac0bd5ef59b7967"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-arm64-typescript-dependency-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3437,
+        "sha256": "8c831db2f33016adbc820e23384fb29b3f7599d80e642ee5add70199e312964d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3437,
+        "sha256": "12d154d380a10427d23e8eca6f5250640958313c97e27eec1a43aafc2dbca62f"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-bwrap-zstd-readiness-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4734,
+        "sha256": "f41bd4c18b740919e53cea3e0e8f866c5298c5d90d55c8cda20c2bc2a3356ba5"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4734,
+        "sha256": "479b11d220aab5c0e0d9febe3af8579a90f03772822e8bd402a0dc09ebd5e705"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-c2pa-capture-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6909,
+        "sha256": "b53217ae5decf79064337e7111b153f75f27b0b5d533ccb6931a7422f3a74dde"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6909,
+        "sha256": "2c5514940da98481aae9abc555b48109396f952519254d1cbf6c766bb49eea05"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-c2pa-job-identity-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3093,
+        "sha256": "3cd7f55378d6ff28182c3eb6222f9042d1fbb0f25b5854412ae78d29e54fcc10"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3093,
+        "sha256": "2db5f285fc63cf75de4eb6d5cb508c3f875d0a7bf2ad36be4d700930f0d7208c"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5568,
+        "sha256": "8d6b2360010d5e27fe28dba999848974e1a45b425ab996a6f68f5c69cfbcfd17"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5568,
+        "sha256": "734f756709f410c0642b92c288b4024ce68acb6d1e1d9f2eea399fafb259136e"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-deterministic-package-fixture-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3454,
+        "sha256": "3e70c0c7655e8785a709c0a6ac93c187c7c0ca05d7046c481041c6f56ddd0928"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3454,
+        "sha256": "8a2065d85e660f89b5950f28fb1ad991c993078eaf8937d08b87596df00c57bd"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6527,
+        "sha256": "470a65c98fe4d7ecd1684cb2cb4346cd353b56363c36847b914e20f6b3ab274c"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6527,
+        "sha256": "ebdb5522ab0e544af7aac18c22010506467c95dfd45dc30ae1ba3f7c8e7303a0"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4572,
+        "sha256": "debd3ef1ba753d548190bdd0e8f62975c8f047a9eb0c4118ab42a6877cfb787e"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4572,
+        "sha256": "ee694a5d3cc18cfdfdd333b07b7f1f1b956db44af1250f7de7a7ba56d2f793b5"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3405,
+        "sha256": "77d0e4e256c3fcdf90061f36d794952ca7eaa01dec12c3ef2fa30c2d6827690a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3405,
+        "sha256": "6738e5c2a3d8375b54dd3072bc91249727bffde85bceb121d2b6d145de8834bd"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-evidence-manifest-replay-closure-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4129,
+        "sha256": "a7a7b889d75d0195f8861ee32d26c12199b6cb8773dcdae90a40d7156fa7644d"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4129,
+        "sha256": "98db12d6359dea7ce76703ba3bfa152abad96cee87aecdfec9e5a43334aab0e0"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 11906,
+        "sha256": "91cea62abaf302dde4acdcd0f70010195a8f641eb06d0b5d5adf1e3bf5923f0a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 13489,
+        "sha256": "9fbc9075c992823a4fdb7f60f40deae3eba9bed8ab305a2f7c7411f991a58ca8"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-framework-clarification-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2174,
+        "sha256": "2113cb607bcf7f080036220767f6c2267506260e36992fc451d8b301eea1d0e6"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2174,
+        "sha256": "57feba8b3561ca844e3e2b820ec9dae49cd34da8caf7a48d4d4ce933d1c11b1e"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-full-job-readiness-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5100,
+        "sha256": "9aa4d23d05520cb6820b8c959b706c9858b53f6076f889497e21e594dba76b0b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5100,
+        "sha256": "9855bb8690a93badb4c09c67fa55ba9d115b2f810e00c305c8a13bfce922b3ac"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-historical-rehearsal-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4294,
+        "sha256": "382ad7c745fd852e87858a0b41bc602d87e91aa9fa56758a0a349fdbfde2797e"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4294,
+        "sha256": "0ba73f56b7c886c0c3a28e067e1d74a7c5e84505904eddba30b0cd3aec9f3495"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-managed-execution-root-recovery-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5429,
+        "sha256": "134598773ebb343593f272dd39945cdf8a2ddeb6813d42333628fc4e65e7a081"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5429,
+        "sha256": "73a5cb6bc0787d4745bec460bddd6ba4731bdec8071b0da65f394931de6b4285"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-managed-scenario-recovery-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2629,
+        "sha256": "a2ee0695c14773c9fa1af2f60e894378eecf6ba10389ec0f001c3761463e0b80"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 2629,
+        "sha256": "fa9cadd49d038cc9098c6d65b8b1bdce66d3bb3c832ea5c71e0edbad0db10e7f"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-model-policy-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4308,
+        "sha256": "95f43f1e7b4fe74e4edcd042fd5ecb57e29368f475989f5662c26921af3a6b73"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4308,
+        "sha256": "5f4effd951206a3d456883d44f7a46605dc979c4c3389de9b8d57e1fb22aca3a"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-producer-coordinate-decoupling-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1594,
+        "sha256": "3acb025d2f548ced64b5ef320ce22b52525f88907a9aa8b715aba2e5d29ffc07"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1594,
+        "sha256": "213912b1c27beff10fbed1cb302bb045bee0cad36f85c76e3bbaae9abf5c7276"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-r9-candidate-readiness-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6194,
+        "sha256": "7c2fd13e6b0c87305bab379ad2d68b073c6f181d0e7e1a45d04fb3e02aa4aa25"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6194,
+        "sha256": "77acc034416db0ebd63696c7f0726f6535228fd654c4befeb1a5b7d27ba6b5ce"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4727,
+        "sha256": "9da261eaae555c192aa963bbefc756617341a1a5879993087cb2233ec595a445"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4727,
+        "sha256": "499942fade55536c2d083c17b04a41fcacbea2714327ff3ed4e32ba541a61378"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-system-proxy-capture-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4730,
+        "sha256": "d26684249366a59ad9f0d81b93d2c724fe3a66b889db583323e608b6553450a0"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4730,
+        "sha256": "df2f4fc016f598b9f55014ccb819db3a5ad129002e3b3819d641998eecaa6eb1"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3716,
+        "sha256": "d8b7f1bf9b07b71be4d8e423c01c23447ebd744d539aa3a54e720b38b5b42f5e"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3716,
+        "sha256": "699e570786a8a5ac0e4da74463479da4d3b15b29159db66059942e90967f6865"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-timing-producer-replay-tool-successor-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4109,
+        "sha256": "0897f6b11e02a86f072852b199cd0c8ed050233d322f116591cc6ee2d530567e"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4109,
+        "sha256": "0992153dd789e8f8cee57e18ac8414fdf7aedbe6485dc102e4dbbef41674237f"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8921,
+        "sha256": "6571d18697e789da234476740b537f6301c918bd245a71b5573bed3765a49d69"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8921,
+        "sha256": "ea0eeb464a8ddc4e67e6be79919fffb87bc3603d23efa7d8ae350e193c0aaf6c"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 51381,
+        "sha256": "36be82aa13728cad4798be5086523ee9f32dc3a24b8e37aecfd4c1f6098a9e7b"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 51381,
+        "sha256": "ab0bf1d72443d56fd6dea9ee39fe33d8b14985e9145c531228eae957aae9d315"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/arm64_supervised_deploy.py",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 48226,
+        "sha256": "cac46607f284c51c1068f342e31f7e4b7259bda0921da234dba6c4fdeb7ebdc9"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 48226,
+        "sha256": "36d7078596349f3a4646ce264fae644fb36ba2eb89eb25014537087346b1f29b"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_rule_assertion.py",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0755",
+        "size": 65819,
+        "sha256": "2707a95fa5aaad77831ee7a47ab53deb7f5acdfdea50ad7ed4759e7c7b0c2970"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0755",
+        "size": 65819,
+        "sha256": "9c89aa45f0f9b645f6e36a99d82444a90708e499fd9a22d7546256186276a6ba"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_rule_expectations_0_149_1.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 95210,
+        "sha256": "15e69c5e3ae1bde030776af673c325b40f722b0d6de1083b43329bc1079832d0"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 95210,
+        "sha256": "1fd5f0758b90ada72813a68641d20a3fdee7ec66e4895089b4704d9b229b8429"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_rule_expectations_0_151_0.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 98438,
+        "sha256": "17bd1533051b34e491fc5bc321ffcd67d9f7a0307db189c59ecdb845db1d1eee"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 98438,
+        "sha256": "6ad08b02273047bdf88644fcaf0ffdd420993d5f555187331aa3cac94a2535f8"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 22575,
+        "sha256": "ba82e3e15dbbf603d14200f27e47752e47d0ff27ee384f429edd58fc9eb85fdb"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 22575,
+        "sha256": "6034be1467cff26329e47136f0f6c7b12af9b69e94d59894ea128dbd6a11b0aa"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 42114,
+        "sha256": "164aa3e044350510cd97fc091c4b6e760eec7421bcc0583e0ebb601e55067f64"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 42114,
+        "sha256": "acc7fd0c1cc7bdc0f186dad699ee476382828f52892fd567c6c4a40731d88043"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_149_1.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 78104,
+        "sha256": "637bf5b591123687f35031d92d0d66e89ec9e01da4d20b6a369aea4755614c51"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 78104,
+        "sha256": "511e7e3e999c65af0a061a7f4278ca099d631d1be8413fee9529cbada2e59d11"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_scenarios_0_151_0.json",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 80961,
+        "sha256": "781060bf8566b0f5e1d454e1bc853dd2fd3f56172f76e6b8542e6853dbf2fe97"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 80961,
+        "sha256": "300be786f0468d8ce0fce907b6e4f09cdc2a9c781fb2ad633275f9283525ec18"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_timing_ledger.py",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 44473,
+        "sha256": "33965cf60a809cfd9fea59e86ba6597daa5e133fd8b30e91d300512c02d591e5"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 46927,
+        "sha256": "d97d52e226fa1eedd8d53f3724399c55b6ae962011af7aea8b20097e909803f9"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3680,
+        "sha256": "9b3fb1c75c1151c9f799eaafbbe9f3d1aac5d66bc42d00d5366cf71d2f4634aa"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_capture_lifecycle.py",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 63103,
+        "sha256": "b44c314ea9d1b949ad37754fe4fd3fe9709b33cf58e535defb406bca56629583"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 64684,
+        "sha256": "2884db7ef7da3e9801aa891e0b6e2aac92895baef82a0d43e978886d4c058777"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "tools/official_client_control/tests/test_codex_bootstrap.py",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5210,
+        "sha256": "3aacfa125d1bdfb48b30dcbed6acc327fc7981973bd736f09e988f4566727b82"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5235,
+        "sha256": "5707b5df2c4a814917f325e078f5d1c5bb26dfdd9eb89e3f015ec99a0713a1c8"
+      },
+      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    }
+  ],
+  "verification": [
+    "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+    "历史漂移 ledger 冻结测试",
+    "current 0.151 受影响闭集测试"
+  ],
+  "result": "pending_current_worktree_reconciliation",
+  "identity_sha256": "3fd39f99ac2dcbfa25ad836edb694ab08e5c24ae95608482e754ee49058af5c6"
+}

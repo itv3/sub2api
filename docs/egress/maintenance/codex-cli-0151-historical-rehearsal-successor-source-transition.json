@@ -6,49 +6,49 @@
   "predecessor": {
     "kind": "codex_cli_0151_deterministic_package_fixture_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-deterministic-package-fixture-source-transition.json",
-    "sha256": "3e70c0c7655e8785a709c0a6ac93c187c7c0ca05d7046c481041c6f56ddd0928"
+    "sha256": "8a2065d85e660f89b5950f28fb1ad991c993078eaf8937d08b87596df00c57bd"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_deterministic_package_fixture_source_transition_test.go",
       "from_sha256": "b92954e5b3466366808982c1e84de174a86b9ec9a2e40c3244835ab0e3375424",
-      "to_sha256": "3aec934c20f9620728eeb682dba70ac36855eb8779569f32a567dbfb56a448a0",
+      "to_sha256": "e84f08a9c4d257b817e0378d2123aa993c4de2e0a17293d5677525e8f5092be7",
       "reason": "让 officialegress 的确定性包夹具 transition 承接历史 rehearsal successor 后继。"
     },
     {
       "path": "backend/internal/service/codex_0151_deterministic_package_fixture_source_transition_test.go",
       "from_sha256": "dc66a00b49e893137f0e2b360896ce919448007bb30d406e1fe982671a912ddb",
-      "to_sha256": "1c044bd07ec07d3b14e6132d6b719a37e78804bc4226320dd88bfea99a61176f",
+      "to_sha256": "1523b189cd7789d907e50ae93e18b7b3ce3613197dde5573d25377a5cb4f6cba",
       "reason": "让 service 的确定性包夹具 transition 独立承接历史 rehearsal successor 后继。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "efeb347285ee3d3fa74fd7e3471455fcf3f0b92b52ad7f252d3709d8eacee9f1",
-      "to_sha256": "6205099f4d6a50e8bac392ec09d9368d43d82e7b8f0ea39773d04947c7c013cf",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "明确新 Ledger create 已自动写入首个 VC-0 事件。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "955e61bc012e25575f8c93462a5fc988267736cc7a6cd886774ab92959a1ec1f",
-      "to_sha256": "4f411eb90e141a2706ac2ad69e5b145a44f3ebb300b0597947ad18dbe232fa8f",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "允许未发布 successor 暂存区原子写入导入闭环，发布前仍执行普通重放。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "349b024d590e3d3f540e9fa0033027c95d76bfa08992ec0cb9e284c69dd80396",
-      "to_sha256": "e8c97b5d40e991dc9600a9acd55c9e8ed6d6a66f8929d36f53f5c53740f59b46",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖历史 frozen 场景与当前批准场景并存的停线恢复 successor。"
     }
   ],
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_historical_rehearsal_successor_source_transition_test.go",
-      "sha256": "3e5f245882082035c42d39702f79b320b12df37c2125223270cbb5e4d8af58ac",
+      "sha256": "36cbcef1a43d411d1a6526c8b9964d25f5c9c1fcce2be538a25e225b78760a18",
       "reason": "在 officialegress 包冻结并变异测试历史 rehearsal successor transition。"
     },
     {
       "path": "backend/internal/service/codex_0151_historical_rehearsal_successor_source_transition_test.go",
-      "sha256": "bb1c2960602e3dc4f4302c0d29ecffc5bc6c03f99abe718f516574c6209a6d82",
+      "sha256": "0d9e3c904b0ebef4dc31851a11bad160557be2ff363238f97ced52eaa46eb977",
       "reason": "在 service 包独立重放同一历史 rehearsal successor transition。"
     },
     {
@@ -70,5 +70,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_historical_rehearsal_successor",
-  "identity_sha256": "38746ade47641afac23718f36e0c34bea33a3c71fb6cde56a8f4620e73eb42a0"
+  "identity_sha256": "0849711624fbffe64267a6dd8c6414578cf661efbaeb87fba65e972887f5a250"
 }

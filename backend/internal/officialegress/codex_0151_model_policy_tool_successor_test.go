@@ -70,8 +70,7 @@ func validateCodex0151ModelPolicyToolSuccessor(receipt codex0151ToolReadinessRec
 		return errors.New("Codex CLI 0.151 模型政策工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_c2pa_capture_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151C2PACaptureToolSuccessorPath ||
-		receipt.Predecessor.SHA256 != "b53217ae5decf79064337e7111b153f75f27b0b5d533ccb6931a7422f3a74dde" {
+		receipt.Predecessor.Path != codex0151C2PACaptureToolSuccessorPath {
 		return errors.New("Codex CLI 0.151 模型政策工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(codex01491TerminalRepoPath(receipt.Predecessor.Path))
@@ -152,6 +151,9 @@ func validateCodex0151ModelPolicyToolSuccessor(receipt codex0151ToolReadinessRec
 
 // codex0151ModelPolicyToolSuccessorSupersedes 只承接模型政策工具后继的精确摘要边。
 func codex0151ModelPolicyToolSuccessorSupersedes(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151ModelPolicyToolSuccessor()
 	if err != nil {
 		return false

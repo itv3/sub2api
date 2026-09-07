@@ -216,7 +216,7 @@ test-frontend-critical:
 # 依赖 local-analysis 的原始证据复算仅在本机证据存在时执行。Claude bundle AST 用
 # frontend lockfile 中的 TypeScript 解析器，禁止临时下载或浮动版本。
 test-capture-tools:
-	@python3 -c 'import hashlib, pathlib, sys; p = pathlib.Path(sys.argv[1]); expected = sys.argv[2]; (p.is_absolute() and p.is_file() and not p.is_symlink() and p.resolve() == p) or sys.exit("🔴 TypeScript AST 解析器必须是绝对路径下的非符号链接普通文件"); actual = hashlib.sha256(p.read_bytes()).hexdigest(); actual == expected or sys.exit(f"🔴 TypeScript AST 解析器摘要不一致：{actual}")' \
+	@python3 -c 'import hashlib, pathlib, sys; raw = pathlib.Path(sys.argv[1]); expected = sys.argv[2]; p = raw.resolve(strict=True); (raw.is_absolute() and raw.is_file() and not raw.is_symlink() and p.is_file()) or sys.exit("🔴 TypeScript AST 解析器必须是绝对路径下的普通文件（允许 pnpm 父目录符号链接）"); actual = hashlib.sha256(p.read_bytes()).hexdigest(); actual == expected or sys.exit(f"🔴 TypeScript AST 解析器摘要不一致：{actual}")' \
 		"$(CAPTURE_TYPESCRIPT_MODULE)" "$(CAPTURE_TYPESCRIPT_SHA256)"
 	@node --version >/dev/null
 	@CLAUDE_AST_TYPESCRIPT_MODULE="$(CAPTURE_TYPESCRIPT_MODULE)" \

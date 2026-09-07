@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -334,10 +335,8 @@ func TestGetOpenAICodexCanonicalUserAgentBuildsFromVersion(t *testing.T) {
 		SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
 	}}, nil)
 
-	require.Equal(t,
-		"codex_exec/0.200.1 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.200.1)",
-		svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
-	)
+	want := strings.ReplaceAll(codexCLIUserAgent, codexCLIVersion, "0.200.1")
+	require.Equal(t, want, svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
 }
 
 // GitHub 发现新版本只更新候选信息，不能绕过证据采集和 42 项验收改变 strict wire。

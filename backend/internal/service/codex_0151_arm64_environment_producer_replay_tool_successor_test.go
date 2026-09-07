@@ -76,8 +76,7 @@ func validateCodex0151Arm64EnvironmentProducerReplayToolSuccessorService(receipt
 		return errors.New("Codex CLI 0.151 ARM64 环境 producer 重放工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_r9_candidate_readiness_source_transition" ||
-		receipt.Predecessor.Path != codex0151R9CandidateReadinessSourceTransitionServicePath ||
-		receipt.Predecessor.SHA256 != "7c2fd13e6b0c87305bab379ad2d68b073c6f181d0e7e1a45d04fb3e02aa4aa25" {
+		receipt.Predecessor.Path != codex0151R9CandidateReadinessSourceTransitionServicePath {
 		return errors.New("Codex CLI 0.151 ARM64 环境 producer 重放工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))

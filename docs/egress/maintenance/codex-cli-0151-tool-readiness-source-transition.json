@@ -12,43 +12,43 @@
     {
       "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
       "from_sha256": "9c887f3d5bf77fe32a7acfcac1c6b60b46f02e5eebe0758fd9badc433811fef2",
-      "to_sha256": "79bd57af20de63eb6b45cdda6509e8843ae5b9dd5d416465af05b57310af60d3",
+      "to_sha256": "0e794a99f80746a8b8ecefc244c1ae0f3a63c194e472e287c051dfaad6cc2da4",
       "reason": "追加 Codex 0.151 工具就绪 transition 的精确终态承接与离线重放门禁。"
     },
     {
       "path": "backend/internal/service/codex_01491_terminal_state_test.go",
       "from_sha256": "07da47741683fcbdd833e73b3eb433f9c568ba5625ef9dfc59eb96718f855b67",
-      "to_sha256": "8bcca0b49d4ccf90c0db38b54549864891a3f9272310b5428d49d0c26148b7aa",
+      "to_sha256": "2c0b3d6cc6fa3e14c6c91d0fbc41b154255c23e8dd09b87bb155000ce6c3c6ca",
       "reason": "在 service 门禁中独立重放同一工具就绪 transition，禁止跨包隐式承接。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "1d7beef5b945f77a8837d2631121acb607032684fde07d4ef37f83b1ffd49e38",
-      "to_sha256": "67b9c7bcbc2e585e76eb7c5b34514a5bf42769e014fa211041945610f21313c7",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "记录 0.151 换版的时间、ARM64 环境、门禁补跑与官方制品精确地址硬门禁。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "cd643c5f9da9437dc7bc88b57d94cfc830b93f354b18c606955666d62457abcd",
-      "to_sha256": "da84e04034b0583bd48ae3f5dafbbb29e3f2cc5f8d12b922a7a7eeec5cc1ad67",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "让 Campaign 计划和阶段恢复强制消费时间台账及 ARM64 环境连续性收据。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_campaign.schema.json",
       "from_sha256": "7bf49249f31861d2a38c1c2896539373671ede9e3b8671ed8bf1a80da4b2255a",
-      "to_sha256": "33df7ddd141b5f1bd527624ed26ccf89fb13a95afb57576412a8c2bf2d794e8b",
+      "to_sha256": "8408748dacae973df6bc9dc4ef54b2a3700faf809beb64ae02cea7dba0bf5838",
       "reason": "冻结 Campaign v3 的时间台账与 ARM64 环境收据身份字段。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_capture_attempt.schema.json",
       "from_sha256": "c3c0a952bc1f2ba7e80fafb505e6395a7933512c8371dcb891a6e7a2cc03a14d",
-      "to_sha256": "801b8bb5a818addd4d84063db4810489d75acd4ce4ee9f9a3c30974d50389875",
+      "to_sha256": "fae8026d38b61ac5eb4332d7ac5fde4e72c97887ad1c7d8d39577d5e891abeb7",
       "reason": "冻结抓包 attempt 前后环境收据与连续性身份。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_gate_receipt.py",
       "from_sha256": "861d07d5d6574c0e953df930907bfc8d5a2a64f34072b2f204992362f22327d8",
-      "to_sha256": "ed3d9b3543c67ab53f3dca460219ae4a31dfc99ec5b87981a183d6d82dce400b",
+      "to_sha256": "5c925115f6c210212fed1a3a87f2ce8beb9e1588d4a0ddfa08d39c026a5a1a31",
       "reason": "实现失败门禁只补跑、前序收据承接和同根因两次失败停线。"
     },
     {
@@ -60,19 +60,19 @@
     {
       "path": "tools/official_client_capture/production_activation_receipt.py",
       "from_sha256": "83ed012547421355251e0cbc28a3c8b9cb471250170e9b2d11242356cd085382",
-      "to_sha256": "1499de0195c9a8f1522ee347ae9e39dc719cba7695274914c6ab6907d0a41f0f",
+      "to_sha256": "3b4ddbf874a9164654e8496fb6f2a88fbd50b22557f16b5285f0aa0aca7d1292",
       "reason": "生产激活只接受最终通过且失败集合为空的 post-promotion v3 收据。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "b87b55aa9741a10f49fbc5da495104b483be089522fde7218effc577717ee002",
-      "to_sha256": "2f29e29a06c082d36ece4c59b022ea206f81e4bf92d5f83c63e62069b908cf06",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖 Campaign v3 时间与环境收据的正反向状态机。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade_capture_lifecycle.py",
       "from_sha256": "13ede17bb6453b53e2b4a5b526c017b34187d777c170f1302c376c229aa6d9bb",
-      "to_sha256": "0dd6801d96afe18ee62c073f67d43dcff1a5fe62ec89ed569b2e66e2e7d85f5c",
+      "to_sha256": "2884db7ef7da3e9801aa891e0b6e2aac92895baef82a0d43e978886d4c058777",
       "reason": "覆盖抓包前后 ARM64 环境连续性与失败关闭。"
     },
     {
@@ -84,7 +84,7 @@
     {
       "path": "tools/official_client_capture/tests/test_production_activation_receipt.py",
       "from_sha256": "9871203509cb1087e785a62ebdfcd56b5a2795d756510c51a381ba3ac81c850b",
-      "to_sha256": "887b0273ebf18d78f24522746f3c9008812c65b70a361e5c8504492170d0dacc",
+      "to_sha256": "79b0fec450db1bea0196c1c1ed2051d2a81823604d43645dc4d4278463ccef3c",
       "reason": "覆盖生产激活对最终 post-promotion v3 门禁身份的强制消费。"
     }
   ],
@@ -96,12 +96,12 @@
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.py",
-      "sha256": "97b96fcd9e341dc7ecff4c0359b12723dae747ec2f4bc9c0138a5bf8f6769d15",
+      "sha256": "36f9d717f847cd71ff66b569cf3daa5ce6c9a2f419f204db7f3c39a4beb4a1ac",
       "reason": "生成并重放固定容器地址、网关、DMIT 出口与资源水位收据。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_arm64_environment_receipt.schema.json",
-      "sha256": "b0cb9dbe48e38e241c365d9745d21756dab4b701ccc2716e20c8bfbe4864aa6d",
+      "sha256": "2d3e580b440799ab5bc0512966d359c89b0c442f64ff5c8e6547662dc582d8dc",
       "reason": "冻结 ARM64 环境收据机器合同。"
     },
     {
@@ -116,7 +116,7 @@
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_timing_ledger.py",
-      "sha256": "f28f2527e6496a20af0377f00febf7c40f1b1d673a3d149f9797c899c257b8ee",
+      "sha256": "33965cf60a809cfd9fea59e86ba6597daa5e133fd8b30e91d300512c02d591e5",
       "reason": "生成并重放 VC 阶段与总墙钟停线台账。"
     },
     {
@@ -126,12 +126,12 @@
     },
     {
       "path": "tools/official_client_capture/tests/control_receipt_fixtures.py",
-      "sha256": "e1dea353094b45d38360491a5d4d7d5ada65b13aa69f03827a452e0e16712df3",
+      "sha256": "99c5f45bb13c112770bce2acbfeea7dfd4508d3394b9e075f46f5af2efe52a06",
       "reason": "统一构造时间、环境和门禁控制收据测试夹具。"
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade_arm64_environment_receipt.py",
-      "sha256": "bf9a0d2c3187fe254be65665a21fe91205c38ab3a9cd1993b75f7aa80ca3bdc9",
+      "sha256": "83c6e1ee02a347c6c6818f8081336fdf94be6a51ec03d782297560b03255a572",
       "reason": "覆盖固定 ARM64 网络、出口、磁盘和连续性 mutation。"
     },
     {
@@ -141,7 +141,7 @@
     },
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade_timing_ledger.py",
-      "sha256": "ad807e15799182d954bd7898fcf1b9cdee5d8389322d59938db9b2903214b0d7",
+      "sha256": "be09d12a67aa4dfdf0bc42b8a284d5461b02733f094d86536579be4f3f106798",
       "reason": "覆盖阶段预算、总预算、停线与只追加 checkpoint mutation。"
     }
   ],
@@ -157,5 +157,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_tool_readiness",
-  "identity_sha256": "cfa0d6781507b42f7703726159191f27d5b0ab45e73740b78d8c04830b8936d7"
+  "identity_sha256": "eb5db325ea97bb7700d2ba80871215cf6621926509ed8e6796760a15d1fe8d53"
 }

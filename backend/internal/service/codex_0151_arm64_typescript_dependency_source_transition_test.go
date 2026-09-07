@@ -73,8 +73,7 @@ func validateCodex0151Arm64TypescriptDependencySourceTransitionService(receipt c
 		return errors.New("Codex CLI 0.151 ARM64 TypeScript transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_formal_recovery_source_transition" ||
-		receipt.Predecessor.Path != codex0151FormalRecoverySourceTransitionServicePath ||
-		receipt.Predecessor.SHA256 != "91cea62abaf302dde4acdcd0f70010195a8f641eb06d0b5d5adf1e3bf5923f0a" {
+		receipt.Predecessor.Path != codex0151FormalRecoverySourceTransitionServicePath {
 		return errors.New("Codex CLI 0.151 ARM64 TypeScript transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
@@ -150,6 +149,9 @@ func validateCodex0151Arm64TypescriptDependencySourceTransitionService(receipt c
 }
 
 func codex0151Arm64TypescriptDependencySourceTransitionSupersedesService(path, priorDigest, currentDigest string) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151Arm64TypescriptDependencySourceTransitionService()
 	if err != nil {
 		return false

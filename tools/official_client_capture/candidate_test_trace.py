@@ -59,7 +59,7 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 2026-08-31：目标升级到 0.151.0；新增 Files C2PA 正、负和 retry 三类候选事实，
 # 并绑定同源文件上传实现与测试摘要。
 FROZEN_MAPPING_SHA256 = (
-    "ba82e3e15dbbf603d14200f27e47752e47d0ff27ee384f429edd58fc9eb85fdb"
+    "6034be1467cff26329e47136f0f6c7b12af9b69e94d59894ea128dbd6a11b0aa"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。
@@ -93,7 +93,7 @@ FROZEN_MAPPING_SHA256 = (
 # 2026-08-31：断言画像升级为 0.151.0，加入 Files C2PA 条件分支的三条检查，
 # 规则总数仍为 42。
 FROZEN_PROFILE_SHA256 = (
-    "17bd1533051b34e491fc5bc321ffcd67d9f7a0307db189c59ecdb845db1d1eee"
+    "6ad08b02273047bdf88644fcaf0ffdd420993d5f555187331aa3cac94a2535f8"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")

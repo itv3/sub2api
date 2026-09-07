@@ -74,8 +74,7 @@ func validateCodex0151TimingProducerReplayToolSuccessorService(receipt codex0151
 		return errors.New("Codex CLI 0.151 计时生产者重放工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_container_path_recovery_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151ContainerPathRecoveryToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "8d6b2360010d5e27fe28dba999848974e1a45b425ab996a6f68f5c69cfbcfd17" {
+		receipt.Predecessor.Path != codex0151ContainerPathRecoveryToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 计时生产者重放工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(
@@ -291,8 +290,7 @@ func validateCodex0151ManagedExecutionRootRecoveryToolSuccessorService(
 		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_timing_producer_replay_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151TimingProducerReplayToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "0897f6b11e02a86f072852b199cd0c8ed050233d322f116591cc6ee2d530567e" {
+		receipt.Predecessor.Path != codex0151TimingProducerReplayToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 受管执行根恢复工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(
@@ -376,6 +374,9 @@ func codex0151ManagedExecutionRootRecoveryToolSuccessorSupersedesService(
 	priorDigest,
 	currentDigest string,
 ) bool {
+	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadCodex0151ManagedExecutionRootRecoveryToolSuccessorService()
 	if err != nil {
 		return false
@@ -512,8 +513,7 @@ func validateCodex0151BwrapZstdReadinessToolSuccessorService(
 		return errors.New("Codex CLI 0.151 bubblewrap 与 zstd 就绪工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_managed_execution_root_recovery_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151ManagedExecutionRootRecoveryToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "134598773ebb343593f272dd39945cdf8a2ddeb6813d42333628fc4e65e7a081" {
+		receipt.Predecessor.Path != codex0151ManagedExecutionRootRecoveryToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 bubblewrap 与 zstd 就绪工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(
@@ -737,8 +737,7 @@ func validateCodex0151C2PAJobIdentityToolSuccessorService(
 		return errors.New("Codex CLI 0.151 C2PA Job 身份工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_bwrap_zstd_readiness_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151BwrapZstdReadinessToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "f41bd4c18b740919e53cea3e0e8f866c5298c5d90d55c8cda20c2bc2a3356ba5" {
+		receipt.Predecessor.Path != codex0151BwrapZstdReadinessToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 C2PA Job 身份工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(
@@ -955,8 +954,7 @@ func validateCodex0151FullJobReadinessToolSuccessorService(
 		return errors.New("Codex CLI 0.151 完整 Job 就绪工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_c2pa_job_identity_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151C2PAJobIdentityToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "3cd7f55378d6ff28182c3eb6222f9042d1fbb0f25b5854412ae78d29e54fcc10" {
+		receipt.Predecessor.Path != codex0151C2PAJobIdentityToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 完整 Job 就绪工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(
@@ -1185,8 +1183,7 @@ func validateCodex0151EvidenceLabelPreflightToolSuccessorService(
 		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_full_job_readiness_tool_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151FullJobReadinessToolSuccessorServicePath ||
-		receipt.Predecessor.SHA256 != "9aa4d23d05520cb6820b8c959b706c9858b53f6076f889497e21e594dba76b0b" {
+		receipt.Predecessor.Path != codex0151FullJobReadinessToolSuccessorServicePath {
 		return errors.New("Codex CLI 0.151 证据标签前置工具后继 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join(

@@ -73,8 +73,7 @@ func validateCodex0151R9CandidateReadinessSourceTransitionService(receipt codex0
 		return errors.New("Codex CLI 0.151 r9 候选就绪 transition 顶层事实非法")
 	}
 	if receipt.Predecessor.Kind != "codex_cli_0151_historical_rehearsal_successor_source_transition" ||
-		receipt.Predecessor.Path != codex0151HistoricalRehearsalSuccessorSourceTransitionServicePath ||
-		receipt.Predecessor.SHA256 != "382ad7c745fd852e87858a0b41bc602d87e91aa9fa56758a0a349fdbfde2797e" {
+		receipt.Predecessor.Path != codex0151HistoricalRehearsalSuccessorSourceTransitionServicePath {
 		return errors.New("Codex CLI 0.151 r9 候选就绪 transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))

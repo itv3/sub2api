@@ -6,31 +6,31 @@
   "predecessor": {
     "kind": "codex_cli_0151_arm64_environment_producer_replay_tool_successor",
     "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition.json",
-    "sha256": "217642ab257708b226e0fd71b4582643694ce834d22e4ffbbc5e0e00f6d13185"
+    "sha256": "87c9fb135662bb071329e5a0e10ce441a386f0745698ce7c4ac0bd5ef59b7967"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_arm64_environment_producer_replay_tool_successor_test.go",
       "from_sha256": "70ed5cb073b055aba50a4b21355740dbd4ad9f4918c4df3295fd53ebe35e8277",
-      "to_sha256": "32eb73ce99ee58c8e4be71d2431a4e54c02ac1c32e2d2cedbd509da70dbcc30a",
+      "to_sha256": "f9145f59090eee6a7505288c0172621f388b7e03036fedbe671e49b5c8017b07",
       "reason": "让当前 ARM64 producer 后继只承接本次 test trace P0 修复的精确摘要边。"
     },
     {
       "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
       "from_sha256": "2db10a0bda73449cf5122a62c7c7e7da86d0cb2ad7dad21df6401c7c88472001",
-      "to_sha256": "c3348ad333f5add6b51755a004c93109b9c5b1263454ccec33af05fe8b7701e3",
+      "to_sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
       "reason": "固定 Kilo WS/101 事实和 test fact map 逐文件 P0 预检。"
     },
     {
       "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
       "from_sha256": "9bd4431ac4f099e6771e888c59fd27b0c2ff6a2e7eecf2ad7da74116136ad94e",
-      "to_sha256": "ba82e3e15dbbf603d14200f27e47752e47d0ff27ee384f429edd58fc9eb85fdb",
+      "to_sha256": "6034be1467cff26329e47136f0f6c7b12af9b69e94d59894ea128dbd6a11b0aa",
       "reason": "把 6 个陈旧源码摘要改为最终候选树的真实摘要。"
     },
     {
       "path": "tools/official_client_capture/candidate_test_trace.py",
       "from_sha256": "b455754ff570ed963058b4f381de2cab0b56f958bb29cf49683c67b76a036a1e",
-      "to_sha256": "2cad8075c4ba224e0a586544651b95b50b259e55ef2418b35ffef32044fa8640",
+      "to_sha256": "acc7fd0c1cc7bdc0f186dad699ee476382828f52892fd567c6c4a40731d88043",
       "reason": "将 trace 生成器绑定到修正后的 0.151 冻结 map。"
     },
     {
@@ -43,7 +43,7 @@
   "additions": [
     {
       "path": "backend/internal/officialegress/codex_0151_test_trace_preflight_tool_successor_test.go",
-      "sha256": "7d4ac0d6919f29c0aefdd92c8a43fd8e8b2f6b4d768da6145d9b95d53914dd7c",
+      "sha256": "b6c14c63cd54dd9b3ee2dec80de11ca6236c0118b559f8dbb8dd02431bb229b0",
       "reason": "冻结并变异测试本次 test trace P0 后继 transition。"
     },
     {
@@ -65,5 +65,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_test_trace_preflight_tool_successor",
-  "identity_sha256": "c896d97bcbf58ed0116d8d52d596badc53948c841a6290bce1ddc9a49164eb76"
+  "identity_sha256": "7b9ccf6e73e004838f52de1cf3d5f60cb55f39c21f6931512065c276a16826b2"
 }

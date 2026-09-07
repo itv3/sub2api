@@ -175,7 +175,8 @@ func claudePersonaTransitionTargetMatches(path string, want string) bool {
 	}
 	sum := sha256.Sum256(raw)
 	current := hex.EncodeToString(sum[:])
-	return current == want ||
+	return codex0151CurrentSourceDigestAccepted(path, want, current) ||
+		current == want ||
 		upstreamMergeFrameworkTransitionSupersedes(path, want, current) ||
 		claudeOfflineCIStabilizationTransitionSupersedes(path, want, current) ||
 		claudeOfficialClientOnlyTransitionSupersedes(path, want, current) ||

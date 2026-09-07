@@ -6,25 +6,25 @@
   "predecessor": {
     "kind": "codex_cli_0151_managed_execution_root_recovery_tool_successor_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-managed-execution-root-recovery-tool-successor-source-transition.json",
-    "sha256": "134598773ebb343593f272dd39945cdf8a2ddeb6813d42333628fc4e65e7a081"
+    "sha256": "73a5cb6bc0787d4745bec460bddd6ba4731bdec8071b0da65f394931de6b4285"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "72709e18c8ddc7015bb56ba38fff30ec3f2d82ec444c74f0de46b113690fa350",
-      "to_sha256": "40945c2e36d42603c101bfec29879218f0ccd5a149cb3a472a796a1d5e443880",
+      "to_sha256": "f4b441602cb610c1b471d19a0339dc8c34b0907efaa0ab1fbc43d1c0067d0911",
       "reason": "在 officialegress 包登记 bubblewrap 与 zstd 就绪工具后继，并让前序受管执行根摘要边连续承接当前源码。"
     },
     {
       "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "4a47ffc141b4653ad1122a17338d0f877419ededbb9abe252994690bc00ed161",
-      "to_sha256": "115ad29ed834426e749ca23e1c8520ae5ce3beef90f4657da21b3f6fb1ef8904",
+      "to_sha256": "13db553d910e86f0cbf49d77411bc4e47a66a1432d340add665a207437bd9d90",
       "reason": "在 service 包独立重放同一后继摘要闭集与 mutation 门禁。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade.py",
       "from_sha256": "93fdecaec04ba6e92fb1b55008faa55b263f739413c38defa5a9e248d1c08bb2",
-      "to_sha256": "085e06e89aa9e9885974c84d278c81f6e4e0b2a2992c9a1c9b2e3c2e15d54fbe",
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
       "reason": "将四个目标二进制坐标绑定到版本化 /opt 路径，拒绝 /root，并在 live 请求前验证无特权沙箱可读、可执行和可穿越。"
     },
     {
@@ -48,7 +48,7 @@
     {
       "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
       "from_sha256": "07e83941855530c71fc548a93662a73e99bb2745113338e5d284b08ab7803606",
-      "to_sha256": "5d7f299b7019f154b68d65c1dd36e7c4e708848b68d6b71aaebdfd1b89ed03e3",
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
       "reason": "覆盖版本化 /opt 默认坐标、/root 拒绝和父目录或文件权限 mutation。"
     },
     {
@@ -77,5 +77,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_bwrap_zstd_readiness_tool_successor",
-  "identity_sha256": "c1102fffb8149cc8825c0a84e03798f316fb414c3c427335cb80660a24362209"
+  "identity_sha256": "75b91bb428e4fc4d86561448da30b9d44d68409380d9738dea634005625ae51f"
 }

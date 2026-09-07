@@ -6,19 +6,19 @@
   "predecessor": {
     "kind": "codex_cli_0151_timing_producer_replay_tool_successor_source_transition",
     "path": "docs/egress/maintenance/codex-cli-0151-timing-producer-replay-tool-successor-source-transition.json",
-    "sha256": "0897f6b11e02a86f072852b199cd0c8ed050233d322f116591cc6ee2d530567e"
+    "sha256": "0992153dd789e8f8cee57e18ac8414fdf7aedbe6485dc102e4dbbef41674237f"
   },
   "transitions": [
     {
       "path": "backend/internal/officialegress/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "1156f91b30044ae9f80ba1abdca9d98d5ff3a21ae674ddaf545aa9564596e045",
-      "to_sha256": "72709e18c8ddc7015bb56ba38fff30ec3f2d82ec444c74f0de46b113690fa350",
+      "to_sha256": "f4b441602cb610c1b471d19a0339dc8c34b0907efaa0ab1fbc43d1c0067d0911",
       "reason": "在 officialegress 包登记受管执行根恢复后继，并让历史计时生产者摘要链精确承接当前源码。"
     },
     {
       "path": "backend/internal/service/codex_0151_timing_producer_replay_tool_successor_test.go",
       "from_sha256": "57661d60f18e8d7a0b80c9c7bb78a253da68f91d492c2b052c7b7892360acf0c",
-      "to_sha256": "4a47ffc141b4653ad1122a17338d0f877419ededbb9abe252994690bc00ed161",
+      "to_sha256": "13db553d910e86f0cbf49d77411bc4e47a66a1432d340add665a207437bd9d90",
       "reason": "在 service 包独立重放同一受管执行根恢复后继和 mutation 闭集。"
     },
     {
@@ -54,13 +54,13 @@
     {
       "path": "tools/official_client_capture/run_sub2api_direct_matrix.sh",
       "from_sha256": "45b5d9cf24c6b7c92e2b8bc8a6b2ac9459b2696d265aaeeb45fff052c7214567",
-      "to_sha256": "0dabba0aa77aeb16a96fb76a782b7b16782c58116c9b5108ede5616809b8aa3d",
+      "to_sha256": "6cd0a9f9cff4d600ddfa39a572274638b86ecb9a9443519a5b114be08242219f",
       "reason": "让 Sub2API direct matrix 默认使用 capture-cli 已挂载的受管工具根。"
     },
     {
       "path": "tools/official_client_capture/run_sub2api_openai_mitm_matrix.sh",
       "from_sha256": "337f5d775ffbe6535acf279cb71ab72462013385248e9a03f81f974ebbc9ec8a",
-      "to_sha256": "e0760a78fa6f7717bd0b215a5e09541e30431ffdcda17ab4b68f941dcf3e5399",
+      "to_sha256": "9f867d5a469bccfb0af8ce92ef5ab97863f8856e7e3988fed71d2c9f6b783c61",
       "reason": "让 Sub2API MITM matrix 默认使用 capture-cli 已挂载的受管工具根。"
     },
     {
@@ -89,5 +89,5 @@
     "official_egress_profile_changed": false
   },
   "result": "passed_codex_cli_0151_managed_execution_root_recovery_tool_successor",
-  "identity_sha256": "82ee87d62b1f1d435a69d578a46394fa874e440abee33cb64bfba3d205506eab"
+  "identity_sha256": "c94dfa9011f04218d2c96f3e16607047cb821aec1e1b5dad801ba17a2801d5dc"
 }
