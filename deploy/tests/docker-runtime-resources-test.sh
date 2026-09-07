@@ -30,5 +30,7 @@ assert_line Dockerfile.goreleaser 'COPY --chown=sub2api:sub2api backend/resource
 assert_line deploy/Dockerfile 'COPY --from=backend-builder --chown=sub2api:sub2api /app/backend/resources /app/resources'
 assert_count .goreleaser.yaml '      - backend/resources' 4
 assert_count .goreleaser.simple.yaml '      - backend/resources' 1
+assert_count .goreleaser.yaml '      - deploy/container-healthcheck.sh' 4
+assert_count .goreleaser.simple.yaml '      - deploy/container-healthcheck.sh' 1
 
 printf 'docker runtime resources test passed\n'

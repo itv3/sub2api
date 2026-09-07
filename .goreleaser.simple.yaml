@@ -49,6 +49,7 @@ dockers:
     use: buildx
     extra_files:
       - deploy/docker-entrypoint.sh
+      - deploy/container-healthcheck.sh
       - backend/resources
     build_flag_templates:
       - "--platform=linux/amd64"
