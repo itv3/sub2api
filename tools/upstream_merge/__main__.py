@@ -14,15 +14,19 @@ from .workflow import (
     apply_candidate_to_managed_branch,
     carry_forward_inventory,
     finalize_upstream_merge,
+    generate_change_decision_suggestion,
     generate_impact_matrix,
     replay_upstream_merge,
     run_verification_gates,
+    run_preflight,
     scan_surfaces,
     seal_candidate_disposition,
     seal_change_decision,
     seal_merge,
     seal_source_candidate,
     seal_surfaces,
+    generate_source_transition,
+    validate_source_transition,
     start_merge,
 )
 
@@ -58,6 +62,36 @@ def build_parser() -> argparse.ArgumentParser:
     create = commands.add_parser("plan-create", help="从请求生成完整 U-0 计划")
     _add_repository(create)
     create.add_argument("--request", required=True, type=_absolute)
+
+    preflight = commands.add_parser(
+        "preflight",
+        help="正式 U-0 前在临时 detached worktree 执行离线预检",
+    )
+    _add_repository(preflight)
+    preflight.add_argument("--request", required=True, type=_absolute)
+    preflight.add_argument(
+        "--output",
+        type=_absolute,
+        help="可选的非权威预检报告路径；不会覆盖既有文件",
+    )
+
+    transition = commands.add_parser(
+        "source-transition",
+        help="从 Git 差异生成追加式 source-transition 链尾节点",
+    )
+    _add_repository(transition)
+    transition.add_argument("--before", required=True, help="前序提交完整 SHA-1")
+    transition.add_argument("--after", required=True, help="当前提交完整 SHA-1")
+    transition.add_argument("--output", required=True, type=_absolute)
+    transition.add_argument("--predecessor-register", type=_absolute)
+    transition.add_argument("--reason")
+
+    transition_validate = commands.add_parser(
+        "source-transition-validate",
+        help="复算 source-transition 链尾及其文件摘要",
+    )
+    _add_repository(transition_validate)
+    transition_validate.add_argument("--transition", required=True, type=_absolute)
 
     validate = commands.add_parser("plan-validate", help="只读复算完整计划")
     _add_plan(validate)
@@ -98,6 +132,15 @@ def build_parser() -> argparse.ArgumentParser:
     impact_generate = commands.add_parser("impact-generate", help="U-3 生成完整影响矩阵")
     _add_plan(impact_generate)
 
+    impact_suggest = commands.add_parser(
+        "impact-suggest",
+        aliases=["change-decision-suggest"],
+        help="U-3 按版本化组件映射生成安全分级 ChangeDecision 草稿",
+    )
+    _add_plan(impact_suggest)
+    impact_suggest.add_argument("--output", required=True, type=_absolute)
+
+
     impact_seal = commands.add_parser("impact-seal", help="U-3 封存逐文件与调用边处置")
     _add_plan(impact_seal)
     impact_seal.add_argument("--decision", required=True, type=_absolute)
@@ -105,6 +148,14 @@ def build_parser() -> argparse.ArgumentParser:
     gates = commands.add_parser("gates-run", help="U-4 执行全部固定门禁并生成 attempt 收据")
     _add_plan(gates)
     gates.add_argument("--attempt-id", required=True)
+    gates.add_argument(
+        "--only",
+        help="只执行指定门禁 id 或 category（逗号分隔）；其余从上一 attempt 复用",
+    )
+    gates.add_argument(
+        "--from-attempt",
+        help="上一 attempt 的安全标识、目录或 evidence root 内的 receipt.json",
+    )
 
     disposition = commands.add_parser("disposition-seal", help="U-5 封存 candidate/Campaign 处置")
     _add_plan(disposition)
@@ -145,6 +196,26 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             "plan_id": plan.plan_id,
             "identity_sha256": plan.identity,
         }
+    if command == "preflight":
+        report = run_preflight(arguments.request, arguments.repository, arguments.output)
+        return {
+            "result": report["result"],
+            "plan_id": report["plan_id"],
+            "identity_sha256": report["identity_sha256"],
+            "report": str(arguments.output) if arguments.output else None,
+            "blockers": report["blockers"],
+        }
+    if command == "source-transition":
+        return generate_source_transition(
+            arguments.repository,
+            arguments.before,
+            arguments.after,
+            arguments.output,
+            predecessor_register=arguments.predecessor_register,
+            reason=arguments.reason,
+        )
+    if command == "source-transition-validate":
+        return validate_source_transition(arguments.repository, arguments.transition)
     if command == "identity-seal":
         draft = expect_object(load_json(arguments.input, "identity draft"), "identity draft")
         if "identity_sha256" in draft:
@@ -177,10 +248,24 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
         return seal_surfaces(plan, arguments.decisions)
     if command == "impact-generate":
         return generate_impact_matrix(plan)
+    if command in {"impact-suggest", "change-decision-suggest"}:
+        suggestion = generate_change_decision_suggestion(plan, arguments.output)
+        return {
+            "result": suggestion["result"],
+            "output": str(arguments.output),
+            "auto_accepted_count": suggestion["auto_accepted_count"],
+            "manual_required_count": suggestion["manual_required_count"],
+            "unresolved_paths": suggestion["unresolved_paths"],
+        }
     if command == "impact-seal":
         return seal_change_decision(plan, arguments.decision)
     if command == "gates-run":
-        return run_verification_gates(plan, arguments.attempt_id)
+        return run_verification_gates(
+            plan,
+            arguments.attempt_id,
+            only=arguments.only,
+            from_attempt=arguments.from_attempt,
+        )
     if command == "disposition-seal":
         return seal_candidate_disposition(
             plan,

@@ -104,6 +104,35 @@ OUTPUT_KEYS = {
     "upstream_merge_receipt",
 }
 
+# 新计划为可迭代的 U-2/U-3 制品增加追加式输出根。它们不是旧计划的必填字段，
+# 这样历史 v2 计划仍可只读回放；新建计划会自动写入这些根。
+REVISION_OUTPUT_KEYS = {
+    "source_candidate_revisions_root",
+    "surface_revisions_root",
+    "impact_revisions_root",
+    "candidate_inventories_revisions_root",
+}
+
+REVISION_STAGE_ROOTS = {
+    "source_candidate": "source_candidate_revisions_root",
+    "surface_route_snapshot": "surface_revisions_root",
+    "surface_egress_snapshot": "surface_revisions_root",
+    "surface_delta": "surface_revisions_root",
+    "surface_receipt": "surface_revisions_root",
+    "impact_matrix": "impact_revisions_root",
+    "impact_receipt": "impact_revisions_root",
+}
+
+REVISION_STAGE_STEMS = {
+    "source_candidate": "source-candidate",
+    "surface_route_snapshot": "route-snapshot",
+    "surface_egress_snapshot": "source-to-sink-snapshot",
+    "surface_delta": "surface-delta",
+    "surface_receipt": "surface-receipt",
+    "impact_matrix": "impact-matrix",
+    "impact_receipt": "change-decision-receipt",
+}
+
 _PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 _ALLOWED_PLACEHOLDERS = {
     "candidate_commit",
@@ -146,7 +175,7 @@ class LoadedPlan:
         return str(self.document["repository"]["managed_ref"])
 
     def output_relative(self, key: str) -> str:
-        if key not in OUTPUT_KEYS or key in {"candidate_inventories"}:
+        if key not in OUTPUT_KEYS | REVISION_OUTPUT_KEYS or key in {"candidate_inventories"}:
             raise UpstreamMergeError(f"未知或非标量输出：{key}")
         return str(self.document["outputs"][key])
 
@@ -157,6 +186,11 @@ class LoadedPlan:
         if client not in CLIENT_KEYS or kind not in {"ingress", "egress"}:
             raise UpstreamMergeError(f"候选 Inventory 位置非法：{client}/{kind}")
         relative = self.document["outputs"]["candidate_inventories"][client][kind]
+        revision_root = self.document["outputs"].get(
+            "candidate_inventories_revisions_root"
+        )
+        if isinstance(revision_root, str):
+            return latest_inventory_path(self, client, kind, fallback=relative)
         return resolve_within(
             self.evidence_root,
             relative,
@@ -313,7 +347,13 @@ def _validate_gates(value: Any, label: str = "gates") -> list[dict[str, Any]]:
         expected = {"id", "category", "mode", "cwd", "argv"}
         if mode == "receipt_replay":
             expected.add("receipt")
-        expect_exact_fields(gate, expected, item_label)
+        optional = {"execution_group"}
+        actual = set(gate)
+        if actual - (expected | optional) or expected - actual:
+            raise UpstreamMergeError(
+                f"{item_label} 字段不闭合：缺失={sorted(expected - actual)}，"
+                f"多余={sorted(actual - expected - optional)}"
+            )
         gate_id = expect_safe_id(gate.get("id"), f"{item_label}.id")
         category = validate_string_enum(
             gate.get("category"), REQUIRED_GATE_CATEGORIES, f"{item_label}.category"
@@ -326,6 +366,8 @@ def _validate_gates(value: Any, label: str = "gates") -> list[dict[str, Any]]:
         )
         if mode == "receipt_replay":
             safe_relative_path(gate.get("receipt"), f"{item_label}.receipt")
+        if "execution_group" in gate:
+            expect_safe_id(gate.get("execution_group"), f"{item_label}.execution_group")
         ids.append(gate_id)
         categories.append(category)
         normalized.append(gate)
@@ -461,12 +503,32 @@ def _output_layout(upstream_tag: str) -> dict[str, Any]:
         "candidate_disposition": "u5/candidate-disposition.json",
         "branch_apply": "u6/branch-apply.json",
         "upstream_merge_receipt": "u6/upstream-merge-receipt.json",
+        "source_candidate_revisions_root": "u2/source-candidates",
+        "surface_revisions_root": "u2/surface-revisions",
+        "impact_revisions_root": "u3/impact-revisions",
+        "candidate_inventories_revisions_root": "u2/inventory-revisions",
     }
 
 
 def _validate_outputs(value: Any, upstream_tag: str) -> dict[str, Any]:
     outputs = expect_object(value, "outputs")
-    expect_exact_fields(outputs, OUTPUT_KEYS, "outputs")
+    actual_keys = set(outputs)
+    required_keys = set(OUTPUT_KEYS)
+    allowed_keys = required_keys | REVISION_OUTPUT_KEYS
+    if actual_keys != required_keys and not (
+        required_keys <= actual_keys <= allowed_keys
+    ):
+        raise UpstreamMergeError(
+            "outputs 字段不闭合："
+            f"缺失={sorted(required_keys - actual_keys)}，"
+            f"多余={sorted(actual_keys - allowed_keys)}"
+        )
+    revision_keys = actual_keys & REVISION_OUTPUT_KEYS
+    if revision_keys and revision_keys != REVISION_OUTPUT_KEYS:
+        raise UpstreamMergeError(
+            "outputs revision 根必须全部声明或全部省略："
+            f"缺失={sorted(REVISION_OUTPUT_KEYS - revision_keys)}"
+        )
     paths: list[str] = []
     for key, raw in outputs.items():
         if key == "candidate_inventories":
@@ -483,6 +545,13 @@ def _validate_outputs(value: Any, upstream_tag: str) -> dict[str, Any]:
                     )
             continue
         relative = safe_relative_path(raw, f"outputs.{key}")
+        if key in REVISION_OUTPUT_KEYS:
+            # revision 根只允许作为目录前缀，禁止以绝对路径或含点段的形式出现；
+            # 具体文件名由本模块的 revision 辅助函数统一生成。
+            if relative.endswith(".json"):
+                raise UpstreamMergeError(f"outputs.{key} 必须是 revision 目录")
+            paths.append(relative)
+            continue
         if key == "codex_overlay_ledger":
             expected = (
                 f"docs/egress/maintenance/upstream-{upstream_tag}-egress-merge-ledger.json"
@@ -785,17 +854,313 @@ def load_plan(
     )
 
 
-def artifact_document(path: Path, label: str, schema: str, fields: set[str]) -> dict[str, Any]:
-    """加载带自摘要的不可变阶段制品。"""
+def artifact_document(
+    path: Path,
+    label: str,
+    schema: str,
+    fields: set[str],
+    *,
+    optional_fields: set[str] | None = None,
+) -> dict[str, Any]:
+    """加载带自摘要的不可变阶段制品。
+
+    ``optional_fields`` 仅用于向后兼容追加式 metadata；未知字段仍然失败关闭。
+    """
 
     document = expect_object(load_json(path, label), label)
-    expect_exact_fields(document, fields | {"schema_version", "identity_sha256"}, label)
+    expected = fields | {"schema_version", "identity_sha256"}
+    allowed = expected | (optional_fields or set())
+    actual = set(document)
+    if actual - allowed or expected - actual:
+        raise UpstreamMergeError(
+            f"{label} 字段不闭合：缺失={sorted(expected - actual)}，"
+            f"多余={sorted(actual - allowed)}"
+        )
     if document.get("schema_version") != schema:
         raise UpstreamMergeError(f"{label} schema_version 非法")
     validate_identity(document, label)
     return document
 
 
+def _revision_root_path(plan: LoadedPlan, key: str) -> Path | None:
+    root_key = REVISION_STAGE_ROOTS.get(key)
+    if root_key is None:
+        raise UpstreamMergeError(f"阶段不支持 revision：{key}")
+    raw = plan.document.get("outputs", {}).get(root_key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise UpstreamMergeError(f"计划 revision 输出根类型非法：outputs.{root_key}")
+    relative = safe_relative_path(raw, f"outputs.{root_key}")
+    raw_path = plan.evidence_root / Path(relative)
+    if raw_path.is_symlink():
+        raise UpstreamMergeError(f"revision 输出根不得是符号链接：{raw_path}")
+    return resolve_within(
+        plan.evidence_root,
+        relative,
+        f"outputs.{root_key}",
+    )
+
+
+def _revision_pattern(key: str) -> re.Pattern[str]:
+    stem = re.escape(REVISION_STAGE_STEMS[key])
+    return re.compile(rf"^{stem}-(?P<revision>[0-9]+)\.json$")
+
+
+def revision_number(path: Path, plan: LoadedPlan, key: str) -> int:
+    """返回阶段文件的 revision 编号；原兼容路径固定视为第 1 轮。"""
+
+    if path.resolve(strict=False) == plan.output_path(key).resolve(strict=False):
+        return 1
+    match = _revision_pattern(key).fullmatch(path.name)
+    if match is None:
+        raise UpstreamMergeError(f"阶段文件名不是受支持的 revision：{path.name}")
+    number = int(match.group("revision"))
+    if number < 2:
+        raise UpstreamMergeError(f"revision 文件编号必须从 002 开始：{path.name}")
+    return number
+
+
+def stage_paths(plan: LoadedPlan, key: str, *, existing_only: bool = True) -> list[Path]:
+    """按 revision 顺序返回某个阶段的全部不可变文件。"""
+
+    if key not in REVISION_STAGE_ROOTS:
+        path = plan.output_path(key)
+        return [path] if (not existing_only or path.exists()) else []
+    paths: list[Path] = []
+    legacy = plan.output_path(key)
+    if legacy.exists() or legacy.is_symlink() or not existing_only:
+        paths.append(legacy)
+    root = _revision_root_path(plan, key)
+    if root is None:
+        return paths
+    if root.exists():
+        if root.is_symlink() or not root.is_dir():
+            raise UpstreamMergeError(f"revision 输出根不可信：{root}")
+        pattern = _revision_pattern(key)
+        for candidate in root.iterdir():
+            if pattern.fullmatch(candidate.name) is None:
+                continue
+            if candidate.is_symlink() or not candidate.is_file():
+                raise UpstreamMergeError(f"revision 阶段文件不可信：{candidate}")
+            paths.append(candidate)
+    paths.sort(key=lambda item: (revision_number(item, plan, key), item.as_posix()))
+    numbers = [revision_number(path, plan, key) for path in paths]
+    if numbers != sorted(set(numbers)):
+        raise UpstreamMergeError(f"阶段 revision 编号重复：{key}")
+    if numbers and numbers[0] != 1:
+        raise UpstreamMergeError(f"阶段 revision 必须从第 1 轮开始：{key}")
+    if numbers != list(range(1, len(numbers) + 1)):
+        raise UpstreamMergeError(f"阶段 revision 链存在缺口：{key}={numbers}")
+    return paths
+
+
+def latest_stage_path(plan: LoadedPlan, key: str, *, required: bool = True) -> Path:
+    paths = stage_paths(plan, key)
+    if not paths:
+        if required:
+            raise UpstreamMergeError(f"缺少阶段制品：{key}")
+        return plan.output_path(key)
+    return paths[-1]
+
+
+def latest_revision(plan: LoadedPlan, key: str = "source_candidate") -> int:
+    paths = stage_paths(plan, key)
+    return revision_number(paths[-1], plan, key) if paths else 0
+
+
+def next_stage_path(
+    plan: LoadedPlan,
+    key: str,
+    *,
+    revision: int | None = None,
+) -> tuple[int, Path]:
+    """返回下一轮阶段输出路径，不创建或覆盖文件。"""
+
+    current = latest_revision(plan, key)
+    number = current + 1 if revision is None else revision
+    if number < 1 or number != current + 1:
+        raise UpstreamMergeError(
+            f"新 revision 必须严格递增一轮：key={key} current={current} requested={number}"
+        )
+    if number == 1:
+        path = plan.output_path(key)
+    else:
+        root = _revision_root_path(plan, key)
+        if root is None:
+            raise UpstreamMergeError(
+                f"当前计划未声明 revision 输出根：{REVISION_STAGE_ROOTS[key]}"
+            )
+        path = root / f"{REVISION_STAGE_STEMS[key]}-{number:03d}.json"
+    if path.exists() or path.is_symlink():
+        raise UpstreamMergeError(f"revision 输出已存在，禁止覆盖：{path}")
+    return number, path
+
+
+def latest_inventory_path(
+    plan: LoadedPlan,
+    client: str,
+    kind: str,
+    *,
+    fallback: str,
+) -> Path:
+    """返回某 Persona Inventory 的最新追加轮次或旧兼容路径。"""
+
+    if client not in CLIENT_KEYS or kind not in {"ingress", "egress"}:
+        raise UpstreamMergeError(f"Inventory revision 参数非法：{client}/{kind}")
+    legacy = resolve_within(
+        plan.evidence_root,
+        safe_relative_path(fallback, f"outputs.candidate_inventories.{client}.{kind}"),
+        f"outputs.candidate_inventories.{client}.{kind}",
+    )
+    raw_root = plan.document.get("outputs", {}).get(
+        "candidate_inventories_revisions_root"
+    )
+    if not isinstance(raw_root, str):
+        return legacy
+    relative_root = safe_relative_path(
+        raw_root,
+        "outputs.candidate_inventories_revisions_root",
+    )
+    raw_root_path = plan.evidence_root / Path(relative_root)
+    if raw_root_path.is_symlink():
+        raise UpstreamMergeError(f"Inventory revision 根不得是符号链接：{raw_root_path}")
+    root = resolve_within(
+        plan.evidence_root,
+        relative_root,
+        "outputs.candidate_inventories_revisions_root",
+    )
+    if not root.exists():
+        return legacy
+    if root.is_symlink() or not root.is_dir():
+        raise UpstreamMergeError(f"Inventory revision 根不可信：{root}")
+    stem = f"{client}-{kind}-inventory"
+    pattern = re.compile(rf"^{re.escape(stem)}-([0-9]+)\.json$")
+    candidates: list[tuple[int, Path]] = []
+    for path in root.iterdir():
+        match = pattern.fullmatch(path.name)
+        if match is None:
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise UpstreamMergeError(f"Inventory revision 文件不可信：{path}")
+        candidates.append((int(match.group(1)), path))
+    if not candidates:
+        return legacy
+    if not legacy.exists() or legacy.is_symlink() or not legacy.is_file():
+        raise UpstreamMergeError(
+            f"Inventory revision 缺少第 1 轮固定制品：{client}/{kind}"
+        )
+    candidates.sort(key=lambda item: item[0])
+    numbers = [number for number, _ in candidates]
+    if numbers != sorted(set(numbers)):
+        raise UpstreamMergeError(f"Inventory revision 编号重复：{client}/{kind}")
+    if numbers[0] < 2 or numbers != list(range(2, numbers[-1] + 1)):
+        raise UpstreamMergeError(f"Inventory revision 链存在缺口：{client}/{kind}={numbers}")
+    return candidates[-1][1]
+
+
+def next_inventory_path(
+    plan: LoadedPlan,
+    client: str,
+    kind: str,
+    *,
+    revision: int,
+) -> Path:
+    """返回指定 SourceCandidate 轮次的 Inventory 输出路径。"""
+
+    raw_root = plan.document.get("outputs", {}).get(
+        "candidate_inventories_revisions_root"
+    )
+    if not isinstance(raw_root, str):
+        raise UpstreamMergeError(
+            "当前计划未声明 candidate_inventories_revisions_root，无法追加 Inventory revision"
+        )
+    if revision < 2:
+        raise UpstreamMergeError("追加 Inventory revision 必须从 002 开始")
+    relative_root = safe_relative_path(
+        raw_root,
+        "outputs.candidate_inventories_revisions_root",
+    )
+    raw_root_path = plan.evidence_root / Path(relative_root)
+    if raw_root_path.is_symlink():
+        raise UpstreamMergeError(f"Inventory revision 根不得是符号链接：{raw_root_path}")
+    root = resolve_within(
+        plan.evidence_root,
+        relative_root,
+        "outputs.candidate_inventories_revisions_root",
+    )
+    if client not in CLIENT_KEYS or kind not in {"ingress", "egress"}:
+        raise UpstreamMergeError(f"Inventory revision 参数非法：{client}/{kind}")
+    # 每个 Persona/kind 的 Inventory 也必须按 001（旧固定路径）、002、003…连续追加。
+    fallback = plan.document["outputs"]["candidate_inventories"][client][kind]
+    latest = latest_inventory_path(plan, client, kind, fallback=fallback)
+    current = inventory_revision_number(plan, client, kind, latest)
+    if revision != current + 1:
+        raise UpstreamMergeError(
+            f"Inventory revision 必须连续追加：{client}/{kind} current={current} requested={revision}"
+        )
+    path = root / f"{client}-{kind}-inventory-{revision:03d}.json"
+    if path.exists() or path.is_symlink():
+        raise UpstreamMergeError(f"Inventory revision 输出已存在，禁止覆盖：{path}")
+    return path
+
+
+def inventory_revision_number(
+    plan: LoadedPlan,
+    client: str,
+    kind: str,
+    path: Path,
+) -> int:
+    """返回 Inventory 所属 SourceCandidate 轮次；旧固定路径视为第 1 轮。"""
+
+    legacy = resolve_within(
+        plan.evidence_root,
+        plan.document["outputs"]["candidate_inventories"][client][kind],
+        f"outputs.candidate_inventories.{client}.{kind}",
+    )
+    if path.resolve(strict=False) == legacy.resolve(strict=False):
+        return 1
+    raw_root = plan.document.get("outputs", {}).get(
+        "candidate_inventories_revisions_root"
+    )
+    if not isinstance(raw_root, str):
+        raise UpstreamMergeError("Inventory revision 根未声明")
+    relative_root = safe_relative_path(
+        raw_root,
+        "outputs.candidate_inventories_revisions_root",
+    )
+    raw_root_path = plan.evidence_root / Path(relative_root)
+    if raw_root_path.is_symlink():
+        raise UpstreamMergeError(f"Inventory revision 根不得是符号链接：{raw_root_path}")
+    stem = f"{client}-{kind}-inventory"
+    match = re.fullmatch(rf"{re.escape(stem)}-([0-9]+)\.json", path.name)
+    if match is None:
+        raise UpstreamMergeError(f"Inventory 文件名不是受支持的 revision：{path.name}")
+    number = int(match.group(1))
+    if number < 2:
+        raise UpstreamMergeError(f"Inventory revision 必须从 002 开始：{path.name}")
+    expected_root = resolve_within(
+        plan.evidence_root,
+        relative_root,
+        "outputs.candidate_inventories_revisions_root",
+    )
+    if not path.resolve(strict=False).is_relative_to(expected_root.resolve()):
+        raise UpstreamMergeError("Inventory 不在 revision 输出根内")
+    return number
+
+
 def stage_binding(plan: LoadedPlan, key: str) -> dict[str, Any]:
-    path = plan.output_path(key)
+    # 旧计划没有 revision 根时退回原固定路径；新计划始终绑定最新追加轮次。
+    if key in {
+        "source_candidate",
+        "surface_route_snapshot",
+        "surface_egress_snapshot",
+        "surface_delta",
+        "surface_receipt",
+        "impact_matrix",
+        "impact_receipt",
+    } and REVISION_OUTPUT_KEYS & set(plan.document.get("outputs", {})):
+        path = latest_stage_path(plan, key)
+    else:
+        path = plan.output_path(key)
     return artifact_binding(plan.evidence_root, path)

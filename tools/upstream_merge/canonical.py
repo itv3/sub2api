@@ -208,14 +208,16 @@ def safe_relative_path(value: Any, label: str) -> str:
 def resolve_within(root: Path, relative: str, label: str) -> Path:
     safe_relative_path(relative, label)
     resolved_root = root.resolve()
-    candidate = (resolved_root / PurePosixPath(relative)).resolve()
+    current = resolved_root
+    # 先沿未解析的路径逐段检查，再解析最终路径。否则一个指向 root 内部的
+    # 末端软链接会被 Path.resolve() 隐藏，调用方将无法再区分普通文件和别名。
+    for part in PurePosixPath(relative).parts:
+        current /= part
+        if current.is_symlink():
+            raise UpstreamMergeError(f"{label} 路径包含符号链接：{current}")
+    candidate = current.resolve()
     if not candidate.is_relative_to(resolved_root):
         raise UpstreamMergeError(f"{label} 越过受控根：{relative}")
-    current = resolved_root
-    for part in PurePosixPath(relative).parts[:-1]:
-        current /= part
-        if current.exists() and current.is_symlink():
-            raise UpstreamMergeError(f"{label} 父目录包含符号链接：{current}")
     return candidate
 
 

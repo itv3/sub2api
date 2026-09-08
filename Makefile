@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical test-capture-tools test-official-client-control test-upstream-merge-tools check-egress-spec check-egress-spec-ci check-egress-spec-local-source check-egress-bootstrap-replay check-egress-seal
+.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical test-capture-tools test-official-client-control test-upstream-merge-tools upstream-preflight upstream-source-transition upstream-source-transition-validate check-egress-spec check-egress-spec-ci check-egress-spec-local-source check-egress-bootstrap-replay check-egress-seal
 
 EGRESS_BOOTSTRAP_COMMIT := 38a9929eac35a39c86de2f27de8f7a805d7dae52
 EGRESS_BOOTSTRAP_BASELINE := $(CURDIR)/docs/egress/foundation/sink-baseline.json
@@ -17,6 +17,14 @@ EGRESS_LEGACY_CEILING := $(CURDIR)/docs/egress/lifecycle/legacy-ceiling.json
 EGRESS_LEGACY_SEAL_RECEIPT := $(CURDIR)/docs/egress/lifecycle/legacy-seal-receipt.json
 EGRESS_SEAL_BASE_REF ?=
 UPSTREAM_MERGE_PLAN ?= $(CURDIR)/docs/egress/maintenance/upstream-v0.1.177-merge-plan.json
+UPSTREAM_MERGE_REPOSITORY ?= $(CURDIR)
+UPSTREAM_MERGE_REQUEST ?=
+UPSTREAM_MERGE_PREFLIGHT_OUTPUT ?=
+UPSTREAM_MERGE_BEFORE ?=
+UPSTREAM_MERGE_AFTER ?=
+UPSTREAM_MERGE_TRANSITION_OUTPUT ?=
+UPSTREAM_MERGE_TRANSITION_PREDECESSOR ?=
+UPSTREAM_MERGE_TRANSITION_REASON ?=
 CODEX_0_149_1_SOURCE_ROOT ?= $(CURDIR)/local-analysis/sources/codex-cli-0.149.1
 CAPTURE_TYPESCRIPT_MODULE ?= $(CURDIR)/frontend/node_modules/typescript/lib/typescript.js
 CAPTURE_TYPESCRIPT_SHA256 := f316520790d4db220a10d890c5f85310e26a1bd3c104b8d3b5eb62ba0491651b
@@ -234,3 +242,31 @@ test-official-client-control:
 test-upstream-merge-tools:
 	@PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
 		-s tools/upstream_merge/tests -p 'test_*.py'
+
+# 上游合并正式 plan-create 前的离线预检；输出报告必须放在主仓库之外，避免把
+# 非权威报告误当成提交内容。所有参数均由调用方显式提供，不覆盖既有报告。
+upstream-preflight:
+	@test -n "$(UPSTREAM_MERGE_REQUEST)" || { echo "🔴 请设置 UPSTREAM_MERGE_REQUEST"; exit 2; }
+	@python3 -m tools.upstream_merge preflight \
+		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
+		--request "$(UPSTREAM_MERGE_REQUEST)" \
+		$(if $(UPSTREAM_MERGE_PREFLIGHT_OUTPUT),--output "$(UPSTREAM_MERGE_PREFLIGHT_OUTPUT)",)
+
+# 从两个已冻结提交追加生成 source-transition 链尾；不会改写已有节点。
+upstream-source-transition:
+	@test -n "$(UPSTREAM_MERGE_BEFORE)" || { echo "🔴 请设置 UPSTREAM_MERGE_BEFORE"; exit 2; }
+	@test -n "$(UPSTREAM_MERGE_AFTER)" || { echo "🔴 请设置 UPSTREAM_MERGE_AFTER"; exit 2; }
+	@test -n "$(UPSTREAM_MERGE_TRANSITION_OUTPUT)" || { echo "🔴 请设置 UPSTREAM_MERGE_TRANSITION_OUTPUT"; exit 2; }
+	@python3 -m tools.upstream_merge source-transition \
+		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
+		--before "$(UPSTREAM_MERGE_BEFORE)" \
+		--after "$(UPSTREAM_MERGE_AFTER)" \
+		--output "$(UPSTREAM_MERGE_TRANSITION_OUTPUT)" \
+		$(if $(UPSTREAM_MERGE_TRANSITION_PREDECESSOR),--predecessor-register "$(UPSTREAM_MERGE_TRANSITION_PREDECESSOR)",) \
+		$(if $(UPSTREAM_MERGE_TRANSITION_REASON),--reason "$(UPSTREAM_MERGE_TRANSITION_REASON)",)
+
+upstream-source-transition-validate:
+	@test -n "$(UPSTREAM_MERGE_TRANSITION_OUTPUT)" || { echo "🔴 请设置 UPSTREAM_MERGE_TRANSITION_OUTPUT"; exit 2; }
+	@python3 -m tools.upstream_merge source-transition-validate \
+		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
+		--transition "$(UPSTREAM_MERGE_TRANSITION_OUTPUT)"

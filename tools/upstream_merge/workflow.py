@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -30,6 +30,7 @@ from .canonical import (
     sha256_bytes,
     sha256_file,
     validate_artifact_binding,
+    validate_file_binding,
     validate_identity,
     validate_string_enum,
     write_json_once,
@@ -41,6 +42,14 @@ from .contracts import (
     LoadedPlan,
     _validate_inventory_payload,
     artifact_document,
+    inventory_revision_number,
+    load_request,
+    latest_revision,
+    latest_stage_path,
+    next_inventory_path,
+    next_stage_path,
+    revision_number,
+    stage_paths,
     stage_binding,
 )
 from .errors import UpstreamMergeError
@@ -52,18 +61,19 @@ from .gitops import (
     current_branch_ref,
     executable_identity,
     git_output,
+    merge_base,
+    remote_url,
     rev_parse,
     route_snapshot,
     run_egress_snapshot,
     run_git,
     run_process,
     status_paths,
+    tag_commit,
     unmerged_entries,
     validate_protected_objects,
     validate_tool_bundle,
 )
-
-
 MERGE_START_SCHEMA = "official-egress-upstream-merge-start/v1"
 MERGE_CANDIDATE_SCHEMA = "official-egress-upstream-merge-candidate-tree/v1"
 CONFLICT_INPUT_SCHEMA = "official-egress-upstream-conflict-resolution-input/v1"
@@ -81,6 +91,94 @@ CANDIDATE_DISPOSITION_INPUT_SCHEMA = "official-egress-upstream-candidate-disposi
 CANDIDATE_DISPOSITION_SCHEMA = "official-egress-upstream-candidate-disposition/v1"
 BRANCH_APPLY_SCHEMA = "official-egress-upstream-branch-apply/v1"
 UPSTREAM_RECEIPT_SCHEMA = "official-egress-upstream-merge-receipt/v1"
+SOURCE_TRANSITION_SCHEMA = "official-egress-upstream-source-transition/v2"
+
+REVISION_STAGE_SCHEMAS = {
+    "source_candidate": SOURCE_CANDIDATE_SCHEMA,
+    "surface_delta": SURFACE_DELTA_SCHEMA,
+    "surface_receipt": SURFACE_RECEIPT_SCHEMA,
+    "impact_matrix": IMPACT_MATRIX_SCHEMA,
+    "impact_receipt": CHANGE_DECISION_RECEIPT_SCHEMA,
+}
+
+REVISION_STAGE_FIELDS = {
+    "source_candidate": {
+        "plan_id",
+        "plan_identity_sha256",
+        "merge_candidate",
+        "source_commit",
+        "source_tree",
+        "changed_paths",
+        "source_change_input",
+        "codex_overlay_ledger",
+    },
+    "surface_delta": {
+        "plan_id",
+        "plan_identity_sha256",
+        "source_candidate",
+        "baseline_route_snapshot",
+        "candidate_route_snapshot",
+        "baseline_source_to_sink_snapshot",
+        "candidate_source_to_sink_snapshot",
+        "route_delta_count",
+        "egress_delta_count",
+        "deltas",
+    },
+    "surface_receipt": {
+        "plan_id",
+        "plan_identity_sha256",
+        "source_candidate",
+        "surface_delta",
+        "route_snapshot",
+        "source_to_sink_snapshot",
+        "candidate_inventories",
+        "surface_decision",
+        "unknown_oauth_egress_count",
+        "unclassified_delta_count",
+        "result",
+    },
+    "impact_matrix": {
+        "plan_id",
+        "plan_identity_sha256",
+        "source_candidate",
+        "surface_receipt",
+        "file_change_count",
+        "file_changes",
+        "surface_delta_count",
+        "surface_deltas",
+        "classification_rule",
+        "result",
+    },
+    "impact_receipt": {
+        "plan_id",
+        "plan_identity_sha256",
+        "impact_matrix",
+        "change_decision",
+        "file_decision_count",
+        "surface_decision_count",
+        "client_impacts",
+        "successor_campaign_required",
+        "shared_contract_required",
+        "unclassified_count",
+        "official_client_identity_change_count",
+        "result",
+    },
+}
+
+REVISION_STAGE_OPTIONAL_FIELDS = {
+    "source_candidate": set(),
+    "surface_delta": set(),
+    "surface_receipt": set(),
+    "impact_matrix": {"component_mapping"},
+    "impact_receipt": {
+        "component_mapping_schema",
+        "component_mapping_version",
+        "component_mapping_sha256",
+        "auto_accepted_count",
+        "manual_decision_count",
+        "unknown_component_count",
+    },
+}
 
 RESOLUTION_KINDS = {"fork", "manual", "upstream"}
 FILE_IMPACT_CATEGORIES = {
@@ -92,6 +190,130 @@ FILE_IMPACT_CATEGORIES = {
     "repository_support",
     "shared_control",
 }
+
+# 组件映射是安全策略的一部分；其版本和摘要会随 ImpactMatrix 一起封存。
+COMPONENT_OWNERSHIP_SCHEMA = "official-egress-upstream-component-ownership/v1"
+COMPONENT_OWNERSHIP_VERSION = "2026-09-08"
+COMPONENT_OWNERSHIP_MANIFEST: dict[str, Any] = {
+    "schema_version": COMPONENT_OWNERSHIP_SCHEMA,
+    "version": COMPONENT_OWNERSHIP_VERSION,
+    "components": [
+        {
+            "id": "officialegress",
+            "prefixes": ["backend/internal/officialegress/"],
+            "owner": "official-egress",
+            "dependencies": ["shared_control"],
+            "risk": "high",
+            "categories": ["shared_control"],
+        },
+        {
+            "id": "service",
+            "prefixes": ["backend/internal/service/"],
+            "owner": "service",
+            "dependencies": ["officialegress", "shared_control"],
+            "risk": "high",
+            "categories": ["protocol_adapter"],
+        },
+        {
+            "id": "handler",
+            "prefixes": [
+                "backend/internal/handler/",
+                "backend/internal/server/routes/",
+                "backend/cmd/server/",
+            ],
+            "owner": "server-routing",
+            "dependencies": ["service", "officialegress"],
+            "risk": "high",
+            "categories": ["protocol_adapter", "key_group_routing_billing"],
+        },
+        {
+            "id": "repository",
+            "prefixes": ["backend/internal/repository/"],
+            "owner": "repository",
+            "dependencies": ["service"],
+            "risk": "high",
+            "categories": ["key_group_routing_billing"],
+        },
+        {
+            "id": "database_migration",
+            "prefixes": ["backend/migrations/", "backend/internal/migration/"],
+            "owner": "database",
+            "dependencies": ["service"],
+            "risk": "high",
+            "categories": ["key_group_routing_billing"],
+        },
+        {
+            "id": "backend_dependency_manifest",
+            "prefixes": ["backend/go.mod", "backend/go.sum", "go.mod", "go.sum"],
+            "owner": "build-system",
+            "dependencies": ["service", "officialegress"],
+            "risk": "high",
+            "categories": ["shared_control"],
+        },
+        {
+            "id": "egress_scanner",
+            "prefixes": ["backend/cmd/egressscan/"],
+            "owner": "egress-security",
+            "dependencies": ["officialegress", "shared_control"],
+            "risk": "high",
+            "categories": ["shared_control"],
+        },
+        {
+            "id": "upstream_merge_tool",
+            "prefixes": [
+                "tools/upstream_merge/",
+                "tools/upstream_merge_plan.schema.json",
+                "tools/upstream_merge_request.schema.json",
+                "tools/upstream_merge_artifacts.schema.json",
+                "tools/check_ledger_completeness.py",
+                "Makefile",
+            ],
+            "owner": "release-engineering",
+            "dependencies": [],
+            "risk": "high",
+            "categories": ["shared_control"],
+        },
+        {
+            "id": "egress_governance",
+            "prefixes": ["docs/egress/"],
+            "owner": "egress-security",
+            "dependencies": ["shared_control"],
+            "risk": "high",
+            "categories": ["shared_control"],
+        },
+        {
+            "id": "repository_support",
+            "prefixes": [
+                "frontend/",
+                ".github/",
+                "deploy/",
+                "docs/",
+                ".golangci.yml",
+                "package.json",
+                "pnpm-lock.yaml",
+            ],
+            "owner": "repository-support",
+            "dependencies": [],
+            "risk": "low",
+            "categories": ["repository_support"],
+        },
+    ],
+    "unknown_policy": "manual_and_fail_closed",
+}
+COMPONENT_OWNERSHIP_SHA256 = sha256_bytes(canonical_bytes(COMPONENT_OWNERSHIP_MANIFEST))
+AUTO_CLASSIFICATION_BLOCKERS = {
+    "account",
+    "billing",
+    "group",
+    "key",
+    "quota_usage",
+    "route",
+    "selector",
+    "wire",
+}
+AUTO_CLASSIFICATION_CATEGORIES = {"out_of_scope_product", "repository_support"}
+# 依赖既可以指向组件，也可以指向受控的抽象控制面；后者必须显式列入白名单。
+KNOWN_ABSTRACT_DEPENDENCIES = {"shared_control"}
 
 
 def _stage_document(plan: LoadedPlan, schema: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -147,8 +369,9 @@ def _load_merge_candidate(plan: LoadedPlan) -> dict[str, Any]:
 
 
 def _load_source_candidate(plan: LoadedPlan) -> dict[str, Any]:
-    return artifact_document(
-        plan.output_path("source_candidate"),
+    path = latest_stage_path(plan, "source_candidate")
+    document = artifact_document(
+        path,
         "SourceCandidate",
         SOURCE_CANDIDATE_SCHEMA,
         {
@@ -161,7 +384,183 @@ def _load_source_candidate(plan: LoadedPlan) -> dict[str, Any]:
             "source_change_input",
             "codex_overlay_ledger",
         },
+        optional_fields={"revision", "predecessor"},
     )
+    _validate_revision_metadata(plan, "source_candidate", path, document)
+    return document
+
+
+def _load_revision_artifact(
+    plan: LoadedPlan,
+    key: str,
+    label: str,
+    schema: str,
+    fields: set[str],
+    *,
+    optional_fields: set[str] | None = None,
+) -> dict[str, Any]:
+    """按最新 revision 读取阶段制品，并允许追加式轮次 metadata。"""
+
+    path = latest_stage_path(plan, key)
+    document = artifact_document(
+        path,
+        label,
+        schema,
+        fields,
+        optional_fields={"revision", "predecessor"} | (optional_fields or set()),
+    )
+    _validate_revision_metadata(plan, key, path, document)
+    return document
+
+
+def _validate_current_stage_binding(
+    plan: LoadedPlan,
+    value: Any,
+    key: str,
+    label: str,
+) -> dict[str, Any]:
+    """验证新格式制品内部引用确实指向该阶段的最新 revision。"""
+
+    binding = validate_artifact_binding(plan.evidence_root, value, label)
+    path = resolve_within(plan.evidence_root, binding["path"], f"{label}.path")
+    expected = latest_stage_path(plan, key).resolve(strict=True)
+    if path.resolve(strict=True) != expected:
+        raise UpstreamMergeError(
+            f"{label} 未绑定当前 {key} revision：expected={expected} actual={path}"
+        )
+    return binding
+
+
+def _validate_revision_metadata(
+    plan: LoadedPlan,
+    key: str,
+    path: Path,
+    document: dict[str, Any],
+) -> None:
+    """验证追加式制品的编号和前序绑定；旧制品首轮仍保持只读兼容。"""
+
+    path_revision = revision_number(path, plan, key)
+    has_revision = "revision" in document
+    has_predecessor = "predecessor" in document
+    if has_revision != has_predecessor:
+        raise UpstreamMergeError(f"{key} revision/predecessor metadata 必须成对出现")
+    source_revision = (
+        latest_revision(plan, "source_candidate")
+        if key != "source_candidate"
+        else path_revision
+    )
+    if not has_revision:
+        # 旧格式只允许作为第 1 轮兼容读取；一旦当前 SourceCandidate 已进入
+        # 追加轮次，所有依赖阶段都必须显式绑定同一 revision。
+        if path_revision > 1 or (key != "source_candidate" and source_revision > 1):
+            raise UpstreamMergeError(
+                f"{key} revision {path_revision} 缺少 revision/predecessor metadata"
+            )
+        return
+    revision = document.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise UpstreamMergeError(f"{key} revision metadata 非法")
+    if path_revision != revision:
+        raise UpstreamMergeError(f"{key} revision 与文件名不一致")
+    if key != "source_candidate":
+        if source_revision and revision != source_revision:
+            raise UpstreamMergeError(
+                f"{key} revision 未绑定当前 SourceCandidate："
+                f"expected={source_revision} actual={revision}"
+            )
+    all_paths = stage_paths(plan, key)
+    current_index = next(
+        (index for index, item in enumerate(all_paths) if item == path),
+        None,
+    )
+    predecessor = document.get("predecessor")
+    if revision == 1:
+        if predecessor is not None:
+            raise UpstreamMergeError(f"{key} 首轮不得包含 predecessor")
+        return
+    if current_index is None or current_index == 0:
+        raise UpstreamMergeError(f"{key} revision 缺少前序制品")
+    previous_path = all_paths[current_index - 1]
+    if revision_number(previous_path, plan, key) != revision - 1:
+        raise UpstreamMergeError(f"{key} revision 前序编号不连续")
+    expected = artifact_binding(plan.evidence_root, previous_path)
+    if predecessor != expected:
+        raise UpstreamMergeError(f"{key} predecessor 绑定漂移")
+    _validate_revision_chain_node(plan, key, previous_path, revision - 1, set())
+
+
+def _validate_revision_chain_node(
+    plan: LoadedPlan,
+    key: str,
+    path: Path,
+    expected_revision: int,
+    seen: set[Path],
+) -> None:
+    """递归检查追加式制品链，防止伪造中间节点或 predecessor 环。"""
+
+    if path.is_symlink() or not path.is_file():
+        raise UpstreamMergeError(f"{key} revision predecessor 不是可信普通文件")
+    resolved = path.resolve(strict=False)
+    if resolved in seen:
+        raise UpstreamMergeError(f"{key} revision predecessor 存在循环")
+    seen.add(resolved)
+    actual_revision = revision_number(path, plan, key)
+    if actual_revision != expected_revision:
+        raise UpstreamMergeError(
+            f"{key} revision predecessor 编号不一致："
+            f"expected={expected_revision} actual={actual_revision}"
+        )
+    document = artifact_document(
+        path,
+        f"{key} revision predecessor",
+        REVISION_STAGE_SCHEMAS[key],
+        REVISION_STAGE_FIELDS[key],
+        optional_fields={"revision", "predecessor"}
+        | REVISION_STAGE_OPTIONAL_FIELDS[key],
+    )
+    has_revision = "revision" in document
+    has_predecessor = "predecessor" in document
+    if has_revision != has_predecessor:
+        raise UpstreamMergeError(f"{key} revision predecessor metadata 不成对")
+    if expected_revision == 1:
+        # 第 1 轮允许历史旧格式；若带 metadata，则仍需保证其值自洽。
+        if document.get("plan_id") != plan.plan_id or document.get("plan_identity_sha256") != plan.identity:
+            raise UpstreamMergeError(f"{key} 首轮制品身份不一致")
+        if not has_revision:
+            return
+        if has_revision:
+            value = document.get("revision")
+            if isinstance(value, bool) or value != 1 or document.get("predecessor") is not None:
+                raise UpstreamMergeError(f"{key} 首轮 predecessor metadata 非法")
+        return
+    if not has_revision:
+        raise UpstreamMergeError(f"{key} revision {expected_revision} 缺少 metadata")
+    if document.get("plan_id") != plan.plan_id or document.get("plan_identity_sha256") != plan.identity:
+        raise UpstreamMergeError(f"{key} revision predecessor 计划身份不一致")
+    value = document.get("revision")
+    if isinstance(value, bool) or value != expected_revision:
+        raise UpstreamMergeError(f"{key} revision predecessor 编号漂移")
+    previous = document.get("predecessor")
+    if previous is None:
+        raise UpstreamMergeError(f"{key} revision {expected_revision} 缺少 predecessor")
+    paths = stage_paths(plan, key)
+    index = next((item_index for item_index, item in enumerate(paths) if item == path), None)
+    if index is None or index == 0:
+        raise UpstreamMergeError(f"{key} revision predecessor 链断裂")
+    previous_path = paths[index - 1]
+    if artifact_binding(plan.evidence_root, previous_path) != previous:
+        raise UpstreamMergeError(f"{key} revision predecessor 绑定漂移")
+    _validate_revision_chain_node(plan, key, previous_path, expected_revision - 1, seen)
+
+
+def _revision_metadata(plan: LoadedPlan, key: str, revision: int) -> dict[str, Any]:
+    """生成不改变阶段语义的 revision 链接 metadata。"""
+
+    previous = stage_paths(plan, key)
+    predecessor = (
+        artifact_binding(plan.evidence_root, previous[-1]) if previous else None
+    )
+    return {"revision": revision, "predecessor": predecessor}
 
 
 def _validated_linked_worktree(plan: LoadedPlan, path: Path) -> Path:
@@ -241,6 +640,620 @@ def _temporary_detached_worktree(
     finally:
         if temporary_root.exists():
             shutil.rmtree(temporary_root)
+
+
+PREFLIGHT_SCHEMA = "official-egress-upstream-preflight/v1"
+
+
+def _preflight_check(
+    check_id: str,
+    argv: list[str],
+    cwd: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """执行一个只读预检命令并保留可比较的结果。"""
+
+    started = time.monotonic()
+    effective_env = env or {
+        **os.environ,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "GOPROXY": "off",
+        "GOSUMDB": "off",
+        "GOTOOLCHAIN": "local",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    completed = run_process(
+        argv,
+        cwd=cwd,
+        check=False,
+        env=effective_env,
+    )
+    return {
+        "id": check_id,
+        "argv": argv,
+        "cwd": str(cwd),
+        "exit_code": completed.returncode,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "stdout_sha256": sha256_bytes(completed.stdout.encode("utf-8")),
+        "stderr_sha256": sha256_bytes(completed.stderr.encode("utf-8")),
+        "stdout_tail": completed.stdout[-4000:],
+        "stderr_tail": completed.stderr[-4000:],
+        "status": "passed" if completed.returncode == 0 else "failed",
+    }
+
+
+def run_preflight(
+    request_path: Path,
+    repository_root: Path,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    """在创建正式 U-0 计划前执行离线合并预检。
+
+    预检不会写入主仓库、不会 fetch/push，也不会创建权威阶段制品。它只在临时
+    detached worktree 中试合并，并将冲突、发送面扫描和快速构建检查汇总为报告。
+    """
+
+    root = assert_git_repository(repository_root)
+    if output_path is not None:
+        if not output_path.is_absolute():
+            raise UpstreamMergeError("preflight 输出必须是绝对路径")
+        normalized_output = output_path.resolve(strict=False)
+        if normalized_output.is_relative_to(root):
+            raise UpstreamMergeError("preflight 报告不得写入主仓库内部")
+        if output_path.exists() or output_path.is_symlink():
+            raise UpstreamMergeError(f"preflight 报告输出已存在，禁止覆盖：{output_path}")
+    request = load_request(request_path)
+    checks: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    offline_env = {
+        **os.environ,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "GOPROXY": "off",
+        "GOSUMDB": "off",
+        "GOTOOLCHAIN": "local",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+    # 预检应尽早报告工作树问题，但不修改它；正式 plan-create 仍会再次严格校验。
+    status = run_git(
+        root,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+    ).stdout
+    if status:
+        blockers.append("主仓库工作树不是干净状态；正式 U-0 仍会拒绝")
+
+    managed_ref = request["repository"]["managed_ref"]
+    if current_branch_ref(root) != managed_ref:
+        blockers.append("当前分支不是请求指定的受维护分支")
+    fork_head = rev_parse(root, f"{managed_ref}^{{commit}}")
+    upstream = request["upstream"]
+    if remote_url(root, upstream["remote"]) != upstream["url"]:
+        blockers.append("本地 remote URL 与请求不一致")
+    if tag_commit(root, upstream["tag"]) != upstream["commit"]:
+        blockers.append("上游 tag 与请求 commit 不一致")
+    merge_base_value = merge_base(root, fork_head, upstream["commit"])
+
+    temporary_root = Path(tempfile.mkdtemp(prefix="sub2api-upstream-preflight-"))
+    worktree = temporary_root / "worktree"
+    scanner_snapshot: dict[str, Any] | None = None
+    conflict_paths: list[str] = []
+    merge_exit_code: int | None = None
+    try:
+        run_git(root, "worktree", "add", "--detach", str(worktree), fork_head)
+        completed = run_git(
+            worktree,
+            "-c",
+            "user.name=Sub2API Upstream Preflight",
+            "-c",
+            "user.email=upstream-preflight@sub2apiplus.invalid",
+            "-c",
+            "rerere.enabled=true",
+            "-c",
+            "rerere.autoupdate=false",
+            "merge",
+            "--no-ff",
+            "--no-commit",
+            upstream["commit"],
+            check=False,
+        )
+        merge_exit_code = completed.returncode
+        conflict_paths = sorted({entry["path"] for entry in unmerged_entries(worktree)})
+        if conflict_paths:
+            blockers.append(f"试合并存在 {len(conflict_paths)} 个冲突文件")
+            run_git(worktree, "merge", "--abort", check=False)
+        elif completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            blockers.append("试合并失败且没有可审计冲突：" + detail)
+        else:
+            # 临时提交只存在于 detached worktree，便于让 scanner/build 看到干净树。
+            run_git(
+                worktree,
+                "-c",
+                "user.name=Sub2API Upstream Preflight",
+                "-c",
+                "user.email=upstream-preflight@sub2apiplus.invalid",
+                "commit",
+                "--no-verify",
+                "-m",
+                f"preflight: Sub2API {upstream['tag']}",
+            )
+            merge_commit = rev_parse(worktree, "HEAD^{commit}")
+            merge_tree = commit_tree(worktree, merge_commit)
+            # scanner 失败必须成为预检阻断，不能把“未识别发送点”当作通过。
+            scanner_output = temporary_root / "source-to-sink.json"
+            try:
+                run_egress_snapshot(worktree, scanner_output, env=offline_env)
+                scanner_snapshot = expect_object(
+                    load_json(scanner_output, "preflight source-to-sink snapshot"),
+                    "preflight source-to-sink snapshot",
+                )
+                sink_count = scanner_snapshot.get("sink_count")
+                if isinstance(sink_count, bool) or not isinstance(sink_count, int) or sink_count < 0:
+                    raise UpstreamMergeError("egressscan 预检输出 sink_count 非法")
+                checks.append(
+                    {
+                        "id": "egressscan",
+                        "status": "passed",
+                        "source_commit": merge_commit,
+                        "source_tree": merge_tree,
+                        "sink_count": sink_count,
+                        "snapshot_sha256": sha256_file(scanner_output),
+                    }
+                )
+            except (OSError, UpstreamMergeError) as error:
+                checks.append({"id": "egressscan", "status": "failed", "error": str(error)})
+                blockers.append("egressscan 预检失败：" + str(error))
+
+            command_specs = [
+                ("go-build", ["go", "build", "./..."], worktree / "backend"),
+                ("go-vet", ["go", "vet", "./..."], worktree / "backend"),
+                (
+                    "official-egress-tests",
+                    ["go", "test", "./internal/officialegress/...", "-count=1"],
+                    worktree / "backend",
+                ),
+            ]
+            for check_id, argv, cwd in command_specs:
+                if not (cwd / "go.mod").is_file():
+                    checks.append(
+                        {
+                            "id": check_id,
+                            "argv": argv,
+                            "cwd": str(cwd),
+                            "status": "skipped",
+                            "reason": "预检 worktree 不含 backend/go.mod",
+                        }
+                    )
+                    blockers.append(f"{check_id} 预检无法执行：缺少 backend/go.mod")
+                    continue
+                result = _preflight_check(check_id, argv, cwd, env=offline_env)
+                checks.append(result)
+                if result["status"] != "passed":
+                    blockers.append(f"{check_id} 预检失败")
+    finally:
+        run_git(root, "worktree", "remove", "--force", str(worktree), check=False)
+        run_git(root, "worktree", "prune", check=False)
+        shutil.rmtree(temporary_root, ignore_errors=True)
+
+    result = _stage_document(
+        # preflight 没有 LoadedPlan，使用显式输入摘要构造独立 envelope。
+        # 该摘要不参与任何正式 U-0 身份绑定。
+        type("PreflightPlan", (), {"plan_id": request["plan_id"], "identity": sha256_bytes(canonical_bytes(request))})(),
+        PREFLIGHT_SCHEMA,
+        {
+            "request": file_binding(request_path.resolve(strict=True)),
+            "repository": {
+                "managed_ref": managed_ref,
+                "fork_head": fork_head,
+                "upstream_commit": upstream["commit"],
+                "merge_base": merge_base_value,
+            },
+            "merge_exit_code": merge_exit_code,
+            "conflict_paths": conflict_paths,
+            "checks": checks,
+            "scanner_snapshot": (
+                {
+                    "sink_count": scanner_snapshot.get("sink_count"),
+                    "snapshot_sha256": next(
+                        (
+                            item["snapshot_sha256"]
+                            for item in checks
+                            if item.get("id") == "egressscan" and item.get("status") == "passed"
+                        ),
+                        "",
+                    ),
+                }
+                if scanner_snapshot is not None
+                else None
+            ),
+            "blockers": sorted(set(blockers)),
+            "non_authoritative": True,
+            "result": "ready" if not blockers else "blocked",
+        },
+    )
+    if output_path is not None:
+        write_json_once(output_path, result)
+    return result
+
+
+def _git_blob_digest(repository_root: Path, commit: str, relative: str) -> str | None:
+    """读取提交中路径对象内容的 SHA-256；删除或不存在的路径返回 null。"""
+
+    object_result = run_git(
+        repository_root,
+        "rev-parse",
+        "--verify",
+        f"{commit}:{relative}",
+        check=False,
+    )
+    if object_result.returncode != 0:
+        return None
+    object_id = object_result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", object_id):
+        return None
+    object_type_result = run_git(
+        repository_root,
+        "cat-file",
+        "-t",
+        object_id,
+        check=False,
+    )
+    if object_type_result.returncode != 0:
+        return None
+    object_type = object_type_result.stdout.strip()
+    if object_type not in {"blob", "tree", "commit", "tag"}:
+        return None
+    content = subprocess.run(
+        ["git", "cat-file", object_type, object_id],
+        cwd=repository_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if content.returncode != 0:
+        return None
+    return sha256_bytes(content.stdout)
+
+
+def _validate_transition_node(
+    path: Path,
+    *,
+    expected_current: str | None = None,
+    _seen: set[Path] | None = None,
+) -> dict[str, Any]:
+    # 必须先检查原始路径，再做 resolve；否则符号链接会被解析成普通文件而绕过
+    # evidence 边界检查。
+    if path.is_symlink() or not path.is_file():
+        raise UpstreamMergeError("SourceTransition 必须是可信普通文件")
+    resolved_path = path.resolve(strict=True)
+    seen = _seen if _seen is not None else set()
+    if resolved_path in seen:
+        raise UpstreamMergeError("SourceTransition predecessor 存在循环")
+    seen.add(resolved_path)
+    document = expect_object(load_json(resolved_path, "SourceTransition"), "SourceTransition")
+    required = {
+        "schema_version",
+        "base_commit",
+        "current_commit",
+        "base_tree",
+        "current_tree",
+        "chain_sequence",
+        "predecessor_register",
+        "entries",
+        "entry_count",
+        "reason_policy",
+        "result",
+        "identity_sha256",
+    }
+    expect_exact_fields(document, required, "SourceTransition")
+    if document["schema_version"] != SOURCE_TRANSITION_SCHEMA:
+        raise UpstreamMergeError("SourceTransition schema_version 非法")
+    validate_identity(document, "SourceTransition")
+    expect_git_object(document["base_commit"], "SourceTransition.base_commit")
+    expect_git_object(document["current_commit"], "SourceTransition.current_commit")
+    expect_git_object(document["base_tree"], "SourceTransition.base_tree")
+    expect_git_object(document["current_tree"], "SourceTransition.current_tree")
+    sequence = document["chain_sequence"]
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+        raise UpstreamMergeError("SourceTransition.chain_sequence 非法")
+    if expected_current is not None and document["current_commit"] != expected_current:
+        raise UpstreamMergeError("SourceTransition 链尾前序提交不连续")
+    entries = document["entries"]
+    entry_count = document["entry_count"]
+    if (
+        isinstance(entry_count, bool)
+        or not isinstance(entry_count, int)
+        or entry_count <= 0
+        or not isinstance(entries, list)
+        or entry_count != len(entries)
+    ):
+        raise UpstreamMergeError("SourceTransition entries/entry_count 不一致")
+    paths: list[str] = []
+    for index, raw in enumerate(entries):
+        label = f"SourceTransition.entries[{index}]"
+        item = expect_object(raw, label)
+        expect_exact_fields(
+            item,
+            {
+                "path",
+                "old_path",
+                "status",
+                "predecessor_sha256",
+                "current_sha256",
+                "reason",
+            },
+            label,
+        )
+        relative = safe_relative_path(item["path"], f"{label}.path")
+        old_relative = item["old_path"]
+        if not isinstance(old_relative, str):
+            raise UpstreamMergeError(f"{label}.old_path 必须是字符串")
+        if old_relative:
+            old_relative = safe_relative_path(old_relative, f"{label}.old_path")
+        status = validate_string_enum(
+            item["status"], {"A", "M", "D", "R", "C", "T"}, f"{label}.status"
+        )
+        for field in ("predecessor_sha256", "current_sha256"):
+            value = item[field]
+            if value is not None:
+                expect_sha256(value, f"{label}.{field}")
+        if len(expect_string(item["reason"], f"{label}.reason")) < 12:
+            raise UpstreamMergeError(f"{label}.reason 必须说明变化来源")
+        predecessor_sha = item["predecessor_sha256"]
+        current_sha = item["current_sha256"]
+        if status == "A" and (predecessor_sha is not None or current_sha is None):
+            raise UpstreamMergeError(f"{label} 新增文件必须仅有 current_sha256")
+        if status == "D" and (predecessor_sha is None or current_sha is not None):
+            raise UpstreamMergeError(f"{label} 删除文件必须仅有 predecessor_sha256")
+        if status in {"M", "R", "C", "T"} and (
+            predecessor_sha is None or current_sha is None
+        ):
+            raise UpstreamMergeError(f"{label} {status} 必须同时有前后摘要")
+        if status in {"R", "C"} and not old_relative:
+            raise UpstreamMergeError(f"{label} 重命名/复制必须记录 old_path")
+        if status not in {"R", "C"} and old_relative:
+            raise UpstreamMergeError(f"{label} 非重命名条目不得记录 old_path")
+        paths.append(relative)
+    if paths != sorted(set(paths)):
+        raise UpstreamMergeError("SourceTransition entries 路径必须排序且不得重复")
+    predecessor = document["predecessor_register"]
+    if predecessor is not None:
+        validated_predecessor = validate_file_binding(
+            predecessor,
+            "SourceTransition.predecessor_register",
+        )
+        if sequence < 2:
+            raise UpstreamMergeError("SourceTransition 有 predecessor 时 chain_sequence 必须大于 1")
+        predecessor_path = Path(validated_predecessor["path"])
+        if str(predecessor_path) != str(predecessor_path.resolve(strict=True)):
+            raise UpstreamMergeError("SourceTransition predecessor 路径必须规范化")
+        if predecessor_path.is_symlink() or not predecessor_path.is_file():
+            raise UpstreamMergeError("SourceTransition predecessor 不是可信普通文件")
+        prior = _validate_transition_node(
+            predecessor_path,
+            expected_current=document["base_commit"],
+            _seen=seen,
+        )
+        if prior["chain_sequence"] + 1 != sequence:
+            raise UpstreamMergeError("SourceTransition chain_sequence 不连续")
+    elif sequence != 1:
+        raise UpstreamMergeError("SourceTransition 无 predecessor 时 chain_sequence 必须为 1")
+    expect_string(document["reason_policy"], "SourceTransition.reason_policy")
+    if document["result"] != "generated":
+        raise UpstreamMergeError("SourceTransition result 非法")
+    return document
+
+
+def _validate_transition_git_node(
+    repository_root: Path,
+    path: Path,
+    document: dict[str, Any],
+    seen: set[Path],
+) -> None:
+    """复算 transition 当前节点及全部 predecessor 节点的 Git 事实。"""
+
+    resolved = path.resolve(strict=True)
+    if resolved in seen:
+        raise UpstreamMergeError("SourceTransition predecessor 存在循环")
+    seen.add(resolved)
+    for commit, label in (
+        (document["base_commit"], "base_commit"),
+        (document["current_commit"], "current_commit"),
+    ):
+        if git_output(repository_root, "cat-file", "-t", commit) != "commit":
+            raise UpstreamMergeError(f"SourceTransition {label} 不是 commit")
+    if commit_tree(repository_root, document["base_commit"]) != document["base_tree"]:
+        raise UpstreamMergeError("SourceTransition base_tree 漂移")
+    if commit_tree(repository_root, document["current_commit"]) != document["current_tree"]:
+        raise UpstreamMergeError("SourceTransition current_tree 漂移")
+    ancestry = run_git(
+        repository_root,
+        "merge-base",
+        "--is-ancestor",
+        document["base_commit"],
+        document["current_commit"],
+        check=False,
+    )
+    if ancestry.returncode != 0:
+        raise UpstreamMergeError("SourceTransition current_commit 不是 base_commit 的后继")
+    expected_changes = changed_paths(
+        repository_root,
+        document["base_commit"],
+        document["current_commit"],
+    )
+    if not expected_changes:
+        raise UpstreamMergeError("SourceTransition 不得记录无文件变化的提交区间")
+    actual_changes = [
+        {
+            "status": item["status"],
+            "path": item["path"],
+            "old_path": item["old_path"],
+        }
+        for item in document["entries"]
+    ]
+    if actual_changes != expected_changes:
+        raise UpstreamMergeError("SourceTransition entries 未完整覆盖 Git 差异")
+    for item in document["entries"]:
+        predecessor_path = item["old_path"] or item["path"]
+        predecessor_sha = (
+            None
+            if item["status"] == "A"
+            else _git_blob_digest(
+                repository_root,
+                document["base_commit"],
+                predecessor_path,
+            )
+        )
+        current_sha = (
+            None
+            if item["status"] == "D"
+            else _git_blob_digest(
+                repository_root,
+                document["current_commit"],
+                item["path"],
+            )
+        )
+        if item["predecessor_sha256"] != predecessor_sha or item["current_sha256"] != current_sha:
+            raise UpstreamMergeError(f"SourceTransition 文件摘要漂移：{item['path']}")
+    predecessor_binding = document["predecessor_register"]
+    if predecessor_binding is not None:
+        predecessor_path = Path(predecessor_binding["path"])
+        if predecessor_path.is_symlink() or not predecessor_path.is_file():
+            raise UpstreamMergeError("SourceTransition predecessor 不是可信普通文件")
+        prior_path = predecessor_path.resolve(strict=True)
+        if file_binding(prior_path) != predecessor_binding:
+            raise UpstreamMergeError("SourceTransition predecessor 绑定内容或路径漂移")
+        prior_document = _validate_transition_node(
+            prior_path,
+            expected_current=document["base_commit"],
+        )
+        _validate_transition_git_node(repository_root, prior_path, prior_document, seen)
+
+
+def generate_source_transition(
+    repository_root: Path,
+    before_commit: str,
+    after_commit: str,
+    output_path: Path | None = None,
+    *,
+    predecessor_register: Path | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """从 Git 差异生成单一追加式 source-transition 链尾节点。"""
+
+    root = assert_git_repository(repository_root)
+    before = expect_git_object(before_commit, "source transition before commit")
+    after = expect_git_object(after_commit, "source transition after commit")
+    if before == after:
+        raise UpstreamMergeError("source-transition before/after 不得相同")
+    for commit, label in ((before, "before"), (after, "after")):
+        if git_output(root, "cat-file", "-t", commit) != "commit":
+            raise UpstreamMergeError(f"source-transition {label} 必须是 commit")
+    ancestry = run_git(
+        root,
+        "merge-base",
+        "--is-ancestor",
+        before,
+        after,
+        check=False,
+    )
+    if ancestry.returncode != 0:
+        raise UpstreamMergeError("source-transition after commit 必须是 before 的后继")
+    # 让 Git 自己确认两个对象存在，并固定提交树摘要。
+    base_tree = commit_tree(root, before)
+    current_tree = commit_tree(root, after)
+    entries: list[dict[str, Any]] = []
+    default_reason = reason or "由 Git 差异自动生成；高风险条目须在评审中补充具体影响。"
+    for change in changed_paths(root, before, after):
+        relative = change["path"]
+        old_relative = change.get("old_path") or relative
+        predecessor = (
+            None
+            if change["status"] == "A"
+            else _git_blob_digest(root, before, old_relative)
+        )
+        current = (
+            None
+            if change["status"] == "D"
+            else _git_blob_digest(root, after, relative)
+        )
+        entries.append(
+            {
+                "path": relative,
+                "old_path": change.get("old_path", ""),
+                "status": change["status"],
+                "predecessor_sha256": predecessor,
+                "current_sha256": current,
+                "reason": f"{default_reason} path={relative}",
+            }
+        )
+    entries.sort(key=lambda item: item["path"])
+    if not entries:
+        raise UpstreamMergeError("source-transition before/after 没有文件变化")
+    sequence = 1
+    predecessor_binding: dict[str, Any] | None = None
+    if predecessor_register is not None:
+        if not predecessor_register.is_absolute():
+            raise UpstreamMergeError("source-transition 前序登记表必须使用绝对路径")
+        if predecessor_register.is_symlink() or not predecessor_register.is_file():
+            raise UpstreamMergeError("source-transition 前序登记表必须是普通文件")
+        prior = predecessor_register.resolve(strict=True)
+        prior_document = _validate_transition_node(prior)
+        _validate_transition_git_node(root, prior, prior_document, set())
+        if prior_document["current_commit"] != before:
+            raise UpstreamMergeError("source-transition 前序登记表与 before commit 不连续")
+        sequence = prior_document["chain_sequence"] + 1
+        predecessor_binding = file_binding(prior)
+    document = bind_identity(
+        {
+            "schema_version": SOURCE_TRANSITION_SCHEMA,
+            "base_commit": before,
+            "current_commit": after,
+            "base_tree": base_tree,
+            "current_tree": current_tree,
+            "chain_sequence": sequence,
+            "predecessor_register": predecessor_binding,
+            "entries": entries,
+            "entry_count": len(entries),
+            "reason_policy": (
+                "每个路径由 Git 差异确定；predecessor/current 摘要不可手填。"
+                "reason 可统一提供，但官方 Persona、wire、selector 和共享控制面仍需人工补充。"
+            ),
+            "result": "generated",
+        }
+    )
+    if output_path is not None:
+        normalized_output = Path(os.path.normpath(str(output_path)))
+        if not output_path.is_absolute() or output_path != normalized_output:
+            raise UpstreamMergeError("source-transition 输出必须是规范绝对路径")
+        write_json_once(output_path, document)
+    return document
+
+
+def validate_source_transition(
+    repository_root: Path,
+    transition_path: Path,
+) -> dict[str, Any]:
+    """校验 transition 链尾并复算两端文件摘要。"""
+
+    root = assert_git_repository(repository_root)
+    if not transition_path.is_absolute():
+        raise UpstreamMergeError("SourceTransition 路径必须是绝对路径")
+    if transition_path.is_symlink() or not transition_path.is_file():
+        raise UpstreamMergeError("SourceTransition 必须是可信普通文件")
+    path = transition_path.resolve(strict=True)
+    document = _validate_transition_node(path)
+    _validate_transition_git_node(root, path, document, set())
+    return {
+        "result": "valid",
+        "path": str(path),
+        "chain_sequence": document["chain_sequence"],
+        "entry_count": document["entry_count"],
+        "current_commit": document["current_commit"],
+    }
 
 
 def _write_log(plan: LoadedPlan, relative: str, raw: str) -> dict[str, Any]:
@@ -583,26 +1596,41 @@ def _load_source_change_input(
     plan: LoadedPlan,
     merge_commit: str,
     expected_paths: list[str],
+    *,
+    base_source_commit: str | None = None,
 ) -> dict[str, Any]:
     document = expect_object(load_json(path, "SourceChangeInput"), "SourceChangeInput")
-    expect_exact_fields(
-        document,
-        {
-            "schema_version",
-            "plan_id",
-            "plan_identity_sha256",
-            "merge_commit",
-            "entries",
-            "identity_sha256",
-        },
-        "SourceChangeInput",
-    )
+    expected_fields = {
+        "schema_version",
+        "plan_id",
+        "plan_identity_sha256",
+        "merge_commit",
+        "entries",
+        "identity_sha256",
+    }
+    optional_fields = {"base_source_commit", "revision"}
+    actual_fields = set(document)
+    if actual_fields - (expected_fields | optional_fields) or expected_fields - actual_fields:
+        raise UpstreamMergeError(
+            "SourceChangeInput 字段不闭合："
+            f"缺失={sorted(expected_fields - actual_fields)}，"
+            f"多余={sorted(actual_fields - expected_fields)}"
+        )
     if document.get("schema_version") != SOURCE_CHANGE_INPUT_SCHEMA:
         raise UpstreamMergeError("SourceChangeInput schema_version 非法")
     if document.get("plan_id") != plan.plan_id or document.get("plan_identity_sha256") != plan.identity:
         raise UpstreamMergeError("SourceChangeInput 计划身份不一致")
     if document.get("merge_commit") != merge_commit:
         raise UpstreamMergeError("SourceChangeInput merge_commit 不一致")
+    declared_base = document.get("base_source_commit")
+    if declared_base is not None:
+        expect_git_object(declared_base, "SourceChangeInput.base_source_commit")
+    if base_source_commit is not None:
+        if declared_base is not None and declared_base != base_source_commit:
+            raise UpstreamMergeError("SourceChangeInput base_source_commit 不一致")
+        if declared_base is None:
+            # 旧格式仍可用于首轮之后的修复，但调用方必须在收据中记录实际父提交。
+            pass
     validate_identity(document, "SourceChangeInput")
     entries = document.get("entries")
     if not isinstance(entries, list) or not entries:
@@ -651,28 +1679,58 @@ def seal_source_candidate(
     plan: LoadedPlan,
     source_change_input: Path | None,
 ) -> dict[str, Any]:
-    """生成 overlay，并将所有额外源码处置作为一个可审阅 source candidate 封存。"""
+    """生成 overlay，并以追加式 revision 封存 source candidate。
+
+    首轮从 U-1 merge commit 开始；后续轮次允许从当前最新 SourceCandidate
+    继续提交修复。每一轮都生成独立不可变制品，不覆盖历史文件。
+    """
 
     merge_candidate = _load_merge_candidate(plan)
     worktree = _worktree_root(plan)
-    if rev_parse(worktree, "HEAD^{commit}") != merge_candidate["merge_commit"]:
-        raise UpstreamMergeError("source seal 前 HEAD 不是 U-1 merge commit")
-    overlay_path = _generate_overlay(plan, worktree)
+    current_head = rev_parse(worktree, "HEAD^{commit}")
+    previous_paths = stage_paths(plan, "source_candidate")
+    previous_source = _load_source_candidate(plan) if previous_paths else None
+    if previous_source is None:
+        if current_head != merge_candidate["merge_commit"]:
+            raise UpstreamMergeError("首轮 source seal 前 HEAD 不是 U-1 merge commit")
+        revision, output_path = next_stage_path(plan, "source_candidate", revision=1)
+        overlay_path = _generate_overlay(plan, worktree)
+        overlay_relative = overlay_path.relative_to(worktree).as_posix()
+        expected_overlay_paths = {overlay_relative}
+        base_source_commit = merge_candidate["merge_commit"]
+    else:
+        if current_head != previous_source["source_commit"]:
+            raise UpstreamMergeError(
+                "后续 source revision 必须从当前最新 SourceCandidate HEAD 开始"
+            )
+        revision, output_path = next_stage_path(plan, "source_candidate")
+        overlay_relative = str(previous_source["codex_overlay_ledger"]["path"])
+        overlay_path = worktree / PurePosixPath(overlay_relative)
+        if overlay_path.is_symlink() or not overlay_path.is_file():
+            raise UpstreamMergeError("历史 Codex overlay 在后续 revision 中不可复用")
+        if sha256_file(overlay_path) != previous_source["codex_overlay_ledger"]["sha256"]:
+            raise UpstreamMergeError("历史 Codex overlay 内容漂移，禁止继续 revision")
+        expected_overlay_paths = set()
+        base_source_commit = previous_source["source_commit"]
     paths = status_paths(worktree)
-    overlay_relative = overlay_path.relative_to(worktree).as_posix()
-    if overlay_relative not in paths:
-        raise UpstreamMergeError("Codex overlay 未进入 source candidate 变化闭集")
-    if paths == [overlay_relative] and source_change_input is None:
+    if previous_source is None and overlay_relative not in paths:
+        raise UpstreamMergeError("Codex overlay 未进入首轮 source candidate 变化闭集")
+    if previous_source is not None and overlay_relative in paths:
+        raise UpstreamMergeError("后续 revision 不得修改已封存 Codex overlay")
+    additional_paths = [relative for relative in paths if relative not in expected_overlay_paths]
+    if not paths:
+        raise UpstreamMergeError("当前 SourceCandidate 没有新的源码修复")
+    if previous_source is None and paths == [overlay_relative] and source_change_input is None:
         change_input_binding = None
     else:
-        additional_paths = [relative for relative in paths if relative != overlay_relative]
         if source_change_input is None:
-            raise UpstreamMergeError("除自动 overlay 外存在额外变化，必须提供 SourceChangeInput")
+            raise UpstreamMergeError("源码修复必须提供 SourceChangeInput")
         _load_source_change_input(
             source_change_input,
             plan,
             merge_candidate["merge_commit"],
             additional_paths,
+            base_source_commit=base_source_commit,
         )
         change_input_binding = file_binding(source_change_input.resolve(strict=True))
     run_git(worktree, "add", "--all", "--", *paths)
@@ -687,7 +1745,7 @@ def seal_source_candidate(
         "commit",
         "--no-verify",
         "-m",
-        f"chore: seal Sub2API {plan.document['upstream']['tag']} overlay",
+        f"chore: seal Sub2API {plan.document['upstream']['tag']} source revision {revision:03d}",
     )
     source_commit = rev_parse(worktree, "HEAD^{commit}")
     source_tree = commit_tree(worktree, source_commit)
@@ -696,6 +1754,7 @@ def seal_source_candidate(
         plan,
         SOURCE_CANDIDATE_SCHEMA,
         {
+            **_revision_metadata(plan, "source_candidate", revision),
             "merge_candidate": stage_binding(plan, "merge_candidate"),
             "source_commit": source_commit,
             "source_tree": source_tree,
@@ -708,7 +1767,7 @@ def seal_source_candidate(
             },
         },
     )
-    write_json_once(plan.output_path("source_candidate"), document)
+    write_json_once(output_path, document)
     return document
 
 
@@ -828,13 +1887,55 @@ def scan_surfaces(plan: LoadedPlan) -> dict[str, Any]:
     if rev_parse(worktree, "HEAD^{commit}") != source["source_commit"]:
         raise UpstreamMergeError("surface scan 的 HEAD 与 SourceCandidate 不一致")
     assert_clean(worktree, "U-2 surface scan")
-    route_path = plan.output_path("surface_route_snapshot")
-    write_json_once(
-        route_path,
-        route_snapshot(worktree, source["source_commit"], source["source_tree"]),
+    source_revision = source.get("revision", latest_revision(plan, "source_candidate"))
+    if isinstance(source_revision, bool) or not isinstance(source_revision, int) or source_revision < 1:
+        raise UpstreamMergeError("SourceCandidate revision 非法")
+    _, route_path = next_stage_path(
+        plan,
+        "surface_route_snapshot",
+        revision=source_revision,
     )
-    egress_path = plan.output_path("surface_egress_snapshot")
-    run_egress_snapshot(worktree, egress_path)
+    _, egress_path = next_stage_path(
+        plan,
+        "surface_egress_snapshot",
+        revision=source_revision,
+    )
+
+    # 两个扫描都成功且差异已计算前，只写入 evidence root 下的临时目录；这样
+    # egressscan 失败时不会留下半成品 route snapshot，后续可直接重试同一轮。
+    with tempfile.TemporaryDirectory(
+        prefix="surface-scan-",
+        dir=plan.evidence_root,
+    ) as temporary:
+        temporary_root = Path(temporary)
+        temporary_route = temporary_root / "route-snapshot.json"
+        temporary_egress = temporary_root / "source-to-sink-snapshot.json"
+        candidate_route = route_snapshot(
+            worktree,
+            source["source_commit"],
+            source["source_tree"],
+        )
+        write_json_once(temporary_route, candidate_route)
+        run_egress_snapshot(worktree, temporary_egress)
+        candidate_egress = load_json(
+            temporary_egress,
+            "U-2 source-to-sink snapshot",
+        )
+
+        def pending_binding(final_path: Path, temporary_path: Path) -> dict[str, Any]:
+            resolved_root = plan.evidence_root.resolve(strict=True)
+            resolved_final = final_path.resolve(strict=False)
+            if not resolved_final.is_relative_to(resolved_root):
+                raise UpstreamMergeError("U-2 扫描制品越过 evidence root")
+            temporary_binding = artifact_binding(plan.evidence_root, temporary_path)
+            return {
+                "path": resolved_final.relative_to(resolved_root).as_posix(),
+                "sha256": temporary_binding["sha256"],
+                "bytes": temporary_binding["bytes"],
+            }
+
+        route_binding = pending_binding(route_path, temporary_route)
+        egress_binding = pending_binding(egress_path, temporary_egress)
 
     baseline_route_binding = plan.document["discovery_baseline"]["route_snapshot"]
     baseline_egress_binding = plan.document["discovery_baseline"]["source_to_sink_snapshot"]
@@ -846,8 +1947,6 @@ def scan_surfaces(plan: LoadedPlan) -> dict[str, Any]:
         resolve_within(plan.evidence_root, baseline_egress_binding["path"], "baseline egress"),
         "U-0 source-to-sink snapshot",
     )
-    candidate_route = load_json(route_path, "U-2 route snapshot")
-    candidate_egress = load_json(egress_path, "U-2 source-to-sink snapshot")
     if (
         candidate_route.get("source_commit") != source["source_commit"]
         or candidate_route.get("source_tree") != source["source_tree"]
@@ -869,23 +1968,33 @@ def scan_surfaces(plan: LoadedPlan) -> dict[str, Any]:
         plan,
         SURFACE_DELTA_SCHEMA,
         {
+            **_revision_metadata(plan, "surface_delta", source_revision),
             "source_candidate": stage_binding(plan, "source_candidate"),
             "baseline_route_snapshot": baseline_route_binding,
-            "candidate_route_snapshot": artifact_binding(plan.evidence_root, route_path),
+            "candidate_route_snapshot": route_binding,
             "baseline_source_to_sink_snapshot": baseline_egress_binding,
-            "candidate_source_to_sink_snapshot": artifact_binding(plan.evidence_root, egress_path),
+            "candidate_source_to_sink_snapshot": egress_binding,
             "route_delta_count": len(route_deltas),
             "egress_delta_count": len(egress_deltas),
             "deltas": sorted(route_deltas + egress_deltas, key=lambda item: item["delta_id"]),
         },
     )
-    write_json_once(plan.output_path("surface_delta"), document)
+    _, delta_path = next_stage_path(
+        plan,
+        "surface_delta",
+        revision=source_revision,
+    )
+    # 仅在所有输入通过校验后落盘不可变扫描证据。
+    write_json_once(route_path, candidate_route)
+    write_json_once(egress_path, candidate_egress)
+    write_json_once(delta_path, document)
     return document
 
 
 def _load_surface_delta(plan: LoadedPlan) -> dict[str, Any]:
-    return artifact_document(
-        plan.output_path("surface_delta"),
+    document = _load_revision_artifact(
+        plan,
+        "surface_delta",
         "SurfaceDelta",
         SURFACE_DELTA_SCHEMA,
         {
@@ -901,6 +2010,27 @@ def _load_surface_delta(plan: LoadedPlan) -> dict[str, Any]:
             "deltas",
         },
     )
+    revision = document.get("revision")
+    if isinstance(revision, int) and not isinstance(revision, bool):
+        _validate_current_stage_binding(
+            plan,
+            document["source_candidate"],
+            "source_candidate",
+            "SurfaceDelta.source_candidate",
+        )
+        for field, key in (
+            ("candidate_route_snapshot", "surface_route_snapshot"),
+            ("candidate_source_to_sink_snapshot", "surface_egress_snapshot"),
+        ):
+            binding = validate_artifact_binding(
+                plan.evidence_root,
+                document[field],
+                f"SurfaceDelta.{field}",
+            )
+            path = resolve_within(plan.evidence_root, binding["path"], f"SurfaceDelta.{field}.path")
+            if revision_number(path, plan, key) != revision:
+                raise UpstreamMergeError(f"SurfaceDelta {field} 未绑定当前 revision")
+    return document
 
 
 def carry_forward_inventory(plan: LoadedPlan, client: str, kind: str) -> dict[str, Any]:
@@ -921,8 +2051,27 @@ def carry_forward_inventory(plan: LoadedPlan, client: str, kind: str) -> dict[st
         )
     field = "production_ingress_inventory" if kind == "ingress" else "egress_disposition_inventory"
     baseline = plan.document["baselines"][field][client]
-    source_path = Path(baseline["path"])
-    output = plan.inventory_output(client, kind)
+    validated_baseline = validate_file_binding(
+        baseline,
+        f"baselines.{field}.{client}",
+    )
+    source_path = Path(validated_baseline["path"])
+    source_revision = latest_revision(plan, "source_candidate")
+    if source_revision > 1:
+        output = next_inventory_path(
+            plan,
+            client,
+            kind,
+            revision=source_revision,
+        )
+    else:
+        output = resolve_within(
+            plan.evidence_root,
+            plan.document["outputs"]["candidate_inventories"][client][kind],
+            f"outputs.candidate_inventories.{client}.{kind}",
+        )
+        if output.exists() or output.is_symlink():
+            raise UpstreamMergeError(f"候选 Inventory 输出已存在，禁止覆盖：{output}")
     write_once(output, source_path.read_bytes())
     payload = _validate_inventory_payload(
         output,
@@ -971,7 +2120,8 @@ def _load_surface_decisions(
         document.get("plan_id") != plan.plan_id
         or document.get("plan_identity_sha256") != plan.identity
         or document.get("source_tree") != source["source_tree"]
-        or document.get("surface_delta_sha256") != sha256_file(plan.output_path("surface_delta"))
+        or document.get("surface_delta_sha256")
+        != sha256_file(latest_stage_path(plan, "surface_delta"))
     ):
         raise UpstreamMergeError("SurfaceDecision 身份或 SurfaceDelta 绑定不一致")
     validate_identity(document, "SurfaceDecision")
@@ -1008,6 +2158,10 @@ def _load_surface_decisions(
         disposition = validate_string_enum(
             item.get("disposition"), allowed, f"{label}.disposition"
         )
+        if target["surface"] == "egress" and target["oauth_related"] and not target["clients"]:
+            raise UpstreamMergeError(
+                f"{label} 发现无法归属 Persona 的 OAuth 发送点，必须先补充扫描器/人工身份映射"
+            )
         if target["oauth_related"] and target["change"] == "added" and disposition == "out_of_scope":
             raise UpstreamMergeError("新增 OAuth 发送点不得声明为范围外透传")
         rationale = expect_string(item.get("rationale"), f"{label}.rationale")
@@ -1042,13 +2196,25 @@ def seal_surfaces(plan: LoadedPlan, decisions_path: Path | None) -> dict[str, An
     """验证两个 Persona 的入口/出站 Inventory，并封存 U-2 闭集。"""
 
     delta = _load_surface_delta(plan)
+    source_revision = latest_revision(plan, "source_candidate")
     inventories: dict[str, dict[str, dict[str, Any]]] = {}
     inventory_bindings: dict[str, dict[str, Any]] = {}
     for client in CLIENT_KEYS:
         inventories[client] = {}
         inventory_bindings[client] = {}
         for kind in ("ingress", "egress"):
-            path = plan.inventory_output(client, kind)
+            if source_revision == 1:
+                path = resolve_within(
+                    plan.evidence_root,
+                    plan.document["outputs"]["candidate_inventories"][client][kind],
+                    f"outputs.candidate_inventories.{client}.{kind}",
+                )
+            else:
+                path = plan.inventory_output(client, kind)
+                if inventory_revision_number(plan, client, kind, path) != source_revision:
+                    raise UpstreamMergeError(
+                        f"{client}/{kind} Inventory 未绑定当前 SourceCandidate revision"
+                    )
             payload = _validate_inventory_payload(
                 path,
                 kind,
@@ -1070,6 +2236,7 @@ def seal_surfaces(plan: LoadedPlan, decisions_path: Path | None) -> dict[str, An
         plan,
         SURFACE_RECEIPT_SCHEMA,
         {
+            **_revision_metadata(plan, "surface_receipt", source_revision),
             "source_candidate": stage_binding(plan, "source_candidate"),
             "surface_delta": stage_binding(plan, "surface_delta"),
             "route_snapshot": stage_binding(plan, "surface_route_snapshot"),
@@ -1081,13 +2248,19 @@ def seal_surfaces(plan: LoadedPlan, decisions_path: Path | None) -> dict[str, An
             "result": "closed",
         },
     )
-    write_json_once(plan.output_path("surface_receipt"), document)
+    _, receipt_path = next_stage_path(
+        plan,
+        "surface_receipt",
+        revision=source_revision,
+    )
+    write_json_once(receipt_path, document)
     return document
 
 
 def _load_surface_receipt(plan: LoadedPlan) -> dict[str, Any]:
-    return artifact_document(
-        plan.output_path("surface_receipt"),
+    document = _load_revision_artifact(
+        plan,
+        "surface_receipt",
         "SurfaceRecalculationReceipt",
         SURFACE_RECEIPT_SCHEMA,
         {
@@ -1104,6 +2277,51 @@ def _load_surface_receipt(plan: LoadedPlan) -> dict[str, Any]:
             "result",
         },
     )
+    revision = document.get("revision")
+    if isinstance(revision, int) and not isinstance(revision, bool):
+        _validate_current_stage_binding(
+            plan,
+            document["source_candidate"],
+            "source_candidate",
+            "SurfaceReceipt.source_candidate",
+        )
+        _validate_current_stage_binding(
+            plan,
+            document["surface_delta"],
+            "surface_delta",
+            "SurfaceReceipt.surface_delta",
+        )
+        for field, key in (
+            ("route_snapshot", "surface_route_snapshot"),
+            ("source_to_sink_snapshot", "surface_egress_snapshot"),
+        ):
+            binding = validate_artifact_binding(
+                plan.evidence_root,
+                document[field],
+                f"SurfaceReceipt.{field}",
+            )
+            path = resolve_within(plan.evidence_root, binding["path"], f"SurfaceReceipt.{field}.path")
+            if revision_number(path, plan, key) != revision:
+                raise UpstreamMergeError(f"SurfaceReceipt {field} 未绑定当前 revision")
+        inventories = expect_object(document["candidate_inventories"], "SurfaceReceipt.candidate_inventories")
+        for client in CLIENT_KEYS:
+            pair = expect_object(inventories.get(client), f"SurfaceReceipt.candidate_inventories.{client}")
+            for kind in ("ingress", "egress"):
+                binding = validate_artifact_binding(
+                    plan.evidence_root,
+                    pair.get(kind),
+                    f"SurfaceReceipt.candidate_inventories.{client}.{kind}",
+                )
+                path = resolve_within(
+                    plan.evidence_root,
+                    binding["path"],
+                    f"SurfaceReceipt.candidate_inventories.{client}.{kind}.path",
+                )
+                if inventory_revision_number(plan, client, kind, path) != revision:
+                    raise UpstreamMergeError(
+                        f"SurfaceReceipt {client}/{kind} Inventory 未绑定当前 revision"
+                    )
+    return document
 
 
 def _diff_risk_hints(worktree: Path, before: str, after: str, relative: str) -> list[str]:
@@ -1158,6 +2376,155 @@ def _suggest_categories(relative: str, risk_hints: list[str]) -> list[str]:
     return sorted(categories)
 
 
+def _component_for_path(relative: str) -> dict[str, Any] | None:
+    """按最长前缀解析组件；未命中时保持未知而不是猜测。"""
+
+    matches: list[tuple[int, dict[str, Any]]] = []
+    for component in COMPONENT_OWNERSHIP_MANIFEST["components"]:
+        for prefix in component["prefixes"]:
+            if relative == prefix or relative.startswith(prefix):
+                matches.append((len(prefix), component))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (-item[0], item[1]["id"]))
+    return matches[0][1]
+
+
+def _component_ownership(relative: str, old_relative: str = "") -> dict[str, Any]:
+    paths = [relative]
+    if old_relative:
+        paths.append(old_relative)
+    components = [item for item in (_component_for_path(path) for path in paths) if item]
+    component_ids = sorted({item["id"] for item in components})
+    owner_ids = sorted({item["owner"] for item in components})
+    dependency_ids = sorted(
+        {
+            dependency
+            for item in components
+            for dependency in item["dependencies"]
+        }
+    )
+    known_components = {
+        item["id"] for item in COMPONENT_OWNERSHIP_MANIFEST["components"]
+    }
+    unknown_dependencies = sorted(
+        set(dependency_ids) - (known_components | KNOWN_ABSTRACT_DEPENDENCIES)
+    )
+    known = bool(components) and not unknown_dependencies and len(components) == len(paths)
+    risks = sorted({item["risk"] for item in components})
+    categories = sorted(
+        {
+            category
+            for item in components
+            for category in item["categories"]
+        }
+    )
+    return {
+        "mapping_schema": COMPONENT_OWNERSHIP_SCHEMA,
+        "mapping_version": COMPONENT_OWNERSHIP_VERSION,
+        "mapping_sha256": COMPONENT_OWNERSHIP_SHA256,
+        "status": "known" if known else "unknown",
+        "component_ids": component_ids,
+        "owner_ids": owner_ids,
+        "dependency_ids": dependency_ids,
+        "unknown_dependency_ids": unknown_dependencies,
+        "risk_levels": risks,
+        "suggested_categories": categories,
+    }
+
+
+def _auto_classification(entry: dict[str, Any]) -> dict[str, Any]:
+    ownership = entry["component_ownership"]
+    hints = set(entry.get("risk_hints", []))
+    categories = set(entry.get("suggested_categories", []))
+    eligible = (
+        ownership["status"] == "known"
+        and not ownership["unknown_dependency_ids"]
+        and categories
+        and categories <= AUTO_CLASSIFICATION_CATEGORIES
+        and not (hints & AUTO_CLASSIFICATION_BLOCKERS)
+        and "high" not in ownership["risk_levels"]
+    )
+    reason = (
+        "组件映射、依赖关系和差异提示均为低风险；未命中 wire、selector、"
+        "Persona、共享控制面或 Key/Group/路由/计费风险。"
+        if eligible
+        else "必须人工确认组件所有权、依赖关系或行为风险；工具不得自动放行。"
+    )
+    return {
+        "eligible": eligible,
+        "decision_source": "auto" if eligible else "manual_required",
+        "reason": reason,
+    }
+
+
+def _suggested_change_decision_item(entry: dict[str, Any]) -> dict[str, Any]:
+    auto = _auto_classification(entry)
+    categories = entry["suggested_categories"]
+    if auto["eligible"]:
+        rationale = (
+            f"自动分类（映射 {COMPONENT_OWNERSHIP_VERSION}/{COMPONENT_OWNERSHIP_SHA256[:12]}）："
+            "低风险仓库支撑文件，未发现官方 Persona 或共享合同影响。"
+        )
+        actions = ["保留现有官方客户端合同", "运行公共终态门禁"]
+    else:
+        rationale = "待人工审查：" + auto["reason"]
+        actions = ["人工确认组件所有权与直接依赖", "人工确认是否触及官方客户端或共享合同"]
+    return {
+        "path": entry["path"],
+        "categories": categories,
+        "rationale": rationale,
+        "required_actions": sorted(set(actions)),
+        "official_client_identity_changed": False,
+        "evidence_semantics_changed": False,
+        "decision_source": auto["decision_source"],
+        "component_ownership": entry["component_ownership"],
+        "auto_reason": auto["reason"],
+    }
+
+
+def generate_change_decision_suggestion(
+    plan: LoadedPlan,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    """生成带安全分级的 ChangeDecision 草稿；高风险条目保持待人工状态。"""
+
+    matrix = _load_impact_matrix(plan)
+    files = [_suggested_change_decision_item(entry) for entry in matrix["file_changes"]]
+    surface_deltas = [
+        {
+            "delta_id": item["delta_id"],
+            "rationale": "待人工确认发送面变化、Inventory 映射及 OAuth 处置。",
+            "required_actions": ["人工确认发送面处置", "完成受影响 Persona 门禁"],
+            "decision_source": "manual_required",
+        }
+        for item in matrix["surface_deltas"]
+    ]
+    unresolved = [item["path"] for item in files if item["decision_source"] != "auto"]
+    document = _stage_document(
+        plan,
+        CHANGE_DECISION_INPUT_SCHEMA,
+        {
+            "source_tree": _load_source_candidate(plan)["source_tree"],
+            "impact_matrix_sha256": sha256_file(latest_stage_path(plan, "impact_matrix")),
+            "files": files,
+            "surface_deltas": surface_deltas,
+            "mapping_schema": COMPONENT_OWNERSHIP_SCHEMA,
+            "mapping_version": COMPONENT_OWNERSHIP_VERSION,
+            "mapping_sha256": COMPONENT_OWNERSHIP_SHA256,
+            "auto_accepted_count": len(files) - len(unresolved),
+            "manual_required_count": len(unresolved) + len(surface_deltas),
+            "unresolved_paths": sorted(unresolved),
+            "result": "ready_for_review" if unresolved or surface_deltas else "ready_to_seal",
+        },
+    )
+    if output_path is not None:
+        if not output_path.is_absolute():
+            raise UpstreamMergeError("ChangeDecision 草稿输出必须是绝对路径")
+        write_json_once(output_path, document)
+    return document
+
+
 def generate_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
     """生成逐文件和逐发送面差异分母；最终分类必须由独立 ChangeDecision 完成。"""
 
@@ -1165,6 +2532,9 @@ def generate_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
     if surface_receipt["result"] != "closed":
         raise UpstreamMergeError("U-2 SurfaceRecalculationReceipt 未闭合")
     source = _load_source_candidate(plan)
+    source_revision = source.get("revision", latest_revision(plan, "source_candidate"))
+    if isinstance(source_revision, bool) or not isinstance(source_revision, int) or source_revision < 1:
+        raise UpstreamMergeError("SourceCandidate revision 非法")
     worktree = _worktree_root(plan)
     if rev_parse(worktree, "HEAD^{commit}") != source["source_commit"]:
         raise UpstreamMergeError("impact matrix 的 HEAD 与 SourceCandidate 不一致")
@@ -1173,6 +2543,11 @@ def generate_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
     for change in changed_paths(worktree, plan.fork_head, source["source_commit"]):
         relative = change["path"]
         hints = _diff_risk_hints(worktree, plan.fork_head, source["source_commit"], relative)
+        ownership = _component_ownership(relative, change.get("old_path", ""))
+        suggested_categories = sorted(
+            set(_suggest_categories(relative, hints))
+            | set(ownership.get("suggested_categories", []))
+        )
         entries.append(
             {
                 **change,
@@ -1188,7 +2563,16 @@ def generate_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
                     ).stdout.encode("utf-8")
                 ),
                 "risk_hints": hints,
-                "suggested_categories": _suggest_categories(relative, hints),
+                "suggested_categories": suggested_categories,
+                "component_ownership": ownership,
+                "auto_classification": _auto_classification(
+                    {
+                        "path": relative,
+                        "risk_hints": hints,
+                        "suggested_categories": suggested_categories,
+                        "component_ownership": ownership,
+                    }
+                ),
                 "classification_status": "pending_human_decision",
             }
         )
@@ -1199,26 +2583,38 @@ def generate_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
         plan,
         IMPACT_MATRIX_SCHEMA,
         {
+            **_revision_metadata(plan, "impact_matrix", source_revision),
             "source_candidate": stage_binding(plan, "source_candidate"),
             "surface_receipt": stage_binding(plan, "surface_receipt"),
             "file_change_count": len(entries),
             "file_changes": entries,
             "surface_delta_count": len(delta["deltas"]),
             "surface_deltas": delta["deltas"],
+            "component_mapping": {
+                "schema": COMPONENT_OWNERSHIP_SCHEMA,
+                "version": COMPONENT_OWNERSHIP_VERSION,
+                "sha256": COMPONENT_OWNERSHIP_SHA256,
+            },
             "classification_rule": (
-                "路径与差异关键字只生成风险提示；每个文件和发送面 delta 必须由 ChangeDecision "
-                "显式分类，不能按目录名自动缩小范围"
+                "组件所有权和依赖映射只允许低风险条目自动建议；未知路径、未知依赖、"
+                "Persona、wire、selector、共享控制面及 Key/Group/路由/计费风险必须人工分类"
             ),
             "result": "pending_change_decision",
         },
     )
-    write_json_once(plan.output_path("impact_matrix"), document)
+    _, matrix_path = next_stage_path(
+        plan,
+        "impact_matrix",
+        revision=source_revision,
+    )
+    write_json_once(matrix_path, document)
     return document
 
 
 def _load_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
-    return artifact_document(
-        plan.output_path("impact_matrix"),
+    document = _load_revision_artifact(
+        plan,
+        "impact_matrix",
         "ImpactMatrix",
         IMPACT_MATRIX_SCHEMA,
         {
@@ -1233,7 +2629,23 @@ def _load_impact_matrix(plan: LoadedPlan) -> dict[str, Any]:
             "classification_rule",
             "result",
         },
+        optional_fields={"component_mapping"},
     )
+    revision = document.get("revision")
+    if isinstance(revision, int) and not isinstance(revision, bool):
+        _validate_current_stage_binding(
+            plan,
+            document["source_candidate"],
+            "source_candidate",
+            "ImpactMatrix.source_candidate",
+        )
+        _validate_current_stage_binding(
+            plan,
+            document["surface_receipt"],
+            "surface_receipt",
+            "ImpactMatrix.surface_receipt",
+        )
+    return document
 
 
 def _apply_client_impact(
@@ -1262,31 +2674,52 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
 
     matrix = _load_impact_matrix(plan)
     source = _load_source_candidate(plan)
+    source_revision = source.get("revision", latest_revision(plan, "source_candidate"))
+    if isinstance(source_revision, bool) or not isinstance(source_revision, int) or source_revision < 1:
+        raise UpstreamMergeError("SourceCandidate revision 非法")
     decision = expect_object(load_json(decision_path, "ChangeDecision"), "ChangeDecision")
-    expect_exact_fields(
-        decision,
-        {
-            "schema_version",
-            "plan_id",
-            "plan_identity_sha256",
-            "source_tree",
-            "impact_matrix_sha256",
-            "files",
-            "surface_deltas",
-            "identity_sha256",
-        },
-        "ChangeDecision",
-    )
+    required_decision_fields = {
+        "schema_version",
+        "plan_id",
+        "plan_identity_sha256",
+        "source_tree",
+        "impact_matrix_sha256",
+        "files",
+        "surface_deltas",
+        "identity_sha256",
+    }
+    optional_decision_fields = {
+        "mapping_schema",
+        "mapping_version",
+        "mapping_sha256",
+        "auto_accepted_count",
+        "manual_required_count",
+        "unresolved_paths",
+        "result",
+    }
+    if set(decision) - (required_decision_fields | optional_decision_fields) or required_decision_fields - set(decision):
+        raise UpstreamMergeError(
+            "ChangeDecision 字段不闭合："
+            f"缺失={sorted(required_decision_fields - set(decision))}，"
+            f"多余={sorted(set(decision) - required_decision_fields - optional_decision_fields)}"
+        )
     if decision.get("schema_version") != CHANGE_DECISION_INPUT_SCHEMA:
         raise UpstreamMergeError("ChangeDecision schema_version 非法")
     if (
         decision.get("plan_id") != plan.plan_id
         or decision.get("plan_identity_sha256") != plan.identity
         or decision.get("source_tree") != source["source_tree"]
-        or decision.get("impact_matrix_sha256") != sha256_file(plan.output_path("impact_matrix"))
+        or decision.get("impact_matrix_sha256")
+        != sha256_file(latest_stage_path(plan, "impact_matrix"))
     ):
         raise UpstreamMergeError("ChangeDecision 身份或 ImpactMatrix 绑定不一致")
     validate_identity(decision, "ChangeDecision")
+    if "mapping_schema" in decision and decision["mapping_schema"] != COMPONENT_OWNERSHIP_SCHEMA:
+        raise UpstreamMergeError("ChangeDecision 组件映射 schema 漂移")
+    if "mapping_version" in decision and decision["mapping_version"] != COMPONENT_OWNERSHIP_VERSION:
+        raise UpstreamMergeError("ChangeDecision 组件映射版本漂移")
+    if "mapping_sha256" in decision and decision["mapping_sha256"] != COMPONENT_OWNERSHIP_SHA256:
+        raise UpstreamMergeError("ChangeDecision 组件映射摘要漂移")
     expected_files = {item["path"]: item for item in matrix["file_changes"]}
     raw_files = decision.get("files")
     if not isinstance(raw_files, list) or not raw_files:
@@ -1298,18 +2731,21 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
     for index, raw in enumerate(raw_files):
         label = f"ChangeDecision.files[{index}]"
         item = expect_object(raw, label)
-        expect_exact_fields(
-            item,
-            {
-                "path",
-                "categories",
-                "rationale",
-                "required_actions",
-                "official_client_identity_changed",
-                "evidence_semantics_changed",
-            },
-            label,
-        )
+        required_item_fields = {
+            "path",
+            "categories",
+            "rationale",
+            "required_actions",
+            "official_client_identity_changed",
+            "evidence_semantics_changed",
+        }
+        optional_item_fields = {
+            "decision_source",
+            "component_ownership",
+            "auto_reason",
+        }
+        if set(item) - (required_item_fields | optional_item_fields) or required_item_fields - set(item):
+            raise UpstreamMergeError(f"{label} 字段不闭合")
         relative = safe_relative_path(item.get("path"), f"{label}.path")
         if relative not in expected_files or relative in seen_files:
             raise UpstreamMergeError(f"{label} 引用未知或重复变化文件：{relative}")
@@ -1323,11 +2759,17 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
         ]
         if normalized_categories != sorted(set(normalized_categories)):
             raise UpstreamMergeError(f"{label}.categories 必须排序且不得重复")
-        hints = set(expected_files[relative]["risk_hints"])
+        expected_entry = expected_files[relative]
+        hints = set(expected_entry["risk_hints"])
         if hints & {"account", "billing", "group", "key", "quota_usage", "route"} and (
             "key_group_routing_billing" not in normalized_categories
         ):
             raise UpstreamMergeError(f"{label} 未承接 Key/Group/路由/计费风险提示")
+        if hints & {"wire", "selector"} and not (
+            set(normalized_categories)
+            & {"claude_persona", "codex_persona", "protocol_adapter", "shared_control"}
+        ):
+            raise UpstreamMergeError(f"{label} 未承接 wire/selector 风险提示")
         rationale = expect_string(item.get("rationale"), f"{label}.rationale")
         if len(rationale) < 16:
             raise UpstreamMergeError(f"{label}.rationale 必须说明实际调用影响")
@@ -1345,6 +2787,33 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
             raise UpstreamMergeError(
                 f"{relative} 改变官方客户端身份；必须停止 §5.2 并拆分为 §5.3 Campaign"
             )
+        decision_source = item.get("decision_source", "manual")
+        if decision_source not in {"manual", "auto", "manual_required"}:
+            raise UpstreamMergeError(f"{label}.decision_source 非法")
+        expected_ownership = expected_entry.get(
+            "component_ownership",
+            _component_ownership(relative, expected_entry.get("old_path", "")),
+        )
+        supplied_ownership = item.get("component_ownership")
+        if supplied_ownership is not None and supplied_ownership != expected_ownership:
+            raise UpstreamMergeError(f"{label}.component_ownership 与 ImpactMatrix 不一致")
+        if decision_source == "manual_required":
+            raise UpstreamMergeError(f"{relative} 仍处于人工待决状态，不能封存 U-3")
+        if decision_source == "auto":
+            auto = expected_entry.get("auto_classification")
+            if not isinstance(auto, dict) or auto.get("eligible") is not True:
+                raise UpstreamMergeError(f"{relative} 不满足安全自动分类条件")
+            if identity_changed or semantics_changed:
+                raise UpstreamMergeError(f"{relative} 自动分类不得改变官方身份或证据语义")
+            if set(normalized_categories) != set(expected_entry.get("suggested_categories", [])):
+                raise UpstreamMergeError(f"{relative} 自动分类未采用受管建议类别")
+            if expected_ownership.get("status") != "known" or expected_ownership.get("unknown_dependency_ids"):
+                raise UpstreamMergeError(f"{relative} 组件所有权或依赖未知，禁止自动分类")
+        if expected_ownership.get("risk_levels") and "high" in expected_ownership["risk_levels"]:
+            required_from_ownership = set(expected_ownership.get("suggested_categories", []))
+            if not required_from_ownership.issubset(set(normalized_categories)):
+                raise UpstreamMergeError(f"{relative} 未承接高风险组件映射类别")
+        auto_accepted = decision_source == "auto"
         if _apply_client_impact(
             set(normalized_categories),
             semantics_changed,
@@ -1352,6 +2821,9 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
             client_campaigns,
         ):
             shared_contract_required = True
+        if auto_accepted:
+            # 仅统计；真正的安全条件已在上面 fail-close 校验。
+            pass
     if seen_files != set(expected_files):
         raise UpstreamMergeError(
             f"ChangeDecision.files 未闭合：missing={sorted(set(expected_files) - seen_files)}"
@@ -1365,7 +2837,10 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
     for index, raw in enumerate(raw_deltas):
         label = f"ChangeDecision.surface_deltas[{index}]"
         item = expect_object(raw, label)
-        expect_exact_fields(item, {"delta_id", "rationale", "required_actions"}, label)
+        required_delta_fields = {"delta_id", "rationale", "required_actions"}
+        optional_delta_fields = {"decision_source"}
+        if set(item) - (required_delta_fields | optional_delta_fields) or required_delta_fields - set(item):
+            raise UpstreamMergeError(f"{label} 字段不闭合")
         delta_id = expect_sha256(item.get("delta_id"), f"{label}.delta_id")
         if delta_id not in expected_deltas or delta_id in seen_deltas:
             raise UpstreamMergeError(f"{label} 引用未知或重复 surface delta")
@@ -1378,16 +2853,66 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
         normalized = [expect_string(value, f"{label}.required_actions") for value in actions]
         if normalized != sorted(set(normalized)):
             raise UpstreamMergeError(f"{label}.required_actions 必须排序且不得重复")
+        decision_source = item.get("decision_source", "manual")
+        if decision_source not in {"manual", "auto", "manual_required"}:
+            raise UpstreamMergeError(f"{label}.decision_source 非法")
+        if decision_source == "auto":
+            raise UpstreamMergeError(f"{label} 发送面变化不得自动分类")
+        if decision_source == "manual_required":
+            raise UpstreamMergeError(f"{label} 仍处于人工待决状态，不能封存 U-3")
         for client in expected_deltas[delta_id]["clients"]:
             client_impacts[client] = True
     if seen_deltas != set(expected_deltas):
         raise UpstreamMergeError(
             f"ChangeDecision.surface_deltas 未闭合：missing={sorted(set(expected_deltas) - seen_deltas)}"
         )
+    auto_count = sum(1 for item in raw_files if item.get("decision_source", "manual") == "auto")
+    manual_decision_count = sum(
+        1 for item in raw_files if item.get("decision_source", "manual") != "auto"
+    ) + len(raw_deltas)
+    manual_required_count = sum(
+        1
+        for item in raw_files
+        if item.get("decision_source", "manual") == "manual_required"
+    ) + sum(
+        1
+        for item in raw_deltas
+        if item.get("decision_source", "manual") == "manual_required"
+    )
+    if "auto_accepted_count" in decision:
+        value = decision["auto_accepted_count"]
+        if isinstance(value, bool) or not isinstance(value, int) or value != auto_count:
+            raise UpstreamMergeError("ChangeDecision.auto_accepted_count 不一致")
+    if "manual_required_count" in decision:
+        value = decision["manual_required_count"]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value != manual_required_count
+        ):
+            raise UpstreamMergeError("ChangeDecision.manual_required_count 不一致")
+    if "unresolved_paths" in decision:
+        unresolved_paths = decision["unresolved_paths"]
+        if not isinstance(unresolved_paths, list) or unresolved_paths != sorted(set(unresolved_paths)):
+            raise UpstreamMergeError("ChangeDecision.unresolved_paths 必须排序且不重复")
+        expected_unresolved = sorted(
+            item["path"]
+            for item in raw_files
+            if item.get("decision_source", "manual") == "manual_required"
+        )
+        if unresolved_paths != expected_unresolved:
+            raise UpstreamMergeError("ChangeDecision.unresolved_paths 与逐文件状态不一致")
+    if "result" in decision:
+        expected_draft_result = (
+            "ready_for_review" if manual_required_count else "ready_to_seal"
+        )
+        if decision["result"] != expected_draft_result:
+            raise UpstreamMergeError("ChangeDecision.result 与决策计数不一致")
     receipt = _stage_document(
         plan,
         CHANGE_DECISION_RECEIPT_SCHEMA,
         {
+            **_revision_metadata(plan, "impact_receipt", source_revision),
             "impact_matrix": stage_binding(plan, "impact_matrix"),
             "change_decision": file_binding(decision_path.resolve(strict=True)),
             "file_decision_count": len(seen_files),
@@ -1397,16 +2922,34 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
             "shared_contract_required": shared_contract_required,
             "unclassified_count": 0,
             "official_client_identity_change_count": 0,
+            "component_mapping_schema": COMPONENT_OWNERSHIP_SCHEMA,
+            "component_mapping_version": COMPONENT_OWNERSHIP_VERSION,
+            "component_mapping_sha256": COMPONENT_OWNERSHIP_SHA256,
+            "auto_accepted_count": sum(
+                1 for item in raw_files if item.get("decision_source") == "auto"
+            ),
+            "manual_decision_count": manual_decision_count,
+            "unknown_component_count": sum(
+                1
+                for item in matrix["file_changes"]
+                if item.get("component_ownership", {}).get("status") != "known"
+            ),
             "result": "closed",
         },
     )
-    write_json_once(plan.output_path("impact_receipt"), receipt)
+    _, receipt_path = next_stage_path(
+        plan,
+        "impact_receipt",
+        revision=source_revision,
+    )
+    write_json_once(receipt_path, receipt)
     return receipt
 
 
 def _load_impact_receipt(plan: LoadedPlan) -> dict[str, Any]:
-    return artifact_document(
-        plan.output_path("impact_receipt"),
+    document = _load_revision_artifact(
+        plan,
+        "impact_receipt",
         "ChangeDecisionReceipt",
         CHANGE_DECISION_RECEIPT_SCHEMA,
         {
@@ -1423,7 +2966,137 @@ def _load_impact_receipt(plan: LoadedPlan) -> dict[str, Any]:
             "official_client_identity_change_count",
             "result",
         },
+        optional_fields={
+            "component_mapping_schema",
+            "component_mapping_version",
+            "component_mapping_sha256",
+            "auto_accepted_count",
+            "manual_decision_count",
+            "unknown_component_count",
+        },
     )
+    mapping_fields = {
+        "component_mapping_schema": COMPONENT_OWNERSHIP_SCHEMA,
+        "component_mapping_version": COMPONENT_OWNERSHIP_VERSION,
+        "component_mapping_sha256": COMPONENT_OWNERSHIP_SHA256,
+    }
+    for field, expected in mapping_fields.items():
+        if field in document and document[field] != expected:
+            raise UpstreamMergeError(f"ChangeDecisionReceipt {field} 漂移")
+    mapping_presence = [field in document for field in mapping_fields]
+    if any(mapping_presence) and not all(mapping_presence):
+        raise UpstreamMergeError("ChangeDecisionReceipt 组件映射字段不完整")
+    for field in ("file_decision_count", "surface_decision_count", "unclassified_count", "official_client_identity_change_count"):
+        value = document[field]
+        minimum = 1 if field == "file_decision_count" else 0
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise UpstreamMergeError(f"ChangeDecisionReceipt {field} 非法")
+    if document["unclassified_count"] != 0 or document["official_client_identity_change_count"] != 0:
+        raise UpstreamMergeError("ChangeDecisionReceipt 仍有未分类或身份变更项")
+    for field in ("client_impacts", "successor_campaign_required"):
+        value = document[field]
+        if not isinstance(value, dict) or set(value) != set(CLIENT_KEYS) or any(
+            not isinstance(item, bool) for item in value.values()
+        ):
+            raise UpstreamMergeError(f"ChangeDecisionReceipt.{field} 必须是两 Persona 布尔映射")
+    if not isinstance(document["shared_contract_required"], bool):
+        raise UpstreamMergeError("ChangeDecisionReceipt.shared_contract_required 必须是布尔值")
+    for field in ("auto_accepted_count", "manual_decision_count", "unknown_component_count"):
+        if field in document:
+            value = document[field]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise UpstreamMergeError(f"ChangeDecisionReceipt.{field} 非法")
+    if "unknown_component_count" in document and document["unknown_component_count"] > document["file_decision_count"]:
+        raise UpstreamMergeError("ChangeDecisionReceipt.unknown_component_count 超出文件决策数")
+    if "auto_accepted_count" in document and "manual_decision_count" in document:
+        if document["auto_accepted_count"] + document["manual_decision_count"] != (
+            document["file_decision_count"] + document["surface_decision_count"]
+        ):
+            raise UpstreamMergeError("ChangeDecisionReceipt 自动/人工计数不闭合")
+    matrix_binding = validate_artifact_binding(
+        plan.evidence_root,
+        document["impact_matrix"],
+        "ChangeDecisionReceipt.impact_matrix",
+    )
+    matrix_path = resolve_within(
+        plan.evidence_root,
+        matrix_binding["path"],
+        "ChangeDecisionReceipt.impact_matrix.path",
+    )
+    decision_binding = validate_file_binding(
+        document["change_decision"],
+        "ChangeDecisionReceipt.change_decision",
+    )
+    decision_path = Path(decision_binding["path"])
+    decision_document = expect_object(
+        load_json(decision_path, "ChangeDecision"),
+        "ChangeDecision",
+    )
+    if decision_document.get("schema_version") != CHANGE_DECISION_INPUT_SCHEMA:
+        raise UpstreamMergeError("ChangeDecisionReceipt.change_decision schema_version 非法")
+    revision = document.get("revision")
+    is_revision_receipt = isinstance(revision, int) and not isinstance(revision, bool)
+    if "identity_sha256" in decision_document:
+        validate_identity(decision_document, "ChangeDecisionReceipt.change_decision")
+    elif is_revision_receipt:
+        raise UpstreamMergeError("新格式 ChangeDecision 必须包含 identity_sha256")
+    if is_revision_receipt:
+        source = _load_source_candidate(plan)
+        if (
+            decision_document.get("plan_id") != plan.plan_id
+            or decision_document.get("plan_identity_sha256") != plan.identity
+            or decision_document.get("source_tree") != source["source_tree"]
+            or decision_document.get("impact_matrix_sha256") != sha256_file(matrix_path)
+        ):
+            raise UpstreamMergeError("新格式 ChangeDecision 与当前计划/ImpactMatrix 绑定不一致")
+        files = decision_document.get("files")
+        surface_deltas = decision_document.get("surface_deltas")
+        if not isinstance(files, list) or not isinstance(surface_deltas, list):
+            raise UpstreamMergeError("新格式 ChangeDecision files/surface_deltas 必须是数组")
+        if document["file_decision_count"] != len(files):
+            raise UpstreamMergeError("ChangeDecisionReceipt.file_decision_count 与决策文件数不一致")
+        if document["surface_decision_count"] != len(surface_deltas):
+            raise UpstreamMergeError("ChangeDecisionReceipt.surface_decision_count 与决策发送面数不一致")
+        identity_changes = sum(
+            1
+            for item in files
+            if isinstance(item, dict) and item.get("official_client_identity_changed") is True
+        )
+        if document["official_client_identity_change_count"] != identity_changes:
+            raise UpstreamMergeError("ChangeDecisionReceipt 身份变更计数不一致")
+        auto_count = sum(
+            1
+            for item in files
+            if isinstance(item, dict) and item.get("decision_source", "manual") == "auto"
+        )
+        manual_count = sum(
+            1
+            for item in files
+            if not isinstance(item, dict) or item.get("decision_source", "manual") != "auto"
+        ) + len(surface_deltas)
+        if "auto_accepted_count" in document and document["auto_accepted_count"] != auto_count:
+            raise UpstreamMergeError("ChangeDecisionReceipt.auto_accepted_count 与决策不一致")
+        if "manual_decision_count" in document and document["manual_decision_count"] != manual_count:
+            raise UpstreamMergeError("ChangeDecisionReceipt.manual_decision_count 与决策不一致")
+        matrix_document = _load_impact_matrix(plan)
+        matrix_changes = matrix_document.get("file_changes", [])
+        unknown_count = sum(
+            1
+            for item in matrix_changes
+            if not isinstance(item, dict)
+            or not isinstance(item.get("component_ownership"), dict)
+            or item["component_ownership"].get("status") != "known"
+        )
+        if "unknown_component_count" in document and document["unknown_component_count"] != unknown_count:
+            raise UpstreamMergeError("ChangeDecisionReceipt.unknown_component_count 与 ImpactMatrix 不一致")
+    if is_revision_receipt:
+        _validate_current_stage_binding(
+            plan,
+            document["impact_matrix"],
+            "impact_matrix",
+            "ChangeDecisionReceipt.impact_matrix",
+        )
+    return document
 
 
 def _expand_gate_value(
@@ -1461,10 +3134,209 @@ def _gate_cwd(worktree: Path, raw: str) -> Path:
     return path
 
 
+CLIENT_GATE_CATEGORIES = frozenset(
+    {
+        "claude_active_wire",
+        "claude_ingress_matrix",
+        "claude_rollback_wire",
+        "codex_active_wire",
+        "codex_ingress_matrix",
+        "codex_rollback_wire",
+    }
+)
+CLIENT_GATE_RECEIPT_SCHEMA = "official-egress-upstream-client-gate-receipt/v2"
+
+
+def _gate_group(gate: dict[str, Any]) -> str:
+    return str(gate.get("execution_group") or gate["id"])
+
+
+def _gate_signature(gate: dict[str, Any]) -> tuple[Any, ...]:
+    """同一 execution_group 必须确实执行同一条命令。"""
+
+    return (
+        gate["mode"],
+        gate["cwd"],
+        tuple(gate["argv"]),
+        gate.get("receipt") if gate["mode"] == "receipt_replay" else None,
+    )
+
+
+def _gate_groups(plan: LoadedPlan) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for gate in plan.document["gates"]:
+        groups.setdefault(_gate_group(gate), []).append(gate)
+    for values in groups.values():
+        values.sort(key=lambda item: item["id"])
+        signatures = {_gate_signature(item) for item in values}
+        if len(signatures) != 1:
+            raise UpstreamMergeError(
+                "同一 execution_group 的门禁定义不一致："
+                + ",".join(item["id"] for item in values)
+            )
+    return groups
+
+
+def _gate_ids_from_selector(
+    plan: LoadedPlan,
+    selector: str | Sequence[str] | None,
+) -> set[str] | None:
+    if selector is None:
+        return None
+    values: list[str] = []
+    if isinstance(selector, str):
+        values = [item.strip() for item in selector.split(",") if item.strip()]
+    else:
+        for item in selector:
+            if not isinstance(item, str):
+                raise UpstreamMergeError("--only 选择器必须是字符串")
+            values.extend(part.strip() for part in item.split(",") if part.strip())
+    if not values:
+        raise UpstreamMergeError("--only 不能为空")
+    by_id = {gate["id"]: gate for gate in plan.document["gates"]}
+    by_category = {gate["category"]: gate for gate in plan.document["gates"]}
+    selected: set[str] = set()
+    for value in values:
+        gate = by_id.get(value) or by_category.get(value)
+        if gate is None:
+            raise UpstreamMergeError(f"--only 引用了未知门禁：{value}")
+        selected.add(gate["id"])
+    return selected
+
+
+def _resolve_attempt_receipt(plan: LoadedPlan, reference: str | Path) -> Path:
+    raw = Path(reference) if isinstance(reference, str) else reference
+    if raw.is_absolute():
+        if raw.is_symlink():
+            raise UpstreamMergeError("--from-attempt 不得指向符号链接")
+        candidate = raw.resolve(strict=False)
+        if not candidate.is_relative_to(plan.evidence_root.resolve()):
+            raise UpstreamMergeError("--from-attempt 必须位于 evidence root 内")
+    else:
+        text = str(raw)
+        try:
+            safe_id = expect_safe_id(text, "from_attempt")
+            candidate = resolve_within(
+                plan.evidence_root,
+                f"{plan.output_relative('gate_attempts_root')}/{safe_id}/receipt.json",
+                "from_attempt",
+            )
+        except UpstreamMergeError:
+            relative = safe_relative_path(text, "from_attempt")
+            raw_candidate = plan.evidence_root / PurePosixPath(relative)
+            if raw_candidate.is_symlink():
+                raise UpstreamMergeError("--from-attempt 不得指向符号链接")
+            candidate = resolve_within(plan.evidence_root, relative, "from_attempt")
+    if candidate.is_dir():
+        candidate = candidate / "receipt.json"
+
+    if candidate.is_symlink() or not candidate.is_file():
+        raise UpstreamMergeError(f"上一 attempt 收据不存在：{candidate}")
+    resolved = candidate.resolve(strict=True)
+    attempts_root = resolve_within(
+        plan.evidence_root,
+        plan.output_relative("gate_attempts_root"),
+        "gate attempts root",
+    ).resolve(strict=True)
+    if resolved.name != "receipt.json" or resolved.parent.parent != attempts_root:
+        raise UpstreamMergeError("--from-attempt 必须指向 evidence root/u4/attempts/<attempt>/receipt.json")
+    attempt_name = resolved.parent.name
+    expect_safe_id(attempt_name, "from_attempt.attempt_id")
+    return resolved
+
+
+def _validate_attempt_receipt_binding(
+    plan: LoadedPlan,
+    value: Any,
+    label: str,
+    *,
+    expected_attempt: str | None = None,
+    expected_client_category: str | None = None,
+) -> tuple[dict[str, Any], Path]:
+    """校验 attempt 收据绑定必须落在标准 evidence 路径。"""
+
+    binding = expect_object(value, label)
+    relative = safe_relative_path(binding.get("path"), f"{label}.path")
+    raw_path = plan.evidence_root / PurePosixPath(relative)
+    if raw_path.is_symlink():
+        raise UpstreamMergeError(f"{label} 不得指向符号链接")
+    validated = validate_artifact_binding(plan.evidence_root, binding, label)
+    path = resolve_within(plan.evidence_root, relative, f"{label}.path")
+    attempts_root = resolve_within(
+        plan.evidence_root,
+        plan.output_relative("gate_attempts_root"),
+        "gate attempts root",
+    ).resolve(strict=True)
+    if expected_client_category is None:
+        if path.name != "receipt.json" or path.parent.parent.resolve() != attempts_root:
+            raise UpstreamMergeError(
+                f"{label} 必须指向 evidence root/u4/attempts/<attempt>/receipt.json"
+            )
+        attempt_id = expect_safe_id(path.parent.name, f"{label}.attempt_id")
+    else:
+        expected_client_category = validate_string_enum(
+            expected_client_category,
+            CLIENT_GATE_CATEGORIES,
+            f"{label}.category",
+        )
+        attempt_id = expect_safe_id(path.parent.parent.name, f"{label}.attempt_id")
+        expected_path = (
+            attempts_root
+            / attempt_id
+            / "client-receipts"
+            / f"{expected_client_category}.json"
+        ).resolve(strict=False)
+        if path != expected_path:
+            raise UpstreamMergeError(
+                f"{label} 必须指向 evidence root/u4/attempts/<attempt>/client-receipts/{expected_client_category}.json"
+            )
+    if expected_attempt is not None and attempt_id != expected_attempt:
+        raise UpstreamMergeError(
+            f"{label} attempt_id 不一致：expected={expected_attempt} actual={attempt_id}"
+        )
+    return validated, path
+
+
+def _client_receipt_document(
+    plan: LoadedPlan,
+    attempt: str,
+    gate: dict[str, Any],
+    result: dict[str, Any],
+    attempt_root: Path,
+) -> tuple[dict[str, Any], Path]:
+    category = gate["category"]
+    output = attempt_root / "client-receipts" / f"{category}.json"
+    document = _stage_document(
+        plan,
+        CLIENT_GATE_RECEIPT_SCHEMA,
+        {
+            "attempt_id": attempt,
+            "category": category,
+            "gate_id": gate["id"],
+            "source_candidate": stage_binding(plan, "source_candidate"),
+            "impact_receipt": stage_binding(plan, "impact_receipt"),
+            "gate_definition_sha256": sha256_bytes(canonical_bytes(gate)),
+            "execution_group": _gate_group(gate),
+            "execution_status": result.get("execution_status", "executed"),
+            "result": result["status"],
+            "exit_code": result["exit_code"],
+            "duration_ms": result["duration_ms"],
+            "executable": result["executable"],
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+        },
+    )
+    write_json_once(output, document)
+    return document, output
+
+
 def _run_verification_gates_in_worktree(
     plan: LoadedPlan,
     attempt_id: str,
     execution_worktree: Path,
+    *,
+    only: str | Sequence[str] | None = None,
+    from_attempt: str | Path | None = None,
 ) -> dict[str, Any]:
     attempt = expect_safe_id(attempt_id, "attempt_id")
     impact = _load_impact_receipt(plan)
@@ -1479,21 +3351,83 @@ def _run_verification_gates_in_worktree(
     attempt_root = resolve_within(plan.evidence_root, attempt_root_relative, "gate attempt")
     if attempt_root.exists():
         raise UpstreamMergeError(f"门禁 attempt 已存在，禁止覆盖：{attempt}")
+
+    groups = _gate_groups(plan)
+    planned_by_id = {gate["id"]: gate for gate in plan.document["gates"]}
+    selected = _gate_ids_from_selector(plan, only)
+    previous_path: Path | None = None
+    previous: dict[str, Any] | None = None
+    if from_attempt is not None:
+        previous_path = _resolve_attempt_receipt(plan, from_attempt)
+        if previous_path.parent.name == attempt:
+            raise UpstreamMergeError("新 attempt 不得引用自身收据")
+        previous = load_verification_receipt(plan, previous_path, require_passed=False)
+        if str(previous.get("attempt_id")) != previous_path.parent.name:
+            raise UpstreamMergeError("上一 attempt 收据路径与 attempt_id 不一致")
+        previous_by_id = {item["id"]: item for item in previous["gates"]}
+        failed_previous = {item["id"] for item in previous["gates"] if item["status"] != "passed"}
+        if selected is None:
+            selected = failed_previous
+            if not selected:
+                raise UpstreamMergeError("上一 attempt 没有失败门禁；如需重跑请显式提供 --only")
+        elif not failed_previous.issubset(selected):
+            raise UpstreamMergeError(
+                "--only 未覆盖上一 attempt 的全部失败门禁："
+                + ",".join(sorted(failed_previous - selected))
+            )
+    else:
+        previous_by_id = {}
+        if selected is None:
+            selected = set(planned_by_id)
+
+    # 选择一个组即执行整个组，保证逻辑门禁仍全部有收据；没有上一收据时不得留下空洞。
+    selected_groups = {
+        _gate_group(planned_by_id[gate_id]) for gate_id in selected
+    }
+    expanded_selected = {
+        gate["id"] for group in selected_groups for gate in groups[group]
+    }
+    if previous is None and expanded_selected != set(planned_by_id):
+        raise UpstreamMergeError("首次 gates-run 必须覆盖全部 12 类门禁")
+    for gate_id, prior in previous_by_id.items():
+        if gate_id not in expanded_selected and prior["status"] != "passed":
+            raise UpstreamMergeError(f"未选择的失败门禁不能被复用：{gate_id}")
+
+    # 所有输入和复用关系都通过校验后才创建目录；参数错误不会留下伪 attempt。
     attempt_root.mkdir(parents=True, mode=0o700)
     attempt_root.chmod(0o700)
-    results: list[dict[str, Any]] = []
-    for gate in plan.document["gates"]:
+
+    results_by_id: dict[str, dict[str, Any]] = {}
+    executed_groups = 0
+    reused_gate_count = 0
+    for group_name in sorted(groups):
+        group = groups[group_name]
+        leader = group[0]
+        if group_name not in selected_groups:
+            for gate in group:
+                prior = previous_by_id.get(gate["id"])
+                if prior is None or prior["status"] != "passed":
+                    raise UpstreamMergeError(f"门禁没有可复用的通过收据：{gate['id']}")
+                copied = dict(prior)
+                copied["execution_group"] = group_name
+                copied["execution_leader_id"] = prior.get("execution_leader_id", gate["id"])
+                copied["execution_status"] = "attempt_reused"
+                copied["reused_from"] = artifact_binding(plan.evidence_root, previous_path) if previous_path else None
+                results_by_id[gate["id"]] = copied
+                reused_gate_count += 1
+            continue
+
         receipt_path: Path | None = None
         receipt_binding: dict[str, Any] | None = None
-        if gate["mode"] == "receipt_replay":
+        if leader["mode"] == "receipt_replay":
             receipt_path = resolve_within(
                 plan.evidence_root,
-                gate["receipt"],
-                f"gate {gate['id']} receipt",
+                leader["receipt"],
+                f"gate {leader['id']} receipt",
             )
             if receipt_path.is_symlink() or not receipt_path.is_file():
                 raise UpstreamMergeError(
-                    f"receipt_replay 门禁缺少候选专属收据：{gate['id']}={receipt_path}"
+                    f"receipt_replay 门禁缺少候选专属收据：{leader['id']}={receipt_path}"
                 )
             receipt_binding = artifact_binding(plan.evidence_root, receipt_path)
         argv = [
@@ -1504,9 +3438,9 @@ def _run_verification_gates_in_worktree(
                 receipt=receipt_path,
                 repository=worktree,
             )
-            for item in gate["argv"]
+            for item in leader["argv"]
         ]
-        cwd = _gate_cwd(worktree, gate["cwd"])
+        cwd = _gate_cwd(worktree, leader["cwd"])
         executable = executable_identity(argv[0], cwd)
         started = time.monotonic()
         completed = run_process(
@@ -1520,12 +3454,16 @@ def _run_verification_gates_in_worktree(
             },
         )
         duration_ms = int((time.monotonic() - started) * 1000)
-        stdout_path = attempt_root / f"{gate['id']}.stdout.txt"
-        stderr_path = attempt_root / f"{gate['id']}.stderr.txt"
+        stdout_path = attempt_root / f"{leader['id']}.stdout.txt"
+        stderr_path = attempt_root / f"{leader['id']}.stderr.txt"
         write_once(stdout_path, completed.stdout.encode("utf-8"))
         write_once(stderr_path, completed.stderr.encode("utf-8"))
-        results.append(
-            {
+        stdout_binding = artifact_binding(plan.evidence_root, stdout_path)
+        stderr_binding = artifact_binding(plan.evidence_root, stderr_path)
+        status = "passed" if completed.returncode == 0 else "failed"
+        executed_groups += 1
+        for gate in group:
+            results_by_id[gate["id"]] = {
                 "id": gate["id"],
                 "category": gate["category"],
                 "mode": gate["mode"],
@@ -1535,14 +3473,32 @@ def _run_verification_gates_in_worktree(
                 "executable": executable,
                 "source_receipt": receipt_binding,
                 "exit_code": completed.returncode,
-                "duration_ms": duration_ms,
-                "stdout": artifact_binding(plan.evidence_root, stdout_path),
-                "stderr": artifact_binding(plan.evidence_root, stderr_path),
-                "status": "passed" if completed.returncode == 0 else "failed",
+                "duration_ms": duration_ms if gate["id"] == leader["id"] else 0,
+                "stdout": stdout_binding,
+                "stderr": stderr_binding,
+                "status": status,
+                "execution_group": group_name,
+                "execution_leader_id": leader["id"],
+                "execution_status": "executed" if gate["id"] == leader["id"] else "group_reused",
+                "reused_from": None,
             }
+
+    results = [results_by_id[gate["id"]] for gate in plan.document["gates"]]
+    client_receipts: dict[str, dict[str, Any]] = {}
+    for gate in plan.document["gates"]:
+        if gate["category"] not in CLIENT_GATE_CATEGORIES:
+            continue
+        _, client_path = _client_receipt_document(
+            plan,
+            attempt,
+            gate,
+            results_by_id[gate["id"]],
+            attempt_root,
         )
+        client_receipts[gate["category"]] = artifact_binding(plan.evidence_root, client_path)
+
     dirty_paths = status_paths(worktree)
-    failed = [item["id"] for item in results if item["status"] != "passed"]
+    failed = sorted(item["id"] for item in results if item["status"] != "passed")
     result = "passed" if not failed and not dirty_paths else "blocked"
     document = _stage_document(
         plan,
@@ -1557,6 +3513,16 @@ def _run_verification_gates_in_worktree(
             "skipped_gate_count": 0,
             "worktree_status_paths": dirty_paths,
             "gates": results,
+            "client_receipts": client_receipts,
+            "executed_gate_count": sum(
+                1 for item in results if item.get("execution_status") == "executed"
+            ),
+            "reused_gate_count": reused_gate_count,
+            "execution_group_count": executed_groups,
+            "from_attempt": artifact_binding(plan.evidence_root, previous_path)
+            if previous_path
+            else None,
+            "selected_gate_ids": sorted(expanded_selected),
             "result": result,
         },
     )
@@ -1565,14 +3531,166 @@ def _run_verification_gates_in_worktree(
     return document
 
 
-def run_verification_gates(plan: LoadedPlan, attempt_id: str) -> dict[str, Any]:
-    """在计划隔离树执行 U-4 全部门禁并保留原始输出。"""
+def run_verification_gates(
+    plan: LoadedPlan,
+    attempt_id: str,
+    *,
+    only: str | Sequence[str] | None = None,
+    from_attempt: str | Path | None = None,
+) -> dict[str, Any]:
+    """执行 U-4；失败重跑只执行失败组，其余门禁以绑定收据复用。"""
 
     return _run_verification_gates_in_worktree(
         plan,
         attempt_id,
         plan.worktree,
+        only=only,
+        from_attempt=from_attempt,
     )
+
+
+def _validate_client_gate_receipt(
+    plan: LoadedPlan,
+    binding: Any,
+    expected_category: str,
+    expected_gate: dict[str, Any],
+    expected_result: dict[str, Any],
+    attempt_id: str,
+) -> None:
+    _validated, path = _validate_attempt_receipt_binding(
+        plan,
+        binding,
+        f"VerificationReceipt.client_receipts.{expected_category}",
+        expected_attempt=attempt_id,
+        expected_client_category=expected_category,
+    )
+    document = artifact_document(
+        path,
+        "ClientGateReceipt",
+        CLIENT_GATE_RECEIPT_SCHEMA,
+        {
+            "plan_id",
+            "plan_identity_sha256",
+            "attempt_id",
+            "category",
+            "gate_id",
+            "source_candidate",
+            "impact_receipt",
+            "gate_definition_sha256",
+            "execution_group",
+            "execution_status",
+            "result",
+            "exit_code",
+            "duration_ms",
+            "executable",
+            "stdout",
+            "stderr",
+        },
+    )
+    if (
+        document["plan_id"] != plan.plan_id
+        or document["plan_identity_sha256"] != plan.identity
+    ):
+        raise UpstreamMergeError(f"客户端门禁自动收据计划身份不一致：{expected_category}")
+    if document["execution_status"] not in {
+        "executed",
+        "group_reused",
+        "attempt_reused",
+    }:
+        raise UpstreamMergeError(f"客户端门禁自动收据 execution_status 非法：{expected_category}")
+    duration_ms = document["duration_ms"]
+    if isinstance(duration_ms, bool) or not isinstance(duration_ms, int) or duration_ms < 0:
+        raise UpstreamMergeError(f"客户端门禁自动收据 duration_ms 非法：{expected_category}")
+    exit_code = document["exit_code"]
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        raise UpstreamMergeError(f"客户端门禁自动收据 exit_code 非法：{expected_category}")
+    if document["result"] != ("passed" if exit_code == 0 else "failed"):
+        raise UpstreamMergeError(f"客户端门禁自动收据 result 与 exit_code 矛盾：{expected_category}")
+    expect_safe_id(document["attempt_id"], f"ClientGateReceipt.{expected_category}.attempt_id")
+    for stream in ("stdout", "stderr"):
+        validate_artifact_binding(
+            plan.evidence_root,
+            document[stream],
+            f"ClientGateReceipt.{expected_category}.{stream}",
+        )
+    expected_executable = _expected_gate_executable(
+        plan,
+        expected_gate,
+        expected_result,
+        f"ClientGateReceipt.{expected_category}.executable",
+        expanded_command=expected_result["executable"]["command"],
+    )
+    if (
+        document["attempt_id"] != attempt_id
+        or document["category"] != expected_category
+        or document["gate_id"] != expected_gate["id"]
+        or document["source_candidate"] != stage_binding(plan, "source_candidate")
+        or document["impact_receipt"] != stage_binding(plan, "impact_receipt")
+        or document["gate_definition_sha256"] != sha256_bytes(canonical_bytes(expected_gate))
+        or document["execution_group"] != _gate_group(expected_gate)
+        or (
+            expected_result.get("execution_status") is not None
+            and document["execution_status"] != expected_result["execution_status"]
+        )
+        or document["result"] != expected_result["status"]
+        or document["exit_code"] != expected_result["exit_code"]
+        or document["duration_ms"] != expected_result["duration_ms"]
+        or document["executable"] != expected_executable
+        or document["stdout"] != expected_result["stdout"]
+        or document["stderr"] != expected_result["stderr"]
+    ):
+        raise UpstreamMergeError(f"客户端门禁自动收据绑定不一致：{expected_category}")
+
+
+def _expected_gate_executable(
+    plan: LoadedPlan,
+    planned: dict[str, Any],
+    actual: dict[str, Any],
+    label: str,
+    *,
+    expanded_command: str | None = None,
+) -> dict[str, Any]:
+    """复算门禁首个 argv 的实际可执行文件身份。"""
+
+    executable = expect_object(actual.get("executable"), label)
+    expect_exact_fields(executable, {"command", "resolved_path", "sha256", "bytes"}, label)
+    command = expanded_command or planned["argv"][0]
+    if executable.get("command") != command:
+        raise UpstreamMergeError(f"{label} command 与计划不一致")
+    # 相对可执行文件需要在执行树中解析；PATH 命令不依赖 worktree 是否仍保留。
+    if "/" in command and not Path(command).is_absolute():
+        if not plan.worktree.exists() or not plan.worktree.is_dir():
+            raise UpstreamMergeError(f"{label} 无法复算相对可执行文件：执行树不存在")
+        cwd = _gate_cwd(plan.worktree, planned["cwd"])
+    else:
+        cwd = plan.worktree if plan.worktree.is_dir() else plan.repository_root
+    expected = executable_identity(command, cwd)
+    if executable != expected:
+        raise UpstreamMergeError(f"{label} 摘要或解析路径漂移")
+    return expected
+
+
+def _validate_recorded_executable(value: Any, label: str) -> dict[str, Any]:
+    """仅校验历史收据中可执行文件身份的结构，不依赖已清理的旧运行环境。"""
+
+    executable = expect_object(value, label)
+    expect_exact_fields(executable, {"command", "resolved_path", "sha256", "bytes"}, label)
+    expect_string(executable.get("command"), f"{label}.command")
+    resolved_path = expect_string(executable.get("resolved_path"), f"{label}.resolved_path")
+    path = Path(resolved_path)
+    if not path.is_absolute() or str(path) != os.path.normpath(resolved_path):
+        raise UpstreamMergeError(f"{label}.resolved_path 必须是规范绝对路径")
+    digest = executable.get("sha256")
+    size = executable.get("bytes")
+    if digest is not None:
+        expect_sha256(digest, f"{label}.sha256")
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or size < 0
+    ):
+        raise UpstreamMergeError(f"{label}.bytes 非法")
+    if (digest is None) != (size is None):
+        raise UpstreamMergeError(f"{label}.sha256/bytes 必须同时为空或同时存在")
+    return executable
 
 
 def load_verification_receipt(
@@ -1580,32 +3698,89 @@ def load_verification_receipt(
     path: Path,
     *,
     require_passed: bool,
+    _seen_paths: set[Path] | None = None,
 ) -> dict[str, Any]:
-    document = expect_object(load_json(path, "VerificationReceipt"), "VerificationReceipt")
-    expect_exact_fields(
-        document,
-        {
-            "schema_version",
-            "plan_id",
-            "plan_identity_sha256",
-            "attempt_id",
-            "source_candidate",
-            "impact_receipt",
-            "required_categories",
-            "gate_count",
-            "failed_gate_ids",
-            "skipped_gate_count",
-            "worktree_status_paths",
-            "gates",
-            "result",
-            "identity_sha256",
-        },
+    if path.is_symlink() or not path.is_file():
+        raise UpstreamMergeError(f"VerificationReceipt 不是可信普通文件：{path}")
+    resolved_receipt_path = path.resolve(strict=True)
+    seen_paths = _seen_paths if _seen_paths is not None else set()
+    if resolved_receipt_path in seen_paths:
+        raise UpstreamMergeError("VerificationReceipt from_attempt 存在循环")
+    seen_paths.add(resolved_receipt_path)
+    # U-4 主收据也必须位于标准 attempt 目录；这样外部传入的任意 JSON 不能被
+    # 当作通过凭证注入后续 U-5/U-6。
+    _validate_attempt_receipt_binding(
+        plan,
+        artifact_binding(plan.evidence_root, resolved_receipt_path),
         "VerificationReceipt",
     )
+    document = expect_object(
+        load_json(resolved_receipt_path, "VerificationReceipt"),
+        "VerificationReceipt",
+    )
+    required_fields = {
+        "schema_version",
+        "plan_id",
+        "plan_identity_sha256",
+        "attempt_id",
+        "source_candidate",
+        "impact_receipt",
+        "required_categories",
+        "gate_count",
+        "failed_gate_ids",
+        "skipped_gate_count",
+        "worktree_status_paths",
+        "gates",
+        "result",
+        "identity_sha256",
+    }
+    optional_fields = {
+        "client_receipts",
+        "executed_gate_count",
+        "reused_gate_count",
+        "execution_group_count",
+        "from_attempt",
+        "selected_gate_ids",
+    }
+    actual_fields = set(document)
+    if actual_fields - (required_fields | optional_fields) or required_fields - actual_fields:
+        raise UpstreamMergeError(
+            "VerificationReceipt 字段不闭合："
+            f"缺失={sorted(required_fields - actual_fields)}，"
+            f"多余={sorted(actual_fields - required_fields - optional_fields)}"
+        )
+    execution_metadata_fields = {
+        "client_receipts",
+        "executed_gate_count",
+        "reused_gate_count",
+        "execution_group_count",
+        "from_attempt",
+        "selected_gate_ids",
+    }
+    gate_metadata_fields = {
+        "execution_group",
+        "execution_leader_id",
+        "execution_status",
+        "reused_from",
+    }
+    raw_gate_values = document.get("gates", [])
+    gate_metadata_present = (
+        isinstance(raw_gate_values, list)
+        and any(
+            isinstance(item, dict) and set(item) & gate_metadata_fields
+            for item in raw_gate_values
+        )
+    )
+    has_execution_metadata = bool(set(document) & execution_metadata_fields) or gate_metadata_present
+    if has_execution_metadata and "client_receipts" not in document:
+        raise UpstreamMergeError(
+            "新格式 VerificationReceipt 必须生成六类 client_receipts"
+        )
     if document.get("schema_version") != VERIFICATION_RECEIPT_SCHEMA:
         raise UpstreamMergeError("VerificationReceipt schema_version 非法")
     if document.get("plan_id") != plan.plan_id or document.get("plan_identity_sha256") != plan.identity:
         raise UpstreamMergeError("VerificationReceipt 计划身份不一致")
+    expect_safe_id(document.get("attempt_id"), "VerificationReceipt.attempt_id")
     validate_identity(document, "VerificationReceipt")
     if document.get("source_candidate") != stage_binding(plan, "source_candidate"):
         raise UpstreamMergeError("VerificationReceipt SourceCandidate 绑定漂移")
@@ -1622,29 +3797,66 @@ def load_verification_receipt(
     if set(by_id) != {item["id"] for item in plan.document["gates"]}:
         raise UpstreamMergeError("VerificationReceipt 门禁身份不闭合")
     source = _load_source_candidate(plan)
+    groups = _gate_groups(plan)
+    from_attempt_binding = document.get("from_attempt")
+    from_attempt_path: Path | None = None
+    if has_execution_metadata and from_attempt_binding is not None:
+        _, from_attempt_path = _validate_attempt_receipt_binding(
+            plan,
+            from_attempt_binding,
+            "VerificationReceipt.from_attempt",
+        )
+        if from_attempt_path.parent.name == str(document["attempt_id"]):
+            raise UpstreamMergeError("VerificationReceipt.from_attempt 不得指向自身")
+    previous_by_id: dict[str, dict[str, Any]] = {}
+    if from_attempt_path is not None:
+        previous_document = load_verification_receipt(
+            plan,
+            from_attempt_path,
+            require_passed=False,
+            _seen_paths=set(seen_paths),
+        )
+        if str(previous_document.get("attempt_id")) != from_attempt_path.parent.name:
+            raise UpstreamMergeError("VerificationReceipt.from_attempt attempt_id 与路径不一致")
+        previous_by_id = {
+            item["id"]: item
+            for item in previous_document.get("gates", [])
+            if isinstance(item, dict) and "id" in item
+        }
     for planned in plan.document["gates"]:
         actual = by_id[planned["id"]]
-        expect_exact_fields(
-            actual,
-            {
-                "id",
-                "category",
-                "mode",
-                "cwd",
-                "argv",
-                "expanded_argv_sha256",
-                "executable",
-                "source_receipt",
-                "exit_code",
-                "duration_ms",
-                "stdout",
-                "stderr",
-                "status",
-            },
-            f"VerificationReceipt.gates.{planned['id']}",
-        )
+        base_fields = {
+            "id",
+            "category",
+            "mode",
+            "cwd",
+            "argv",
+            "expanded_argv_sha256",
+            "executable",
+            "source_receipt",
+            "exit_code",
+            "duration_ms",
+            "stdout",
+            "stderr",
+            "status",
+        }
+        optional_gate_fields = {
+            "execution_group",
+            "execution_leader_id",
+            "execution_status",
+            "reused_from",
+        }
+        if set(actual) - (base_fields | optional_gate_fields) or base_fields - set(actual):
+            raise UpstreamMergeError(f"VerificationReceipt 门禁字段不闭合：{planned['id']}")
         if any(actual.get(field) != planned[field] for field in ("id", "category", "mode", "cwd", "argv")):
             raise UpstreamMergeError(f"VerificationReceipt 门禁定义漂移：{planned['id']}")
+        expected_group = _gate_group(planned)
+        if "execution_group" in actual and actual["execution_group"] != expected_group:
+            raise UpstreamMergeError(f"VerificationReceipt execution_group 漂移：{planned['id']}")
+        if "execution_leader_id" in actual:
+            leader = actual["execution_leader_id"]
+            if leader not in {item["id"] for item in groups[expected_group]}:
+                raise UpstreamMergeError(f"VerificationReceipt 执行组 leader 非法：{planned['id']}")
         receipt_path: Path | None = None
         if planned["mode"] == "receipt_replay":
             receipt_path = resolve_within(
@@ -1664,17 +3876,19 @@ def load_verification_receipt(
         ]
         if actual.get("expanded_argv_sha256") != sha256_bytes(canonical_bytes(expanded)):
             raise UpstreamMergeError(f"VerificationReceipt 门禁展开命令漂移：{planned['id']}")
-        executable = expect_object(
-            actual.get("executable"),
-            f"VerificationReceipt.gates.{planned['id']}.executable",
-        )
-        expect_exact_fields(
-            executable,
-            {"command", "resolved_path", "sha256", "bytes"},
-            f"VerificationReceipt.gates.{planned['id']}.executable",
-        )
-        if executable.get("command") != expanded[0]:
-            raise UpstreamMergeError(f"VerificationReceipt 可执行文件身份漂移：{planned['id']}")
+        if has_execution_metadata:
+            _expected_gate_executable(
+                plan,
+                planned,
+                actual,
+                f"VerificationReceipt.gates.{planned['id']}.executable",
+                expanded_command=expanded[0],
+            )
+        else:
+            _validate_recorded_executable(
+                actual.get("executable"),
+                f"VerificationReceipt.gates.{planned['id']}.executable",
+            )
         exit_code = actual.get("exit_code")
         duration_ms = actual.get("duration_ms")
         if isinstance(exit_code, bool) or not isinstance(exit_code, int):
@@ -1698,6 +3912,157 @@ def load_verification_receipt(
                 raise UpstreamMergeError(f"receipt_replay 来源收据漂移：{planned['id']}")
         elif actual.get("source_receipt") is not None:
             raise UpstreamMergeError(f"command 门禁不得伪造来源收据：{planned['id']}")
+        if has_execution_metadata and any(
+            field not in actual for field in gate_metadata_fields
+        ):
+            raise UpstreamMergeError(
+                f"新格式 VerificationReceipt 门禁 execution metadata 不完整：{planned['id']}"
+            )
+        if "execution_status" in actual and actual["execution_status"] not in {
+            "executed",
+            "group_reused",
+            "attempt_reused",
+        }:
+            raise UpstreamMergeError(f"VerificationReceipt execution_status 非法：{planned['id']}")
+        if actual.get("execution_status") == "attempt_reused":
+            if from_attempt_binding is None:
+                raise UpstreamMergeError(
+                    f"attempt_reused 门禁缺少 top-level from_attempt：{planned['id']}"
+                )
+            reused_binding, _ = _validate_attempt_receipt_binding(
+                plan,
+                actual.get("reused_from"),
+                f"VerificationReceipt.gates.{planned['id']}.reused_from",
+            )
+            if reused_binding != from_attempt_binding:
+                raise UpstreamMergeError(
+                    f"门禁 reused_from 未绑定 top-level from_attempt：{planned['id']}"
+                )
+            prior = previous_by_id.get(planned["id"])
+            if prior is None or prior.get("status") != "passed":
+                raise UpstreamMergeError(
+                    f"attempt_reused 门禁没有对应的已通过前序结果：{planned['id']}"
+                )
+            for field in (
+                "mode",
+                "cwd",
+                "argv",
+                "expanded_argv_sha256",
+                "executable",
+                "source_receipt",
+                "exit_code",
+                "duration_ms",
+                "stdout",
+                "stderr",
+                "status",
+            ):
+                if actual.get(field) != prior.get(field):
+                    raise UpstreamMergeError(
+                        f"attempt_reused 门禁结果未完整复用前序收据：{planned['id']}"
+                    )
+        elif "reused_from" in actual and actual.get("reused_from") is not None:
+            raise UpstreamMergeError(
+                f"非 attempt_reused 门禁不得带 reused_from：{planned['id']}"
+            )
+    # 同一执行组只能有一个真实执行者；其余逻辑类别必须共享同一结果和产物。
+    for group_name, group in groups.items():
+        group_results = [by_id[item["id"]] for item in group]
+        statuses = {item.get("status") for item in group_results}
+        if len(statuses) != 1:
+            raise UpstreamMergeError(f"VerificationReceipt 执行组结果不一致：{group_name}")
+        common_fields = (
+            "mode",
+            "cwd",
+            "argv",
+            "expanded_argv_sha256",
+            "executable",
+            "source_receipt",
+            "exit_code",
+            "stdout",
+            "stderr",
+            "status",
+        )
+        for field in common_fields:
+            if len(
+                {
+                    sha256_bytes(canonical_bytes(item.get(field)))
+                    for item in group_results
+                }
+            ) != 1:
+                raise UpstreamMergeError(
+                    f"VerificationReceipt 执行组 {field} 不一致：{group_name}"
+                )
+        execution_statuses = [
+            item.get("execution_status")
+            for item in group_results
+            if "execution_status" in item
+        ]
+        group_metadata_presence = {
+            field: [field in item for item in group_results]
+            for field in ("execution_group", "execution_leader_id", "execution_status")
+        }
+        if any(
+            any(presence) and not all(presence)
+            for presence in group_metadata_presence.values()
+        ):
+            raise UpstreamMergeError(f"VerificationReceipt 执行组 metadata 不完整：{group_name}")
+        if has_execution_metadata and any(
+            not all(presence) for presence in group_metadata_presence.values()
+        ):
+            raise UpstreamMergeError(f"新格式 VerificationReceipt 执行组 metadata 不完整：{group_name}")
+        if execution_statuses:
+            if len(execution_statuses) != len(group_results):
+                raise UpstreamMergeError(f"VerificationReceipt 执行组 execution_status 不完整：{group_name}")
+            leaders = {
+                item.get("execution_leader_id") for item in group_results
+            }
+            if len(leaders) != 1 or next(iter(leaders)) not in {item["id"] for item in group}:
+                raise UpstreamMergeError(f"VerificationReceipt 执行组 leader 不闭合：{group_name}")
+            leader_id = next(iter(leaders))
+            if execution_statuses.count("executed") == 1:
+                if leader_id != next(
+                    item["id"]
+                    for item in group_results
+                    if item.get("execution_status") == "executed"
+                ):
+                    raise UpstreamMergeError(f"VerificationReceipt 执行组 leader 身份不一致：{group_name}")
+                if any(
+                    item.get("execution_status") != "group_reused"
+                    for item in group_results
+                    if item["id"] != leader_id
+                ):
+                    raise UpstreamMergeError(f"VerificationReceipt 执行组复用标记不一致：{group_name}")
+                if any(
+                    item.get("duration_ms") != 0
+                    for item in group_results
+                    if item["id"] != leader_id
+                ):
+                    raise UpstreamMergeError(
+                        f"VerificationReceipt 执行组成员 duration_ms 必须为 0：{group_name}"
+                    )
+            elif all(status == "attempt_reused" for status in execution_statuses):
+                for item in group_results:
+                    reused_binding, _ = _validate_attempt_receipt_binding(
+                        plan,
+                        item.get("reused_from"),
+                        f"VerificationReceipt.gates.{item['id']}.reused_from",
+                    )
+                    if from_attempt_binding is None or reused_binding != from_attempt_binding:
+                        raise UpstreamMergeError(
+                            f"VerificationReceipt 执行组 reused_from 未统一：{group_name}"
+                        )
+            else:
+                raise UpstreamMergeError(f"VerificationReceipt 执行组 execution_status 不合法：{group_name}")
+            for item in group_results:
+                if item.get("execution_status") == "group_reused" and item.get("reused_from") is not None:
+                    raise UpstreamMergeError(
+                        f"VerificationReceipt group_reused 不得带 reused_from：{item['id']}"
+                    )
+        elif any(
+            field in group_results[0]
+            for field in ("execution_group", "execution_leader_id", "reused_from")
+        ):
+            raise UpstreamMergeError(f"VerificationReceipt 执行组 metadata 缺少 execution_status：{group_name}")
     failed = sorted(item["id"] for item in gates if item.get("status") != "passed")
     if document.get("failed_gate_ids") != failed:
         raise UpstreamMergeError("VerificationReceipt failed_gate_ids 与逐门禁结果不一致")
@@ -1715,6 +4080,74 @@ def load_verification_receipt(
     expected_result = "passed" if not failed and not normalized_dirty else "blocked"
     if document.get("result") != expected_result:
         raise UpstreamMergeError("VerificationReceipt result 与门禁／工作树结果矛盾")
+
+    client_receipts = document.get("client_receipts")
+    if has_execution_metadata:
+        if not isinstance(client_receipts, dict) or set(client_receipts) != set(CLIENT_GATE_CATEGORIES):
+            raise UpstreamMergeError(
+                "新格式 VerificationReceipt.client_receipts 必须恰好覆盖六类客户端门禁"
+            )
+    if client_receipts is not None:
+        if not isinstance(client_receipts, dict) or set(client_receipts) != set(CLIENT_GATE_CATEGORIES):
+            raise UpstreamMergeError("VerificationReceipt.client_receipts 必须恰好覆盖六类客户端门禁")
+        for planned in plan.document["gates"]:
+            category = planned["category"]
+            if category not in CLIENT_GATE_CATEGORIES:
+                continue
+            _validate_client_gate_receipt(
+                plan,
+                client_receipts[category],
+                category,
+                planned,
+                by_id[planned["id"]],
+                str(document["attempt_id"]),
+            )
+    for field in ("executed_gate_count", "reused_gate_count", "execution_group_count"):
+        if field in document:
+            value = document[field]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise UpstreamMergeError(f"VerificationReceipt.{field} 非法")
+    if "selected_gate_ids" in document:
+        selected_ids = document["selected_gate_ids"]
+        if not isinstance(selected_ids, list) or selected_ids != sorted(set(selected_ids)):
+            raise UpstreamMergeError("VerificationReceipt.selected_gate_ids 必须排序且不重复")
+        for value in selected_ids:
+            if value not in by_id:
+                raise UpstreamMergeError("VerificationReceipt.selected_gate_ids 引用未知门禁")
+        selected_set = set(selected_ids)
+        for group_name, group in groups.items():
+            members = {item["id"] for item in group}
+            if selected_set & members and selected_set & members != members:
+                raise UpstreamMergeError(
+                    f"VerificationReceipt.selected_gate_ids 未按 execution_group 闭合：{group_name}"
+                )
+    if "from_attempt" in document and document["from_attempt"] is not None:
+        if from_attempt_path is None:
+            _, from_attempt_path = _validate_attempt_receipt_binding(
+                plan,
+                document["from_attempt"],
+                "VerificationReceipt.from_attempt",
+            )
+    if "executed_gate_count" in document:
+        expected_executed = sum(
+            1 for item in gates if item.get("execution_status") == "executed"
+        )
+        if document["executed_gate_count"] != expected_executed:
+            raise UpstreamMergeError("VerificationReceipt.executed_gate_count 不一致")
+    if "reused_gate_count" in document:
+        expected_reused = sum(
+            1 for item in gates if item.get("execution_status") == "attempt_reused"
+        )
+        if document["reused_gate_count"] != expected_reused:
+            raise UpstreamMergeError("VerificationReceipt.reused_gate_count 不一致")
+    if "execution_group_count" in document:
+        expected_groups = sum(
+            1
+            for group in groups.values()
+            if any(item.get("execution_status") == "executed" for item in (by_id[g["id"]] for g in group))
+        )
+        if document["execution_group_count"] != expected_groups:
+            raise UpstreamMergeError("VerificationReceipt.execution_group_count 不一致")
     if require_passed and (
         document.get("result") != "passed"
         or failed

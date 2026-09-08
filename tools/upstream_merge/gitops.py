@@ -348,7 +348,12 @@ def route_snapshot(repository_root: Path, commit: str, tree: str) -> dict[str, A
     }
 
 
-def run_egress_snapshot(repository_root: Path, output: Path) -> None:
+def run_egress_snapshot(
+    repository_root: Path,
+    output: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> None:
     """复用受审扫描算法，另行封装当前 commit/tree 的 U-2 快照。"""
 
     if output.exists() or output.is_symlink():
@@ -365,24 +370,27 @@ def run_egress_snapshot(repository_root: Path, output: Path) -> None:
         dir=output.parent,
     ) as temporary:
         raw_output = Path(temporary) / "legacy-scan.json"
-        completed = run_process(
-            (
-                "go",
-                "run",
-                "./cmd/egressscan",
-                "-mode",
-                "snapshot",
-                "-migration-receipts",
-                ",".join(
-                    str(repository_root / relative)
-                    for relative in EGRESS_MIGRATION_RECEIPT_PATHS
-                ),
-                "-out",
-                str(raw_output),
+        command = (
+            "go",
+            "run",
+            "./cmd/egressscan",
+            "-mode",
+            "snapshot",
+            "-migration-receipts",
+            ",".join(
+                str(repository_root / relative)
+                for relative in EGRESS_MIGRATION_RECEIPT_PATHS
             ),
-            cwd=repository_root / "backend",
-            check=False,
+            "-out",
+            str(raw_output),
         )
+        process_kwargs: dict[str, Any] = {
+            "cwd": repository_root / "backend",
+            "check": False,
+        }
+        if env is not None:
+            process_kwargs["env"] = env
+        completed = run_process(command, **process_kwargs)
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip()
             raise UpstreamMergeError(f"发送面快照失败：{detail}")

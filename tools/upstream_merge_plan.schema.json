@@ -67,7 +67,8 @@
         "category": {"$ref": "#/$defs/gateCategory"},
         "mode": {"const": "command"},
         "cwd": {"type": "string", "minLength": 1},
-        "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "execution_group": {"$ref": "#/$defs/safeId"}
       }
     },
     "receiptGate": {
@@ -80,7 +81,8 @@
         "mode": {"const": "receipt_replay"},
         "cwd": {"type": "string", "minLength": 1},
         "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-        "receipt": {"type": "string", "minLength": 1}
+        "receipt": {"type": "string", "minLength": 1},
+        "execution_group": {"$ref": "#/$defs/safeId"}
       }
     },
     "gate": {
@@ -270,7 +272,11 @@
         "surface_egress_snapshot": {"type": "string", "minLength": 1},
         "surface_receipt": {"type": "string", "minLength": 1},
         "surface_route_snapshot": {"type": "string", "minLength": 1},
-        "upstream_merge_receipt": {"type": "string", "minLength": 1}
+        "upstream_merge_receipt": {"type": "string", "minLength": 1},
+        "source_candidate_revisions_root": {"type": "string", "minLength": 1},
+        "surface_revisions_root": {"type": "string", "minLength": 1},
+        "impact_revisions_root": {"type": "string", "minLength": 1},
+        "candidate_inventories_revisions_root": {"type": "string", "minLength": 1}
       }
     }
   }

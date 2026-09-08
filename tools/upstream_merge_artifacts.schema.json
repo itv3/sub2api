@@ -11,7 +11,11 @@
     {"$ref": "#/$defs/surfaceReceipt"},
     {"$ref": "#/$defs/impactMatrix"},
     {"$ref": "#/$defs/changeDecisionReceipt"},
+    {"$ref": "#/$defs/changeDecisionInput"},
     {"$ref": "#/$defs/verificationReceipt"},
+    {"$ref": "#/$defs/clientGateReceipt"},
+    {"$ref": "#/$defs/preflight"},
+    {"$ref": "#/$defs/sourceTransition"},
     {"$ref": "#/$defs/candidateDisposition"},
     {"$ref": "#/$defs/branchApply"},
     {"$ref": "#/$defs/upstreamReceipt"}
@@ -28,6 +32,45 @@
         "sha256": {"$ref": "#/$defs/sha256"},
         "bytes": {"type": "integer", "minimum": 0}
       }
+    },
+    "executableIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "resolved_path", "sha256", "bytes"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "resolved_path": {"type": "string", "pattern": "^/"},
+        "sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "bytes": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]}
+      }
+    },
+    "gateCategory": {
+      "enum": [
+        "claude_active_wire",
+        "claude_ingress_matrix",
+        "claude_rollback_wire",
+        "codex_active_wire",
+        "codex_ingress_matrix",
+        "codex_rollback_wire",
+        "cross_persona",
+        "inventory_closure",
+        "original_business",
+        "secret_scan",
+        "shared_full_regression",
+        "shared_static"
+      ]
+    },
+    "revisionMetadata": {
+      "allOf": [
+        {
+          "if": {"required": ["revision"]},
+          "then": {"required": ["predecessor"]}
+        },
+        {
+          "if": {"required": ["predecessor"]},
+          "then": {"required": ["revision"]}
+        }
+      ]
     },
     "mergeStart": {
       "type": "object",
@@ -88,6 +131,7 @@
     "sourceCandidate": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [{"$ref": "#/$defs/revisionMetadata"}],
       "required": ["schema_version", "plan_id", "plan_identity_sha256", "merge_candidate", "source_commit", "source_tree", "changed_paths", "source_change_input", "codex_overlay_ledger", "identity_sha256"],
       "properties": {
         "schema_version": {"const": "official-egress-upstream-source-candidate/v1"},
@@ -99,12 +143,15 @@
         "changed_paths": {"type": "array", "items": {"type": "object"}},
         "source_change_input": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
         "codex_overlay_ledger": {"$ref": "#/$defs/binding"},
+        "revision": {"type": "integer", "minimum": 1},
+        "predecessor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
         "identity_sha256": {"$ref": "#/$defs/sha256"}
       }
     },
     "surfaceDelta": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [{"$ref": "#/$defs/revisionMetadata"}],
       "required": ["schema_version", "plan_id", "plan_identity_sha256", "source_candidate", "baseline_route_snapshot", "candidate_route_snapshot", "baseline_source_to_sink_snapshot", "candidate_source_to_sink_snapshot", "route_delta_count", "egress_delta_count", "deltas", "identity_sha256"],
       "properties": {
         "schema_version": {"const": "official-egress-upstream-surface-delta/v1"},
@@ -118,12 +165,15 @@
         "route_delta_count": {"type": "integer", "minimum": 0},
         "egress_delta_count": {"type": "integer", "minimum": 0},
         "deltas": {"type": "array", "items": {"type": "object"}},
+        "revision": {"type": "integer", "minimum": 1},
+        "predecessor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
         "identity_sha256": {"$ref": "#/$defs/sha256"}
       }
     },
     "surfaceReceipt": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [{"$ref": "#/$defs/revisionMetadata"}],
       "required": ["schema_version", "plan_id", "plan_identity_sha256", "source_candidate", "surface_delta", "route_snapshot", "source_to_sink_snapshot", "candidate_inventories", "surface_decision", "unknown_oauth_egress_count", "unclassified_delta_count", "result", "identity_sha256"],
       "properties": {
         "schema_version": {"const": "official-egress-upstream-surface-recalculation-receipt/v1"},
@@ -138,12 +188,15 @@
         "unknown_oauth_egress_count": {"const": 0},
         "unclassified_delta_count": {"const": 0},
         "result": {"const": "closed"},
+        "revision": {"type": "integer", "minimum": 1},
+        "predecessor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
         "identity_sha256": {"$ref": "#/$defs/sha256"}
       }
     },
     "impactMatrix": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [{"$ref": "#/$defs/revisionMetadata"}],
       "required": ["schema_version", "plan_id", "plan_identity_sha256", "source_candidate", "surface_receipt", "file_change_count", "file_changes", "surface_delta_count", "surface_deltas", "classification_rule", "result", "identity_sha256"],
       "properties": {
         "schema_version": {"const": "official-egress-upstream-impact-matrix/v1"},
@@ -155,14 +208,18 @@
         "file_changes": {"type": "array", "minItems": 1, "items": {"type": "object"}},
         "surface_delta_count": {"type": "integer", "minimum": 0},
         "surface_deltas": {"type": "array", "items": {"type": "object"}},
+        "component_mapping": {"$ref": "#/$defs/componentMapping"},
         "classification_rule": {"type": "string"},
         "result": {"const": "pending_change_decision"},
+        "revision": {"type": "integer", "minimum": 1},
+        "predecessor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
         "identity_sha256": {"$ref": "#/$defs/sha256"}
       }
     },
     "changeDecisionReceipt": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [{"$ref": "#/$defs/revisionMetadata"}],
       "required": ["schema_version", "plan_id", "plan_identity_sha256", "impact_matrix", "change_decision", "file_decision_count", "surface_decision_count", "client_impacts", "successor_campaign_required", "shared_contract_required", "unclassified_count", "official_client_identity_change_count", "result", "identity_sha256"],
       "properties": {
         "schema_version": {"const": "official-egress-upstream-change-decision-receipt/v1"},
@@ -177,8 +234,65 @@
         "shared_contract_required": {"type": "boolean"},
         "unclassified_count": {"const": 0},
         "official_client_identity_change_count": {"const": 0},
+        "component_mapping_schema": {"type": "string", "minLength": 1},
+        "component_mapping_version": {"type": "string", "minLength": 1},
+        "component_mapping_sha256": {"$ref": "#/$defs/sha256"},
+        "auto_accepted_count": {"type": "integer", "minimum": 0},
+        "manual_decision_count": {"type": "integer", "minimum": 0},
+        "unknown_component_count": {"type": "integer", "minimum": 0},
         "result": {"const": "closed"},
+        "revision": {"type": "integer", "minimum": 1},
+        "predecessor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
         "identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "changeDecisionInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "plan_id", "plan_identity_sha256", "source_tree", "impact_matrix_sha256", "files", "surface_deltas", "identity_sha256"],
+      "properties": {
+        "schema_version": {"const": "official-egress-upstream-change-decision-input/v1"},
+        "plan_id": {"type": "string"},
+        "plan_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "source_tree": {"$ref": "#/$defs/gitObject"},
+        "impact_matrix_sha256": {"$ref": "#/$defs/sha256"},
+        "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/changeDecisionFile"}},
+        "surface_deltas": {"type": "array", "items": {"$ref": "#/$defs/changeDecisionSurface"}},
+        "mapping_schema": {"type": "string", "minLength": 1},
+        "mapping_version": {"type": "string", "minLength": 1},
+        "mapping_sha256": {"$ref": "#/$defs/sha256"},
+        "auto_accepted_count": {"type": "integer", "minimum": 0},
+        "manual_required_count": {"type": "integer", "minimum": 0},
+        "unresolved_paths": {"type": "array", "items": {"type": "string"}},
+        "result": {"enum": ["ready_for_review", "ready_to_seal"]},
+        "identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "changeDecisionFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "categories", "rationale", "required_actions", "official_client_identity_changed", "evidence_semantics_changed"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "categories": {"type": "array", "minItems": 1, "items": {"enum": ["claude_persona", "codex_persona", "key_group_routing_billing", "out_of_scope_product", "protocol_adapter", "repository_support", "shared_control"]}},
+        "rationale": {"type": "string", "minLength": 1},
+        "required_actions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "official_client_identity_changed": {"type": "boolean"},
+        "evidence_semantics_changed": {"type": "boolean"},
+        "decision_source": {"enum": ["manual", "auto", "manual_required"]},
+        "component_ownership": {"type": "object"},
+        "auto_reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "changeDecisionSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delta_id", "rationale", "required_actions"],
+      "properties": {
+        "delta_id": {"$ref": "#/$defs/sha256"},
+        "rationale": {"type": "string", "minLength": 1},
+        "required_actions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "decision_source": {"enum": ["manual", "auto", "manual_required"]}
       }
     },
     "verificationReceipt": {
@@ -198,7 +312,136 @@
         "skipped_gate_count": {"const": 0},
         "worktree_status_paths": {"type": "array"},
         "gates": {"type": "array", "minItems": 12, "maxItems": 12},
+        "client_receipts": {"$ref": "#/$defs/clientReceipts"},
+        "executed_gate_count": {"type": "integer", "minimum": 0},
+        "reused_gate_count": {"type": "integer", "minimum": 0},
+        "execution_group_count": {"type": "integer", "minimum": 0},
+        "from_attempt": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
+        "selected_gate_ids": {"type": "array", "items": {"type": "string"}},
         "result": {"enum": ["blocked", "passed"]},
+        "identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "componentMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "version", "sha256"],
+      "properties": {
+        "schema": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "clientReceipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claude_active_wire",
+        "claude_ingress_matrix",
+        "claude_rollback_wire",
+        "codex_active_wire",
+        "codex_ingress_matrix",
+        "codex_rollback_wire"
+      ],
+      "properties": {
+        "claude_active_wire": {"$ref": "#/$defs/binding"},
+        "claude_ingress_matrix": {"$ref": "#/$defs/binding"},
+        "claude_rollback_wire": {"$ref": "#/$defs/binding"},
+        "codex_active_wire": {"$ref": "#/$defs/binding"},
+        "codex_ingress_matrix": {"$ref": "#/$defs/binding"},
+        "codex_rollback_wire": {"$ref": "#/$defs/binding"}
+      }
+    },
+    "clientGateReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "plan_id", "plan_identity_sha256", "attempt_id", "category",
+        "gate_id", "source_candidate", "impact_receipt", "gate_definition_sha256",
+        "execution_group", "execution_status", "result", "exit_code", "duration_ms",
+        "executable", "stdout", "stderr", "identity_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": "official-egress-upstream-client-gate-receipt/v2"},
+        "plan_id": {"type": "string"},
+        "plan_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "category": {"$ref": "#/$defs/gateCategory"},
+        "gate_id": {"type": "string", "minLength": 1},
+        "source_candidate": {"$ref": "#/$defs/binding"},
+        "impact_receipt": {"$ref": "#/$defs/binding"},
+        "gate_definition_sha256": {"$ref": "#/$defs/sha256"},
+        "execution_group": {"type": "string", "minLength": 1},
+        "execution_status": {"enum": ["executed", "group_reused", "attempt_reused"]},
+        "result": {"enum": ["passed", "failed"]},
+        "exit_code": {"type": "integer"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "executable": {"$ref": "#/$defs/executableIdentity"},
+        "stdout": {"$ref": "#/$defs/binding"},
+        "stderr": {"$ref": "#/$defs/binding"},
+        "identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "plan_id", "plan_identity_sha256", "request", "repository",
+        "merge_exit_code", "conflict_paths", "checks", "scanner_snapshot", "blockers",
+        "non_authoritative", "result", "identity_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": "official-egress-upstream-preflight/v1"},
+        "plan_id": {"type": "string"},
+        "plan_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "request": {"type": "object"},
+        "repository": {"type": "object"},
+        "merge_exit_code": {"oneOf": [{"type": "integer"}, {"type": "null"}]},
+        "conflict_paths": {"type": "array", "items": {"type": "string"}},
+        "checks": {"type": "array", "items": {"type": "object"}},
+        "scanner_snapshot": {"oneOf": [{"type": "object"}, {"type": "null"}]},
+        "blockers": {"type": "array", "items": {"type": "string"}},
+        "non_authoritative": {"const": true},
+        "result": {"enum": ["ready", "blocked"]},
+        "identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "sourceTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "base_commit", "current_commit", "base_tree", "current_tree",
+        "chain_sequence", "predecessor_register", "entries", "entry_count", "reason_policy",
+        "result", "identity_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": "official-egress-upstream-source-transition/v2"},
+        "base_commit": {"$ref": "#/$defs/gitObject"},
+        "current_commit": {"$ref": "#/$defs/gitObject"},
+        "base_tree": {"$ref": "#/$defs/gitObject"},
+        "current_tree": {"$ref": "#/$defs/gitObject"},
+        "chain_sequence": {"type": "integer", "minimum": 1},
+        "predecessor_register": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/binding"}]},
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "old_path", "status", "predecessor_sha256", "current_sha256", "reason"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "old_path": {"type": "string"},
+              "status": {"enum": ["A", "M", "D", "R", "C", "T"]},
+              "predecessor_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+              "current_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "entry_count": {"type": "integer", "minimum": 1},
+        "reason_policy": {"type": "string", "minLength": 1},
+        "result": {"const": "generated"},
         "identity_sha256": {"$ref": "#/$defs/sha256"}
       }
     },

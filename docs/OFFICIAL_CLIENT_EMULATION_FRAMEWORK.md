@@ -437,23 +437,102 @@ P0、attempt 和部署前后均须核对容器 IP、默认路由、公网出口�
 
 ## 5.2 合并 Sub2API 上游更新
 
-上游更新与官方客户端换版必须分开。先冻结目标 commit、受维护分支、active／rollback、入口／出站清单和
-回退点，再在隔离 worktree 生成双父 merge commit。
+上游更新与官方客户端换版必须分开。七个阶段的目的都保留，但把“反复修一行源码就重做整套流程”改为
+同一 Plan 的追加式 revision，并把可确定的重复执行交给工具。上游合并不得改变客户端目标版本，也不得
+冒充生产部署；需要上线时继续 §5.6。
 
-标准阶段为：
+### 5.2.1 计划外预检（非权威）
 
-| 阶段 | 结果 |
-|---|---|
-| U-0 | 冻结目标、计划、预算和证据目录 |
-| U-1 | 解决冲突并形成可重放 merge commit |
-| U-2 | 闭合 Codex／Claude 发送面和 Inventory |
-| U-3 | 按文件和行为差异形成影响闭集 |
-| U-4 | 只执行受影响 Persona 的 active、rollback、ingress 和共享门禁 |
-| U-5 | 封存处置和回退决定 |
-| U-6 | `--ff-only` 更新本地受维护分支并重放收据 |
+正式 `plan-create` 前先运行一次离线预检，把明显冲突、扫描器不识别、编译错误和目标包测试失败挡在
+U-0 之外：
 
-门禁失败保留原 attempt，只补跑失败项。上游合并不得改变客户端目标版本，也不得冒充生产部署；需要上线时
-继续 §5.6。
+```text
+python3 -m tools.upstream_merge preflight \
+  --repository <仓库绝对路径> \
+  --request <请求文件绝对路径> \
+  --output <仓库外的预检报告绝对路径>
+```
+
+预检只在临时 detached worktree 中试合并，依次执行 `egressscan -mode snapshot`、`go build ./...`、
+`go vet ./...` 和官方 egress 目标包测试；不写入主仓库、不 fetch、不 push、不产生权威阶段制品。
+报告中的 `non_authoritative` 必须为 `true`。任何检查被跳过或失败都标为阻断，不能把“未执行”解释为通过。
+预检通过后仍必须重新执行 U-0，不能把预检报告当作 U-0 收据。
+
+### 5.2.2 七阶段及增量执行合同
+
+| 阶段 | 必要目的 | 优化后的执行合同 |
+|---|---|---|
+| U-0 | 冻结目标、计划、预算和证据目录 | `plan-create` 只创建一次权威 Plan；冻结 fork HEAD、上游 tag/commit、工具闭集、基线和受保护对象。 |
+| U-1 | 解决冲突并形成可重放的双父 merge commit | `merge-start`／`merge-seal` 仍在隔离 worktree 中完成；冲突台账和双父关系不可省略。 |
+| U-2 | 闭合 Codex／Claude 入口、出站发送面和 Inventory | 首轮 `source-seal` 生成 revision 001；源码修复后在同一 Plan 追加 `source-candidate-002.json`、`003.json`……，旧制品只读保留，不重做 U-0/U-1。每个 revision 重新执行 `surface-scan`，只有对应发送面确实零差异时才允许 `inventory-carry-forward`。 |
+| U-3 | 按文件和调用边形成影响闭集 | `impact-generate` 与当前 SourceCandidate revision 绑定；`impact-suggest` 只对版本化组件映射中“已知、低风险、无 wire/selector/Persona/共享控制面/Key-Group-路由-计费提示”的条目给出自动建议。未知路径、未知依赖和高风险条目保持 `manual_required`，`impact-seal` 对未决项 fail-close。 |
+| U-4 | 证明候选树满足全部必要门禁 | 每个收据始终包含固定 12 类逻辑门禁，`skipped_gate_count` 必须为 0；同一 `execution_group` 的完全相同命令只执行一次，组成员共享同一结果。六类客户端门禁收据由工具自动生成，不再手写。 |
+| U-5 | 封存 candidate、Campaign 和回退处置 | `disposition-seal` 仍要求绑定验证收据、原业务回归和受影响 Persona 的后继动作。 |
+| U-6 | 快进受维护分支并能独立重放 | 只允许 `git merge --ff-only`，随后 `finalize`／`replay`；不推送远端、不部署生产。 |
+
+U-4 的“完整 12 类”是逻辑覆盖，不等于每次都重新消耗 12 次物理执行。首次执行：
+
+```text
+python3 -m tools.upstream_merge gates-run \
+  --plan <计划绝对路径> \
+  --attempt-id attempt-001
+```
+
+某轮失败后保留原 attempt，默认只重跑上一轮失败的门禁组，其余通过项以绑定的旧收据复用：
+
+```text
+python3 -m tools.upstream_merge gates-run \
+  --plan <计划绝对路径> \
+  --attempt-id attempt-002 \
+  --from-attempt attempt-001
+```
+
+也可以用 `--only <门禁 id 或 category，逗号分隔>` 缩小执行集合，但必须覆盖上一 attempt 的全部失败项；
+同一 `execution_group` 会自动扩展为完整组，不能只重跑组内一个逻辑门禁。每个新 attempt 仍生成完整 12 类
+结果，`skipped_gate_count` 固定为 0，并记录 `executed_gate_count`、`reused_gate_count`、执行组数量和
+六份 `official-egress-upstream-client-gate-receipt/v2` 自动收据。
+
+### 5.2.3 revision、工具闭集和长期台账
+
+1. U-2/U-3 的 revision 文件只能追加，编号从 001 连续递增；`predecessor` 必须绑定上一轮文件。禁止
+   覆盖旧 JSON、用软链接冒充制品或跳号。Inventory revision 同样按 Persona/kind 连续追加。
+2. 源码修复提交后，用 Git 自动生成 source-transition 链尾，避免手工登记数百条路径：
+
+   ```text
+   python3 -m tools.upstream_merge source-transition \
+     --repository <仓库绝对路径> \
+     --before <前一提交 SHA> \
+     --after <当前提交 SHA> \
+     --output <新节点绝对路径> \
+     [--predecessor-register <上一节点>] \
+     [--reason <统一原因>]
+   python3 -m tools.upstream_merge source-transition-validate \
+     --repository <仓库绝对路径> \
+     --transition <节点绝对路径>
+   ```
+
+   `path`、`old_path`、状态以及两端 blob 摘要由 Git 复算；删除和重命名必须保留前后路径。历史节点不
+   改写，修复只追加 successor。该通用链尾不能直接替代现有框架专用冻结 receipt；提交后仍须按对应
+   冻结入口登记 successor，并由 CI 复核其前序摘要和当前摘要。
+3. `tools/upstream_merge/`、三个 schema、扫描器和 Makefile 属于受管 tool bundle。它们任一字节变化都会
+   改变合并事实含义：进行中的 Plan 必须停线并新建 Plan，不能在旧 Plan 上“修工具后继续”。推荐入口为
+   `make upstream-preflight`、`make upstream-source-transition` 和 `make test-upstream-merge-tools`。
+4. 长期按上游 tag 或至少两周一次合并，减小单次冲突闭集；废弃 Plan 的 worktree/evidence 只在完成留档和
+   审计确认后清理，不得用清理动作替代收据。
+
+### 5.2.4 时间预算与预期收益
+
+外部工程师对 v0.1.180 的实测为总计约 5 小时 27 分，其中最终成功轮约 68 分钟，约 52% 时间耗在废弃
+Plan。按当前上游 v0.2.2 的 64 个冲突文件、约 750 个影响条目估算：
+
+| 情形 | 预计墙钟 | 主要假设 |
+|---|---:|---|
+| 原流程 | 8 小时以上 | 每次源码修复重做 U-0/U-1，U-4 重复跑，客户端收据和 transition 台账手工维护。 |
+| 融合优化基线 | 约 3 小时（通常 2.5～3.5 小时） | 预检一次通过；同一 Plan 追加 revision；U-4 约 5 个真实执行组并按失败增量重跑；六类客户端收据自动生成；transition 由 Git 自动登记。 |
+| 预计节省 | 约 5 小时以上，约 60%～65% | 冲突语义、scanner 新发送点或 CI 资源异常时，以实际收据为准，不能为追求时长放宽门禁。 |
+
+这个预算是容量规划，不是通过条件。任一高风险分类、未知发送点、工具闭集漂移或预算超时，都必须
+fail-close 并报告最后合法 checkpoint。
 
 ## 5.3 官方客户端升级
 
