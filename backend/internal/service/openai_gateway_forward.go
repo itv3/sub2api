@@ -1024,6 +1024,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if reason == "invalid_encrypted_content" && recoverInvalidEncryptedContent(attempt) {
 				continue
 			}
+			// HTTP /v1/responses 请求只是在上游传输规划阶段选择了 WS。
+			// 若完整历史缺少逐项 turn_id，且 WS 定型无法可靠裁剪工具续接，
+			// 此时业务请求尚未发送、下游也尚未输出；OAuth 官方出口可以把
+			// 未裁剪的完整请求交给同一冻结调用中的 HTTP Responses 节点处理。
+			// 这不会猜测工具归属，也不会重复执行已经发送的业务请求。
+			if reason == "official_egress_tool_turn_ambiguous" && account.IsOpenAIOAuth() {
+				forceHTTPFallback = true
+				s.recordOpenAIWSNonRetryableFastFallback()
+				logOpenAIWSModeInfo(
+					"reconnect_stop account_id=%d attempt=%d reason=%s action=fallback_http",
+					account.ID,
+					attempt,
+					normalizeOpenAIWSLogValue(reason),
+				)
+				break
+			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)
 				if retryBudget > 0 && time.Since(retryStartedAt)+backoff > retryBudget {

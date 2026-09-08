@@ -413,7 +413,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	)
 	if err != nil {
 		lease.MarkBroken()
-		return nil, wrapOpenAIWSFallback("official_egress_frame", err)
+		reason := "official_egress_frame"
+		if errors.Is(err, errOpenAIOfficialEgressWSToolOutputTurnAmbiguous) {
+			reason = "official_egress_tool_turn_ambiguous"
+		}
+		return nil, wrapOpenAIWSFallback(reason, err)
 	}
 	payloadBytes = len(outboundPayload)
 	if err := lease.WriteSemanticJSONWithContextTimeout(

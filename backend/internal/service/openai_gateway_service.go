@@ -826,6 +826,14 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 		if upstreamMessage == "" {
 			upstreamMessage = "previous response not found"
 		}
+	case "official_egress_tool_turn_ambiguous":
+		if statusCode == 0 {
+			statusCode = http.StatusBadRequest
+		}
+		errType = "invalid_request_error"
+		if upstreamMessage == "" {
+			upstreamMessage = "tool output turn cannot be determined reliably"
+		}
 	case "upgrade_required":
 		if statusCode == 0 {
 			statusCode = http.StatusUpgradeRequired

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -163,6 +164,23 @@ func TestResolveOpenAIWSFallbackErrorResponse(t *testing.T) {
 		require.Equal(t, "upstream_error", errType)
 		require.Equal(t, "forbidden", clientMessage)
 		require.Equal(t, "forbidden", upstreamMessage)
+	})
+
+	t.Run("ambiguous_tool_turn_is_client_error", func(t *testing.T) {
+		statusCode, errType, clientMessage, upstreamMessage, ok := resolveOpenAIWSFallbackErrorResponse(
+			wrapOpenAIWSFallback(
+				"official_egress_tool_turn_ambiguous",
+				fmt.Errorf(
+					"OpenAI official egress WebSocket %w",
+					errOpenAIOfficialEgressWSToolOutputTurnAmbiguous,
+				),
+			),
+		)
+		require.True(t, ok)
+		require.Equal(t, http.StatusBadRequest, statusCode)
+		require.Equal(t, "invalid_request_error", errType)
+		require.Contains(t, clientMessage, "tool output turn")
+		require.Equal(t, clientMessage, upstreamMessage)
 	})
 
 	t.Run("non_fallback_error_not_resolved", func(t *testing.T) {

@@ -24,6 +24,10 @@ const (
 	officialOpenAIWSItemTurnMetadata   = "internal_chat_message_metadata_passthrough"
 )
 
+var errOpenAIOfficialEgressWSToolOutputTurnAmbiguous = errors.New(
+	"tool output turn cannot be determined reliably",
+)
+
 type officialOpenAIWSIdentity struct {
 	installationID string
 	sessionID      string
@@ -537,8 +541,9 @@ func prepareDerivedOpenAIOfficialEgressWSFrame(
 		return nil, result, toolOutputTurnErr
 	}
 	if !toolOutputTurnReliable {
-		return nil, result, errors.New(
-			"OpenAI official egress WebSocket tool output turn cannot be determined reliably",
+		return nil, result, fmt.Errorf(
+			"OpenAI official egress WebSocket %w",
+			errOpenAIOfficialEgressWSToolOutputTurnAmbiguous,
 		)
 	}
 	toolPresentationModified, err := officialCodexNormalizeDerivedToolPresentation(
@@ -822,8 +827,9 @@ func buildDerivedOpenAIOfficialEgressWSPrewarmFrame(
 		return nil, false, classifyErr
 	}
 	if !reliable {
-		return nil, false, errors.New(
-			"OpenAI official egress WebSocket tool output turn cannot be determined reliably",
+		return nil, false, fmt.Errorf(
+			"OpenAI official egress WebSocket %w",
+			errOpenAIOfficialEgressWSToolOutputTurnAmbiguous,
 		)
 	}
 	if hasAnyToolOutput && hasCurrentToolOutput {
@@ -1133,8 +1139,9 @@ func buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
 		return nil, false, classifyErr
 	}
 	if !reliable {
-		return nil, false, errors.New(
-			"OpenAI official egress WebSocket tool output turn cannot be determined reliably",
+		return nil, false, fmt.Errorf(
+			"OpenAI official egress WebSocket %w",
+			errOpenAIOfficialEgressWSToolOutputTurnAmbiguous,
 		)
 	}
 	if !hasAnyToolOutput || !hasCurrentToolOutput {
@@ -1370,7 +1377,10 @@ func finalizeOfficialOpenAIWSInputTurnMetadata(payload map[string]any) (bool, er
 }
 
 // splitOfficialOpenAIWSInputTurnSegments 以“助手输出后的下一条用户消息”为
-// 新轮次边界。连续的用户上下文项属于同一轮，工具输出也继续归入当前轮次。
+// 新轮次边界。Responses 工具调用项由助手产生，但通常不携带 role=assistant，
+// 因此必须把工具调用本身也视为助手已输出；否则“历史工具调用/输出 + 新用户消息”
+// 会被错误合并为同一轮，并触发工具续接的歧义保护。
+// 连续的用户上下文项属于同一轮，工具输出也继续归入当前轮次。
 func splitOfficialOpenAIWSInputTurnSegments(input []any) [][]int {
 	if len(input) == 0 {
 		return nil
@@ -1380,12 +1390,13 @@ func splitOfficialOpenAIWSInputTurnSegments(input []any) [][]int {
 	for index, rawItem := range input {
 		item, _ := rawItem.(map[string]any)
 		role := strings.TrimSpace(officialOpenAIString(item, "role"))
+		itemType := strings.TrimSpace(officialOpenAIString(item, "type"))
 		if role == "user" && completedAssistantTurn && len(segments[len(segments)-1]) > 0 {
 			segments = append(segments, nil)
 			completedAssistantTurn = false
 		}
 		segments[len(segments)-1] = append(segments[len(segments)-1], index)
-		if role == "assistant" {
+		if role == "assistant" || isCodexToolCallContextItemType(itemType) {
 			completedAssistantTurn = true
 		}
 	}

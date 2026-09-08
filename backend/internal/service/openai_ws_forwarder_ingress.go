@@ -1627,7 +1627,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
 					"official egress websocket tool continuation turn is ambiguous",
-					errors.New("tool output turn cannot be determined reliably"),
+					errOpenAIOfficialEgressWSToolOutputTurnAmbiguous,
 				)
 			}
 			toolSignals.HasFunctionCallOutput = hasCurrentToolOutput
