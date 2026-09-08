@@ -258,6 +258,14 @@ var classifyRules = []classifyRule{
 		rationale: "chat completions 形态入站 → Codex 出站",
 	},
 	{
+		funcExact:     "*OpenAIGatewayService.forwardAsChatCompletions",
+		runtimeSinkID: "codex.responses.chat_completions", purpose: "user_request.chat_completions",
+		persona: "codex-cli", routes: []string{"POST chatgpt.com/backend-api/codex/responses"},
+		backend: "http_upstream", state: "legacy_observe",
+		owner: ownerEgress, changeset: "3", expiry: "变更集 3 迁入 Executor",
+		rationale: "内部兼容实现承接同一 Chat Completions → Codex 出站身份，避免重复生成未登记 facade",
+	},
+	{
 		funcExact:     "*OpenAIGatewayService.ForwardAsAnthropic",
 		runtimeSinkID: "codex.responses.anthropic_compat", purpose: "user_request.anthropic_compat",
 		persona: "codex-cli", routes: []string{"POST chatgpt.com/backend-api/codex/responses"},
@@ -616,6 +624,7 @@ var classifyRules = []classifyRule{
 	oos("service/upstream_", "上游计费与模型探测，目标为账号 base_url"),
 	oos("service/openai_embeddings.go", "embeddings 走第三方兼容上游"),
 	oos("service/openai_gateway_cc_pipeline.go", "chat completions 兼容管线"),
+	oos("service/openai_images_b64_backfill.go", "图片 URL 到 b64_json 的兼容回填下载，不承载官方 OAuth 出站"),
 	oos("service/openai_gateway_count_tokens.go", "count_tokens 兼容路径"),
 	oos("service/gateway_", "Anthropic 网关"),
 	oos("service/openai_images.go", "图片兼容层其余部分走第三方上游"),

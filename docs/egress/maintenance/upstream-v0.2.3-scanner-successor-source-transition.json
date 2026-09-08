@@ -1,0 +1,75 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-scanner-successor-source-transition/v1",
+  "issued_at_utc": "2026-09-09T00:00:00Z",
+  "base_commit": "5dc9788bddef63cb9ef40dba67d8b0888d4d0f251",
+  "scope": "upstream-v0.2.3-scanner-classification-successor",
+  "target_upstream_tag": "v0.2.3",
+  "target_upstream_commit": "8fa67d477d6651a744754392a8982ea589c26ae6",
+  "predecessor": {
+    "kind": "codex_cli_0151_worktree_successor",
+    "path": "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+    "sha256": "49ca837b912bfbe33c2631a6bc0b6bbfe6dba1d3ad37efbc835bb45d043045be"
+  },
+  "transitions": [
+    {
+      "path": "backend/cmd/egressscan/classify.go",
+      "from_sha256": "1ed55101182ad64efaed965794a982ac4dad1a62fcde58260f02969d6d830378",
+      "to_sha256": "abc6ebdafa23be62c75520cbe96b1d1951939bb80f5e2b6c04e7a544f5a241fe",
+      "reason": "登记 v0.2.3 surface-scan 发现的 Chat Completions 兼容入口与图片 b64 回填范围外发送点，避免未知发送点阻断后续合并。"
+    },
+    {
+      "path": "backend/cmd/egressscan/lifecycle_test.go",
+      "from_sha256": "f0f4b3e03341e2b949b91a5722f8b0951ddd055906a63f8fbc015f6c2e02532b",
+      "to_sha256": "bb0809cdd5c2af81942c653a9ea07f01fd41e07d0be2307d297343cb55aaf52c",
+      "reason": "同步冻结复审后的 bootstrap lock 原文摘要，确保生命周期夹具与 lock 原文保持一致。"
+    },
+    {
+      "path": "backend/internal/officialegress/source_transition_digest_acceptance_test.go",
+      "from_sha256": "1c2f952bd7ed834b0ffc49826a9ac29e399c945d4eace07dc59d76c05327ce5d",
+      "to_sha256": "9a34ceb3ba6482271a0eb643762849e474c7180e9ba6705af4d18c17a018b685",
+      "reason": "把本 successor 纳入历史摘要接受器，保持旧 transition 收据只读并要求精确 path/from/to。"
+    },
+    {
+      "path": "backend/internal/service/source_transition_digest_acceptance_test.go",
+      "from_sha256": "e0d8c11109d5ca90fae5161224cec5c5204c0821e3150547ae054b41dad550dd",
+      "to_sha256": "66c0ccf8d8160f0bb60be228f574eeaa33728da586b2cf31099081798101224c",
+      "reason": "让 service 包使用同一精确 successor 摘要接受规则，不扩大到业务发送面或官方 wire。"
+    },
+    {
+      "path": "docs/egress/maintenance/bootstrap-inventory-lock.json",
+      "from_sha256": "d94bfe584b1cfb61bb852c7c6de9dbc3298084c0a95e329c960b0ee12fc0f0a2",
+      "to_sha256": "d83c17afaa7800a7575fd8668f201f64c2ba51a520cc85504131ef3d37fd1c0d",
+      "reason": "复审扫描算法摘要并固定新增发送点分类，继续保持 bootstrap commit、tree 与 inventory 原文不变。"
+    }
+  ],
+  "additions": [
+    {
+      "path": "backend/cmd/egressscan/classify_upstream_v023_test.go",
+      "sha256": "5cc968ff31376f6c679667f961c2184c4d0fa912d5e0faf5db2e5e193a483d00",
+      "reason": "冻结 v0.2.3 两个新增扫描点的显式分类，防止规则回退为未知发送点。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v023_scanner_successor_transition_test.go",
+      "sha256": "5632b715a999dd42f692b1161c71bbde1f3d322e06a414664d7965b3fa50dc87",
+      "reason": "在 officialegress 包校验 successor 自摘要、前序、闭集、安全边界与变异拒绝。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v023_scanner_successor_transition_test.go",
+      "sha256": "e6e54b78e87ba23d1d53438272e3b4bedc56db65ddd9711ad50953ad236343d5",
+      "reason": "在 service 包独立重放同一 successor 收据，避免单包校验遗漏。"
+    }
+  ],
+  "verification": [
+    "go test ./cmd/egressscan -count=1",
+    "go test ./internal/officialegress ./internal/service -run 'TestUpstreamV023ScannerSuccessor|TestUpstreamV0180' -count=1",
+    "EGRESS_SEAL_BASE_REF=5dc9788bddef63cb9ef40dba67d8b0888d4d0f251 make check-egress-spec-ci"
+  ],
+  "safety": {
+    "scanner_algorithm_changed": true,
+    "bootstrap_inventory_changed": true,
+    "live_account_used": false,
+    "deployment_performed": false
+  },
+  "result": "passed_local_scanner_successor",
+  "identity_sha256": "abe297a2484897a973a8959cd3eb5da3aec48409ea9adc26a48636311680b5a3"
+}
