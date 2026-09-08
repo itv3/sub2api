@@ -40,7 +40,24 @@ type ignoredJSONValue struct{}
 
 func (*ignoredJSONValue) UnmarshalJSON([]byte) error { return nil }
 
+// newOrderedJSONDocument 先走零分配扫描器定位顶层字段（docs/bug.md 6.4 第 3 点）；
+// 扫描器无法确认语法时改走 Decoder 路径，使错误值与过去完全一致。
 func newOrderedJSONDocument(source []byte) (*orderedJSONDocument, error) {
+	fields, fieldIndex, err := scanOrderedJSONFields(source)
+	if err != nil {
+		if errors.Is(err, errJSONScanInvalid) {
+			return newOrderedJSONDocumentWithDecoder(source)
+		}
+		return nil, err
+	}
+	return &orderedJSONDocument{
+		source: source, fields: fields, fieldIndex: fieldIndex, duplicatesChecked: true,
+	}, nil
+}
+
+// newOrderedJSONDocumentWithDecoder 是 encoding/json Decoder 路径，仅在扫描器拒绝时用于
+// 产出原始错误；语法合法的 Body 不会走到这里。
+func newOrderedJSONDocumentWithDecoder(source []byte) (*orderedJSONDocument, error) {
 	decoder := json.NewDecoder(bytes.NewReader(source))
 	decoder.UseNumber()
 	opening, err := decoder.Token()

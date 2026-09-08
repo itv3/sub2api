@@ -15,6 +15,12 @@ func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
+	// 只读预检（docs/bug.md 6.4 第 3 点）：正文合法且三个遗留别名都不存在时，不为“确认
+	// 无需改写”解码整段正文；非法正文仍走下面的解码路径，让错误行为与原实现一致。
+	if officialJSONValidateObject(body) == nil &&
+		!openAIBodyHasAnyTopLevelKey(body, "messages", "prompt", "commands") {
+		return body, false, nil
+	}
 
 	var request map[string]any
 	if err := decodeOpenAIJSONUseNumber(body, &request); err != nil {

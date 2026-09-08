@@ -38,14 +38,76 @@ func officialEgressInvocationIDForRequest(c *gin.Context) (string, error) {
 	return invocationID, nil
 }
 
+// officialEgressReplayableBody 是用已知字节装配的请求体：读取行为与 bytes.Reader 完全相同，
+// 同时让 readReplayableHTTPRequestBody 可以直接取回原字节，不必每个 attempt 都把整段
+// Body 重新读一遍（docs/bug.md 6.4 第 3 点）。装配后的字节视为只读，所有取回方都不得改写。
+type officialEgressReplayableBody struct {
+	*bytes.Reader
+	bytes []byte
+}
+
+func newOfficialEgressReplayableBody(body []byte) *officialEgressReplayableBody {
+	return &officialEgressReplayableBody{Reader: bytes.NewReader(body), bytes: body}
+}
+
+func (b *officialEgressReplayableBody) Close() error { return nil }
+
 // resetOfficialEgressRequestBody 在最终修正器改写 Body 后同步请求长度与重放函数。
 // HTTP 重试会重新构建请求，但重定向和诊断代码仍可能使用 GetBody，因此三者必须一致。
+// 空正文保持 http.NoBody，与 http.NewRequest 对空 bytes.Reader 的处理一致。
 func resetOfficialEgressRequestBody(req *http.Request, body []byte) {
-	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
+	if len(body) == 0 {
+		req.Body = http.NoBody
+		req.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
+		return
 	}
+	req.Body = newOfficialEgressReplayableBody(body)
+	req.GetBody = func() (io.ReadCloser, error) {
+		return newOfficialEgressReplayableBody(body), nil
+	}
+}
+
+// readOfficialEgressRequestBodyBytes 取回 Forward HTTP attempt 请求的完整正文字节，语义与
+// readReplayableHTTPRequestBody 相同：用 officialEgressReplayableBody 装配的请求直接返回原
+// 字节（只读，不复制）；其余情况按已知长度预留空间读取，不再让 io.ReadAll 倍增扩容。
+func readOfficialEgressRequestBodyBytes(request *http.Request) ([]byte, error) {
+	if request == nil || request.Body == nil || request.Body == http.NoBody {
+		return nil, nil
+	}
+	if replayable, ok := request.Body.(*officialEgressReplayableBody); ok {
+		return replayable.bytes, nil
+	}
+	if request.GetBody != nil {
+		body, err := request.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = body.Close() }()
+		if replayable, ok := body.(*officialEgressReplayableBody); ok {
+			return replayable.bytes, nil
+		}
+		return readAllSized(body, request.ContentLength)
+	}
+	body, err := readAllSized(request.Body, request.ContentLength)
+	if err != nil {
+		return nil, err
+	}
+	resetOfficialEgressRequestBody(request, body)
+	return body, nil
+}
+
+// readAllSized 读完一个 reader；长度已知时一次性预留空间，避免 io.ReadAll 倍增扩容把
+// 大正文多复制一遍。
+func readAllSized(reader io.Reader, sizeHint int64) ([]byte, error) {
+	if sizeHint <= 0 || sizeHint > 1<<30 {
+		return io.ReadAll(reader)
+	}
+	buffer := bytes.NewBuffer(make([]byte, 0, int(sizeHint)+bytes.MinRead+1))
+	if _, err := buffer.ReadFrom(reader); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }
 
 // attachOfficialEgressHTTPContext 在每次 HTTP 请求重建后解析一次上下文。

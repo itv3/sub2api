@@ -1071,6 +1071,12 @@ Go AST 门禁负责裸版本字面量和跨行注释的归属判断。其命中�
 HTTP/1.1 在写出前定型大小写、顺序、host 和长度，WS 按 tungstenite 线序定型，Body 保持
 稳定字段顺序和 JSON 数值保真。服务端返回的文件上传签名 URL 是完整动态 URL 的唯一例外。
 
+Body 定型只改写画像声明的字段。未被改动的嵌套值（input 项、工具项及其成员）必须逐字节复用入站正文中的
+原始区间，不得经 `map[string]any` 往返重编码，否则嵌套键会被改成字典序、大整数会经 float64 改写。被改动的
+对象保留其余成员的原始顺序，新增键按字典序追加在末尾；数组项先按内容匹配原始项，匹配不到才按位置对应。
+该规则由 `official_egress_json_fidelity_regression_test.go` 与 final-wire 测试锁定：实现方式（解码比对或
+字节区间拼接）可以变，输出字节不能变。
+
 Compiler 对静态 endpoint 的调用方 URL 不做宽松归一化，而是以本次 invocation 已绑定的
 ReleaseBundle endpoint 和 protocol 为权威执行以下封闭校验：
 

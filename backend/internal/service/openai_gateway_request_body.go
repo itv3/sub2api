@@ -225,7 +225,7 @@ func SanitizeOpenAICrossModeFailoverReasoning(body []byte) (sanitized []byte, ch
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	if !gjson.GetBytes(body, "input").Exists() {
+	if !openAIBodyGet(body, "input").Exists() {
 		return body, false, nil
 	}
 	var decoded map[string]any
@@ -397,7 +397,7 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse
 	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
 		return body, false, nil
 	}
-	input := gjson.GetBytes(body, "input")
+	input := openAIBodyGet(body, "input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
@@ -874,7 +874,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 	changed := false
 	prompt := gjson.GetBytes(normalized, "prompt")
 	if prompt.Exists() {
-		input := gjson.GetBytes(normalized, "input")
+		input := openAIBodyGet(normalized, "input")
 		if prompt.Type != gjson.Null && (!input.Exists() || input.Type == gjson.Null) {
 			next, err := sjson.SetRawBytes(normalized, "input", []byte(prompt.Raw))
 			if err != nil {
@@ -1015,7 +1015,7 @@ func normalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, account *Ac
 		}
 	}
 	needsOrphanCleanup := account != nil && account.IsOpenAIOAuthLike() &&
-		gjson.GetBytes(normalized, "input").IsArray()
+		openAIBodyGet(normalized, "input").IsArray()
 	if needsOrphanCleanup || openAIResponsesInputMayNeedTruncation(normalized) {
 		var reqBody map[string]any
 		if err := decodeOpenAIJSONUseNumber(normalized, &reqBody); err != nil {
@@ -1122,7 +1122,7 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		changed = true
 	}
 
-	if inputResult := gjson.GetBytes(normalized, "input"); inputResult.Exists() {
+	if inputResult := openAIBodyGet(normalized, "input"); inputResult.Exists() {
 		switch {
 		case inputResult.Type == gjson.String:
 			text := inputResult.String()
@@ -1693,8 +1693,8 @@ func openAIRequestBodyMayContainImageInput(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
-	messages := gjson.GetBytes(body, "messages.#-1")
+	input := openAIBodyGet(body, "input")
+	messages := openAIBodyGet(body, "messages.#-1")
 	return openAIJSONValueMayContainImageInput(input) || openAIJSONValueMayContainImageInput(messages)
 }
 
@@ -1726,7 +1726,7 @@ func openAIRequestBodyMayContainEmptyBase64InputImage(body []byte) bool {
 	if len(body) == 0 || !openAIRequestBodyMayContainInputImageToken(body) {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	input := openAIBodyGet(body, "input")
 	if !input.Exists() {
 		return false
 	}

@@ -63,20 +63,20 @@ func shouldStripOpenAIResponsesNonPairCallID(itemType string) bool {
 }
 
 func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
-	input := gjson.GetBytes(body, "input")
+	input := openAIBodyGet(body, "input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
 
 	type inputItem struct {
-		body        []byte
+		raw         string // 零拷贝的原始片段，只有确认需要改写时才复制
 		stripID     bool
 		stripCallID bool
 	}
 
 	items := make([]inputItem, 0)
 	input.ForEach(func(_, item gjson.Result) bool {
-		parsed := inputItem{body: []byte(item.Raw)}
+		parsed := inputItem{raw: item.Raw}
 		if item.IsObject() {
 			itemType := item.Get("type")
 			id := item.Get("id")
@@ -102,7 +102,7 @@ func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
 
 	rebuiltItems := make([][]byte, 0, len(items))
 	for index, item := range items {
-		itemBody := item.body
+		itemBody := []byte(item.raw)
 		if item.stripID {
 			var err error
 			itemBody, err = sjson.DeleteBytes(itemBody, "id")

@@ -196,7 +196,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_openai_http.go",
-          "sha256": "8a82ba775eebd17e738cb56c73e563d04a2c149a1c8540405d86e949d6976ab4"
+          "sha256": "38e21b8c9ad427ef24efc61f35950fc9d92e53bb94bc19e01648f9ea3b0cad76"
         },
         {
           "path": "backend/internal/service/openai_ws_forwarder_payload.go",
@@ -244,11 +244,11 @@
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_openai_http.go",
-          "sha256": "8a82ba775eebd17e738cb56c73e563d04a2c149a1c8540405d86e949d6976ab4"
+          "sha256": "38e21b8c9ad427ef24efc61f35950fc9d92e53bb94bc19e01648f9ea3b0cad76"
         },
         {
           "path": "backend/internal/service/official_egress_openai_ws.go",
-          "sha256": "3a5ee443d8b891220059cf21637f0e8029b72aaf9e098f21c3bcea04f48a5999"
+          "sha256": "b11f348a872eb38a3c3f8159b50ee5a8f744a881ac8615b8c6ca451a3c27752e"
         }
       ],
       "facts": [
@@ -342,11 +342,11 @@
       "source_files": [
         {
           "path": "backend/internal/service/openai_gateway_forward.go",
-          "sha256": "05f5ed82cd07980a1865a88c54d656e9a57e3d2ffe99e07fadf64b41207640c3"
+          "sha256": "1b15d642f4d80023b9067096f1a896fb36d977f6a9eb85191afa9698c374644b"
         },
         {
           "path": "backend/internal/service/official_egress_integration.go",
-          "sha256": "5c9f958f3a6fb9146ede3cab1b6fc3298f6f057f709bd4c5ecab1e5b788bd4d7"
+          "sha256": "6564cec1ac6713c9e48a1fa28d795148943dfdfab82dbfac7c9f32174665e315"
         }
       ],
       "facts": [
@@ -474,7 +474,7 @@
       "source_files": [
         {
           "path": "backend/internal/service/official_egress_openai_http.go",
-          "sha256": "8a82ba775eebd17e738cb56c73e563d04a2c149a1c8540405d86e949d6976ab4"
+          "sha256": "38e21b8c9ad427ef24efc61f35950fc9d92e53bb94bc19e01648f9ea3b0cad76"
         },
         {
           "path": "backend/internal/service/official_egress_codex_0145_profile.go",

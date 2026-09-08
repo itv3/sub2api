@@ -28,8 +28,17 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
+	// 只读预检（docs/bug.md 6.4 第 3 点）：索引扫描完成与解码器同一套语法校验并定位
+	// input 各项，不需要重排时不构建对象树；需要重排时直接在索引上建树，不再第二次
+	// 扫描。非法正文或顶层不是对象时仍走解码路径，让错误行为与原实现一致。
 	var payload map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &payload); err != nil {
+	index, indexErr := buildOfficialJSONRawIndexForDecode(body)
+	if indexErr == nil && index.nodes[index.root].kind == officialJSONRawKindObject {
+		if !openAICompactionTriggerNeedsReorder(index) {
+			return body, false, nil
+		}
+		payload = index.decodeObject(index.root)
+	} else if err := decodeOpenAIJSONUseNumber(body, &payload); err != nil {
 		return body, false, err
 	}
 	input, ok := payload["input"].([]any)
@@ -159,7 +168,7 @@ func HasCompactionTriggerInInput(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	input := openAIBodyGet(body, "input")
 	if !input.IsArray() {
 		return false
 	}
@@ -172,4 +181,33 @@ func HasCompactionTriggerInInput(body []byte) bool {
 		return true
 	})
 	return found
+}
+
+// openAICompactionTriggerNeedsReorder 在索引上判断 input 是否需要重排：与解码路径一样，
+// 顶层与 item 内的同名键都取最后一次出现；只有 compaction_trigger 项存在且不满足
+// “恰好一个且已在末尾”时才需要重排。字符串比对在原始字节上完成，不反转义整段正文。
+func openAICompactionTriggerNeedsReorder(index *officialJSONRawIndex) bool {
+	input := index.memberNode(index.root, "input")
+	if input < 0 || index.nodes[input].kind != officialJSONRawKindArray {
+		return false
+	}
+	triggerCount := 0
+	lastIsTrigger := false
+	for _, item := range index.nodes[input].items {
+		isTrigger := false
+		if index.nodes[item].kind == officialJSONRawKindObject {
+			if typeNode := index.memberNode(item, "type"); typeNode >= 0 {
+				n := &index.nodes[typeNode]
+				isTrigger = n.kind == officialJSONRawKindString && index.stringEquals(n, "compaction_trigger")
+			}
+		}
+		if isTrigger {
+			triggerCount++
+		}
+		lastIsTrigger = isTrigger
+	}
+	if triggerCount == 0 {
+		return false
+	}
+	return triggerCount != 1 || !lastIsTrigger
 }

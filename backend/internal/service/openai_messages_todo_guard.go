@@ -106,14 +106,30 @@ func responsesInputItemsContainText(items []apicompat.ResponsesInputItem, needle
 	return false
 }
 
+// inputContainsText 检查 needle 是否出现在各 input 项经 json.Marshal 编码后的文本中。
+// json.Marshal 默认做 HTML 转义：'<'、'>'、'&' 与控制字符永远不会原样出现在编码结果里，
+// 含这些字符的 needle（包括 openAICompatClaudeCodeTodoGuardMarker）不可能命中，无需逐项
+// 编码——逐项编码一个 12 MB 的 input 要再复制两遍正文（docs/bug.md 6.4 第 3 点）。
 func inputContainsText(input []any, needle string) bool {
 	needle = strings.TrimSpace(needle)
-	if needle == "" {
+	if needle == "" || jsonMarshalNeverEmits(needle) {
 		return false
 	}
 	for _, item := range input {
 		b, err := json.Marshal(item)
 		if err == nil && strings.Contains(string(b), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// jsonMarshalNeverEmits 判断 needle 是否含有 json.Marshal（默认 HTML 转义）绝不会原样输出
+// 的字节：'<'、'>'、'&' 会被写成 \u003c、\u003e、\u0026，控制字符会被写成 \n、\u00XX 等。
+func jsonMarshalNeverEmits(needle string) bool {
+	for i := 0; i < len(needle); i++ {
+		switch c := needle[i]; {
+		case c == '<', c == '>', c == '&', c < 0x20:
 			return true
 		}
 	}

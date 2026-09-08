@@ -1,6 +1,6 @@
 {
   "schema_version": "sub2apiplus-codex-cli-0151-worktree-successor/v1",
-  "issued_at_utc": "2026-09-06T23:12:15Z",
+  "issued_at_utc": "2026-09-08T03:05:34Z",
   "base_commit": "86aed19f738326e528808c5a4438bc4bcfaee02f",
   "scope": "codex-cli-0.151-current-worktree",
   "predecessor": {
@@ -193,6 +193,24 @@
         "sha256": "33282ce13ff7220f94ddf48e4e6f5091d6d67b45fd500403700f8fc7c5ae8921"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/body_document.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 14118,
+        "sha256": "db1c83bcba61d1f5278aac1816838cd680a539768623a751fad79172fb700e1e"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 14889,
+        "sha256": "8f0208f6101f585765ae96bb49dfe5093018ad729d13e51530a820416b8d12d6"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
     {
       "path": "backend/internal/officialegress/catalog_retirements_test.go",
@@ -625,6 +643,42 @@
         "sha256": "b793ebfbcfe762935b1c685d5cfe6583930b2d230a23497e0351083fb35fde70"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/json_scan.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 7634,
+        "sha256": "fb29432c93c7771c3c4d3342c3b4d72f83b66f9024abe739202431dcbb8752a4"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/officialegress/json_scan_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6835,
+        "sha256": "01689a123ae8c4a8a371e40cadb22556008d04d44ca6dfd6d9752fb827839387"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
     {
       "path": "backend/internal/officialegress/releasecontract/testdata/release-graph.json",
@@ -1077,6 +1131,24 @@
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
     {
+      "path": "backend/internal/service/official_egress_integration.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 17131,
+        "sha256": "5c9f958f3a6fb9146ede3cab1b6fc3298f6f057f709bd4c5ecab1e5b788bd4d7"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 19563,
+        "sha256": "6564cec1ac6713c9e48a1fa28d795148943dfdfab82dbfac7c9f32174665e315"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
       "path": "backend/internal/service/official_egress_openai_anchor.go",
       "before": {
         "existence": "absent",
@@ -1095,6 +1167,42 @@
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
     {
+      "path": "backend/internal/service/official_egress_openai_decode_legacy_reference_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 7133,
+        "sha256": "1306c42f2b681f4876b5bd595a1eb35216009e761dc5fb35719074659ae0c61e"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_decode_sharing_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 18313,
+        "sha256": "f5c28a5b629bfb51de6b1ebd29b813d2c500f3add420469364c14736a40f9891"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
       "path": "backend/internal/service/official_egress_openai_http.go",
       "before": {
         "existence": "present",
@@ -1107,8 +1215,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 69710,
-        "sha256": "8a82ba775eebd17e738cb56c73e563d04a2c149a1c8540405d86e949d6976ab4"
+        "size": 74361,
+        "sha256": "38e21b8c9ad427ef24efc61f35950fc9d92e53bb94bc19e01648f9ea3b0cad76"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1125,10 +1233,100 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 13612,
-        "sha256": "ca5ca77361e65242aea94ad58387c486c9de1f5b9fafb0a767dad0c6976c3c94"
+        "size": 9357,
+        "sha256": "095f623ccc2437a955ace9b22d97cdf0ee44e8b9adddaa365ccf2435c7153cf9"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_json_decode.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4327,
+        "sha256": "581fa89a4d1ac4561db0b2126d3f2d1aac7e808dea44bfcc18594db8eb02f17d"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_json_decode_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 8272,
+        "sha256": "76e5b21c7d8270ee7a72840ea8aea0f017d56d1fdeba798cf3f49f861fee5b76"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_json_index.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 30249,
+        "sha256": "594099fc344e333d8503472be5ba5b6a9dda2c2d3f4f3d575385095f881fb095"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_json_legacy_reference_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6934,
+        "sha256": "654cc612c164c6002e0a01bbc7092fc5e34ab29e73e317dd5964be53091a7ce5"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_json_splice_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 16989,
+        "sha256": "d5276dce1d88b7ce3362a410721b7959f46e19d979fda510653eed91ac531e92"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
     {
       "path": "backend/internal/service/official_egress_openai_ws.go",
@@ -1239,6 +1437,42 @@
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
     {
+      "path": "backend/internal/service/openai_compact_body_signal.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6152,
+        "sha256": "6782693b8a7bd802abffd4189dc13b64a72083c2e139f1c12fa45edf2d20f54f"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 7857,
+        "sha256": "0571e69492a1a808030e5b37d132bb5df51209bf3e3f8ec4cea0ca00021ad8fd"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_forward_plan.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 25316,
+        "sha256": "f7711eced66bdfa351475705f8258820936956ffc91d15a01dc73e4611bd5141"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 26227,
+        "sha256": "35d1f8f8d9fe3f455274118e280cf0509b74891cd4f28003da873df2b00c5aef"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
       "path": "backend/internal/service/openai_gateway_forward.go",
       "before": {
         "existence": "present",
@@ -1273,6 +1507,24 @@
         "sha256": "12e787207800f03e78032d8403bda571d0371cb30ff088734725c82dde26053f"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_gateway_request_body.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 63019,
+        "sha256": "3e381cf4f90c3f026f266ad5d02b12a295dca44327543da2ed63a9b53e01288e"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 63011,
+        "sha256": "dd8c3fd04eabb98322e27e91e43f526a20d708bb803cb1a616c5256d3ce67c20"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
     {
       "path": "backend/internal/service/openai_gateway_service.go",
@@ -1347,6 +1599,60 @@
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
     {
+      "path": "backend/internal/service/openai_json_rawview.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1827,
+        "sha256": "2dba21c7332e642cc129d8a1e0cc8f9b7ec3cb1a2329525430ed312d9180399f"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_messages_todo_guard.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3218,
+        "sha256": "40b85820b38dfa527996085cb372a0fe36e088b17976c5337269cb5af94bd8c2"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 4114,
+        "sha256": "c8171e9662cf84b8044b0e0110ff92f0be7b57f9b423ec34440097e203fc88ef"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_messages_todo_guard_shortcircuit_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 1914,
+        "sha256": "968fc0dbdc54a5e2a8e93dcadd671b62250ed483c2df0d4971338e41ff26352d"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
       "path": "backend/internal/service/openai_model_capabilities.go",
       "before": {
         "existence": "present",
@@ -1401,6 +1707,78 @@
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
     {
+      "path": "backend/internal/service/openai_responses_ingress_compat.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 6852,
+        "sha256": "f758afe692a25d284a52cfecb9016f223d4bf7862fcea3e070d0a3a820ae247a"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 7237,
+        "sha256": "ed3646c4b5eef7914826dd4e45a23f8ccfb4ef257a7850377d4cbb870d6e433d"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_responses_item_id.go",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3677,
+        "sha256": "164bb97bfb10b285f5365a003e5bdced32050544203f78fd0f2e050bdd47035c"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 3741,
+        "sha256": "f6b6dd7c5c49ae438a3dfee448178827165646615eab70d79a1673024439808e"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_responses_lite_legacy_reference_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 833,
+        "sha256": "456ba6cc884458256f0e35008a5eb5b960009a8a55cfa9336646c864ee004b69"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
+      "path": "backend/internal/service/openai_responses_lite_precheck_test.go",
+      "before": {
+        "existence": "absent",
+        "file_type": "absent",
+        "mode": "",
+        "size": 0,
+        "sha256": ""
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 5651,
+        "sha256": "8d8a5a9fa2d99c4b6688f4fdb39112f7f9711c6d296d237c52c79971287fe156"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
+    },
+    {
       "path": "backend/internal/service/openai_responses_lite_tools.go",
       "before": {
         "existence": "present",
@@ -1413,8 +1791,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 11874,
-        "sha256": "087ba3b91adebb102abd4ca63e296626c8475f3a61befe8e484a9d1efb99eeb9"
+        "size": 16289,
+        "sha256": "a7e98a4af45e8a5d01a3d74a74e43d5da54a808ce3f561ea0bdabb3ec5ac8957"
       },
       "reason": "承接 Lite 能力路由修复后的当前工作区源码；历史收据保持只读。"
     },
@@ -1521,8 +1899,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 1926,
-        "sha256": "e5ed7d9fc791e3ff79fb54b1bf014d3f86314b038a6220fb0ba8d52736dce2f8"
+        "size": 1967,
+        "sha256": "4823a01ae42562b62751ad7ee9fe244b8147a76da434b01bc66c085985c1396c"
       },
       "reason": "覆盖生产历史工具轮与真正无边界歧义两类情形；历史收据保持只读。"
     },
@@ -1813,6 +2191,24 @@
         "sha256": "3b2f4e431d84a715922e8e7b304f6cadab63c27b07b20aad43a28191b7709c48"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "before": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 164955,
+        "sha256": "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0"
+      },
+      "after": {
+        "existence": "present",
+        "file_type": "regular",
+        "mode": "0644",
+        "size": 165585,
+        "sha256": "8e1768151bac64e9270c0e98490abdce02eb1715d2673604d9ed5fb05259ba49"
+      },
+      "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
     {
       "path": "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-coordinate-decoupling-source-transition.json",
@@ -2313,10 +2709,10 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 48226,
-        "sha256": "6256f663ac9a37848ec58a34f6e33aa550187a28e7cccbff4d6bd599838f70bd"
+        "size": 48455,
+        "sha256": "0dcf40c34a2840220d1698d13a61324c4e5a3c4252be4895eeb7eb1fded77b33"
       },
-      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+      "reason": "承接问题三工具续接与问题四内存优化后的受管工具树摘要；旧历史收据保持只读。"
     },
     {
       "path": "tools/official_client_capture/candidate_rule_assertion.py",
@@ -2386,9 +2782,9 @@
         "file_type": "regular",
         "mode": "0644",
         "size": 22575,
-        "sha256": "cf286e1a565d974a325186bba95209885b46fd1ccdb43c6a8a384b363e150b8b"
+        "sha256": "08cfda945a1572dc6dac0aa85505aaf4f10a8dfbace57cf25dfe4f11427bca9d"
       },
-      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+      "reason": "同步问题三工具续接与问题四内存优化涉及的四份源码快照摘要；事实与规则语义不变。"
     },
     {
       "path": "tools/official_client_capture/candidate_test_trace.py",
@@ -2403,10 +2799,10 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 42114,
-        "sha256": "56d7ee9d51c328a4b06de51f037628064c72e634537dc9221831a362cf20efcd"
+        "size": 42514,
+        "sha256": "e9833b0f586c92cbb10c1768f75bb2dce189e1fd9922ee16f4b78ed1bd453d6c"
       },
-      "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
+      "reason": "冻结补全三份源码快照后的候选事实映射摘要；旧历史收据保持只读。"
     },
     {
       "path": "tools/official_client_capture/codex_upgrade_scenarios_0_149_1.json",
@@ -2523,5 +2919,5 @@
     "current 0.151 受影响闭集测试"
   ],
   "result": "pending_current_worktree_reconciliation",
-  "identity_sha256": "7f02460398c2b5461d4bfaf1b6623443f9a26ac04dbb069b5e8d64d1836972f4"
+  "identity_sha256": "bb8765472af99d071e7ced2817293a5b5b574f35f5925ac69f4ff0bd758f0954"
 }

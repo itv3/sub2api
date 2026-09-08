@@ -92,7 +92,7 @@ func openAIResponsesLiteRequiresFullResponses(body []byte) bool {
 			return true
 		}
 	}
-	input := gjson.GetBytes(body, "input")
+	input := openAIBodyGet(body, "input")
 	if input.IsArray() {
 		for _, item := range input.Array() {
 			itemType := strings.TrimSpace(item.Get("type").String())
@@ -350,9 +350,23 @@ func openAIResponsesLiteToolIdentityForError(rawTool any) string {
 }
 
 func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error) {
-	requestBody, err := decodeOfficialJSONObjectUseNumber(body)
-	if err != nil {
-		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
+	// 只读预检（docs/bug.md 6.4 第 3 点）：官方客户端发往 Lite 端点的请求本身已满足
+	// 契约（reasoning.context=all_turns、parallel_tool_calls=false、namespace 工具已在
+	// additional_tools），索引扫描能证明 normalizeOpenAIResponsesLiteTools 既不会改写也
+	// 不会报错时，不构建对象树；否则在同一索引上建树，不再第二次扫描。非法正文或顶层
+	// 不是对象时走解码路径，错误值与原实现一致。
+	var requestBody map[string]any
+	index, indexErr := buildOfficialJSONRawIndexForDecode(body)
+	if indexErr == nil && index.nodes[index.root].kind == officialJSONRawKindObject {
+		if openAIResponsesLiteAlreadyNormalized(index) {
+			return body, false, nil
+		}
+		requestBody = index.decodeObject(index.root)
+	} else {
+		var err error
+		if requestBody, err = decodeOfficialJSONObjectUseNumber(body); err != nil {
+			return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
+		}
 	}
 	changed, err := normalizeOpenAIResponsesLiteTools(requestBody)
 	if err != nil || !changed {
@@ -363,4 +377,93 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 		return body, false, fmt.Errorf("encode responses Lite request body: %w", err)
 	}
 	return rebuilt, true, nil
+}
+
+// openAIResponsesLiteAlreadyNormalized 只在能证明 normalizeOpenAIResponsesLiteTools 会返回
+// (false, nil) 时返回 true：任何会报错或会改写的形态都返回 false，交给解码路径处理。判断
+// 逻辑与 normalizeOpenAIResponsesLiteTools 及其辅助函数逐条对应，同名键取最后一次出现。
+func openAIResponsesLiteAlreadyNormalized(index *officialJSONRawIndex) bool {
+	root := index.root
+	kind := func(node int32) officialJSONRawKind { return index.nodes[node].kind }
+	// parallel_tool_calls 存在时必须是布尔，否则旧路径报错。
+	parallel := index.memberNode(root, "parallel_tool_calls")
+	if parallel >= 0 && kind(parallel) != officialJSONRawKindTrue && kind(parallel) != officialJSONRawKindFalse {
+		return false
+	}
+	// reasoning 存在且非 null 时必须是对象，否则旧路径报错。
+	reasoning := index.memberNode(root, "reasoning")
+	reasoningIsObject := reasoning >= 0 && kind(reasoning) == officialJSONRawKindObject
+	if reasoning >= 0 && kind(reasoning) != officialJSONRawKindNull && !reasoningIsObject {
+		return false
+	}
+	tools := index.memberNode(root, "tools")
+	toolsPresent := tools >= 0 && kind(tools) != officialJSONRawKindNull
+	if toolsPresent {
+		if kind(tools) != officialJSONRawKindArray {
+			return false
+		}
+		for _, tool := range index.nodes[tools].items {
+			switch kind(tool) {
+			case officialJSONRawKindString:
+				if strings.TrimSpace(index.decodeString(tool)) == "" {
+					return false
+				}
+			case officialJSONRawKindObject:
+				toolType := ""
+				if typeNode := index.memberNode(tool, "type"); typeNode >= 0 && kind(typeNode) == officialJSONRawKindString {
+					toolType = strings.TrimSpace(index.decodeString(typeNode))
+				}
+				switch toolType {
+				case "function", "custom", "tool_search":
+				default:
+					// namespace 需要迁移到 additional_tools；空或其他类型旧路径报错。
+					return false
+				}
+			default:
+				return false
+			}
+		}
+	}
+	// ensureOpenAIResponsesLiteReasoningContext：缺失、null 或 context 不是 "all_turns" 都会改写。
+	if !reasoningIsObject {
+		return false
+	}
+	contextNode := index.memberNode(reasoning, "context")
+	if contextNode < 0 || kind(contextNode) != officialJSONRawKindString ||
+		!index.stringEquals(&index.nodes[contextNode], "all_turns") {
+		return false
+	}
+	// ensureOpenAIResponsesLiteParallelToolCalls：存在工具时 parallel_tool_calls 必须恰为 false。
+	if openAIResponsesLiteHasToolsInIndex(index, tools) {
+		if parallel < 0 || kind(parallel) != officialJSONRawKindFalse {
+			return false
+		}
+	}
+	return true
+}
+
+// openAIResponsesLiteHasToolsInIndex 与 openAIResponsesLiteHasTools 在索引上逐条对应。
+func openAIResponsesLiteHasToolsInIndex(index *officialJSONRawIndex, tools int32) bool {
+	if tools >= 0 && index.nodes[tools].kind == officialJSONRawKindArray && len(index.nodes[tools].items) > 0 {
+		return true
+	}
+	input := index.memberNode(index.root, "input")
+	if input < 0 || index.nodes[input].kind != officialJSONRawKindArray {
+		return false
+	}
+	for _, item := range index.nodes[input].items {
+		if index.nodes[item].kind != officialJSONRawKindObject {
+			continue
+		}
+		typeNode := index.memberNode(item, "type")
+		if typeNode < 0 || index.nodes[typeNode].kind != officialJSONRawKindString ||
+			strings.TrimSpace(index.decodeString(typeNode)) != "additional_tools" {
+			continue
+		}
+		itemTools := index.memberNode(item, "tools")
+		if itemTools >= 0 && index.nodes[itemTools].kind == officialJSONRawKindArray && len(index.nodes[itemTools].items) > 0 {
+			return true
+		}
+	}
+	return false
 }

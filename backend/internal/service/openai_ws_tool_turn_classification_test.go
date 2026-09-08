@@ -20,7 +20,9 @@ func TestOpenAIOfficialEgressWSToolOutputTurnTreatsToolHistoryBeforeUserAsHistor
 			map[string]any{"type": "message", "role": "user", "content": "继续"},
 		},
 	}
-	require.Equal(t, [][]int{{0, 1}, {2}}, splitOfficialOpenAIWSInputTurnSegments(payload["input"].([]any)))
+	input, ok := payload["input"].([]any)
+	require.True(t, ok)
+	require.Equal(t, [][]int{{0, 1}, {2}}, splitOfficialOpenAIWSInputTurnSegments(input))
 
 	hasAny, hasCurrent, reliable, err := classifyOfficialOpenAIWSToolOutputTurn(payload)
 	require.NoError(t, err)

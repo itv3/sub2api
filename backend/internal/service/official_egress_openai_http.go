@@ -224,28 +224,85 @@ var officialOpenAICompactionReasons = map[string]struct{}{
 // 标准第三方请求可以没有 Codex 身份字段；真正的官方 Codex 请求仍由 Finalizer
 // 按入口 Header 严格校验完整身份。
 func captureOfficialOpenAIHTTPBodyContract(body []byte) (*officialOpenAIHTTPBodyContract, error) {
-	payload, err := decodeOfficialJSONObjectUseNumber(body)
-	if err != nil {
+	// 索引扫描代替整段解码（docs/bug.md 6.4 第 3 点）：一次只读扫描完成与解码器同一套
+	// 语法的严格校验并定位全部值区间，之后只把契约字段还原成 Go 值，得到与整段解码逐项
+	// 相同的结果；顶层与 item 内的同名键都取最后一次出现。扫描失败或顶层不是对象时用
+	// encoding/json 路径复核，错误值与整段解码完全一致。
+	index, err := buildOfficialJSONRawIndexForDecode(body)
+	if err != nil || index.nodes[index.root].kind != officialJSONRawKindObject {
+		if _, slowErr := decodeOfficialJSONObjectUseNumberSlow(body); slowErr != nil {
+			err = slowErr
+		}
+		if err == nil {
+			err = errors.New("JSON 顶层必须是对象")
+		}
 		return nil, fmt.Errorf("OpenAI official egress requires valid JSON body: %w", err)
 	}
 	contract := &officialOpenAIHTTPBodyContract{}
-	contract.instructions, contract.instructionsPresent = payload["instructions"]
-	contract.include, contract.includePresent = payload["include"]
-	contract.parallelToolCalls, contract.parallelPresent = payload["parallel_tool_calls"]
-
-	if promptCacheKey, ok := payload["prompt_cache_key"].(string); ok &&
-		strings.TrimSpace(promptCacheKey) != "" {
-		contract.promptCacheKeySet = true
-		contract.promptCacheKey = strings.TrimSpace(promptCacheKey)
+	root := index.root
+	if node := index.memberNode(root, "instructions"); node >= 0 {
+		contract.instructions = index.decodeValue(node)
+		contract.instructionsPresent = true
 	}
-
-	if clientMetadata, ok := payload["client_metadata"].(map[string]any); ok {
-		contract.clientMetadataSet = true
-		contract.clientMetadata = cloneOfficialOpenAIMap(clientMetadata)
+	if node := index.memberNode(root, "include"); node >= 0 {
+		contract.include = index.decodeValue(node)
+		contract.includePresent = true
 	}
-	contract.additionalTools = collectOfficialOpenAIAdditionalTools(payload)
-	contract.callIDs = collectOfficialOpenAICallIDs(payload)
+	if node := index.memberNode(root, "parallel_tool_calls"); node >= 0 {
+		contract.parallelToolCalls = index.decodeValue(node)
+		contract.parallelPresent = true
+	}
+	if node := index.memberNode(root, "prompt_cache_key"); node >= 0 && index.nodes[node].kind == officialJSONRawKindString {
+		text := strings.TrimSpace(index.decodeString(node))
+		if text != "" {
+			contract.promptCacheKeySet = true
+			contract.promptCacheKey = text
+		}
+	}
+	if node := index.memberNode(root, "client_metadata"); node >= 0 && index.nodes[node].kind == officialJSONRawKindObject {
+		if metadata, ok := index.decodeValue(node).(map[string]any); ok {
+			contract.clientMetadataSet = true
+			contract.clientMetadata = cloneOfficialOpenAIMap(metadata)
+		}
+	}
+	contract.additionalTools, contract.callIDs = collectOfficialOpenAIInputContractFromIndex(index, index.memberNode(root, "input"))
 	return contract, nil
+}
+
+// collectOfficialOpenAIInputContractFromIndex 与 collectOfficialOpenAIAdditionalTools、
+// collectOfficialOpenAICallIDs 在已解码树上的结果逐项一致，但只在索引上遍历 input：
+// 只有 additional_tools 项、item 的 type 与工具调用项的 call_id 会被还原成 Go 值。
+func collectOfficialOpenAIInputContractFromIndex(index *officialJSONRawIndex, input int32) ([]any, []officialOpenAIHTTPCallID) {
+	additional := make([]any, 0, 1)
+	callIDs := make([]officialOpenAIHTTPCallID, 0)
+	if input < 0 || index.nodes[input].kind != officialJSONRawKindArray {
+		return additional, callIDs
+	}
+	for _, item := range index.nodes[input].items {
+		if index.nodes[item].kind != officialJSONRawKindObject {
+			continue
+		}
+		itemType := ""
+		if typeNode := index.memberNode(item, "type"); typeNode >= 0 && index.nodes[typeNode].kind == officialJSONRawKindString {
+			itemType = index.decodeString(typeNode)
+		}
+		if itemType == "additional_tools" {
+			additional = append(additional, index.decodeValue(item))
+		}
+		if !isCodexToolCallItemType(itemType) {
+			continue
+		}
+		callIDNode := index.memberNode(item, "call_id")
+		if callIDNode < 0 || index.nodes[callIDNode].kind != officialJSONRawKindString {
+			continue
+		}
+		callID := index.decodeString(callIDNode)
+		if strings.TrimSpace(callID) == "" {
+			continue
+		}
+		callIDs = append(callIDs, officialOpenAIHTTPCallID{ItemType: itemType, Value: callID})
+	}
+	return additional, callIDs
 }
 
 // captureOfficialOpenAIHTTPBodyContractForRequest 在正文契约之上恢复 Handler
@@ -461,12 +518,14 @@ func prepareOpenAIOfficialEgressSemanticHTTPRequest(
 		identity.parentThreadID,
 		identity.memoryGenerate,
 	)
+	// 派生工具呈现与 Finalizer 共用同一次解码（docs/bug.md 6.4 第 3 点）：工具呈现改写
+	// 后按需重编码得到新的 body，payload 与 body 始终指向同一内容，Finalizer 不再解码。
+	payload, decodeErr := decodeOfficialJSONObjectUseNumber(body)
+	if decodeErr != nil {
+		return nil, result, fmt.Errorf("decode OpenAI official egress body: %w", decodeErr)
+	}
 	toolPresentationModified := false
 	if !plan.IsCompact {
-		payload, decodeErr := decodeOfficialJSONObjectUseNumber(body)
-		if decodeErr != nil {
-			return nil, result, fmt.Errorf("解析 Codex 派生工具呈现：%w", decodeErr)
-		}
 		toolPresentationModified, err = officialCodexNormalizeDerivedToolPresentation(
 			egressContext.ProfileVersion(),
 			codexEndpointID(egressContext.CodexEndpointProfileID()),
@@ -482,7 +541,8 @@ func prepareOpenAIOfficialEgressSemanticHTTPRequest(
 			}
 		}
 	}
-	finalBody, bodyModified, err := finalizeOfficialOpenAIHTTPBody(
+	finalBody, bodyModified, err := finalizeOfficialOpenAIHTTPBodyPayload(
+		payload,
 		body,
 		plan.OfficialEgressBodyContract,
 		identity,
@@ -529,15 +589,42 @@ func prepareOpenAIOfficialEgressSemanticHTTPRequest(
 // compressOfficialOpenAIHTTPRequest 在所有 JSON 终态修正完成后执行官方 Codex
 // 请求压缩。level 由不可变版本画像传入；reset helper 同步 Body、ContentLength
 // 与 GetBody，确保重定向、重试和抓包读取到同一份压缩字节。
-func compressOfficialOpenAIHTTPRequest(req *http.Request, body []byte, level int) error {
+// officialOpenAIZstdEncoders 按压缩等级复用 zstd 编码器。每次 NewWriter 都会分配约
+// 25 MiB 编码器状态和 32 MiB 历史窗口，按请求创建让每个请求多出约 57 MiB 分配；
+// Encoder.EncodeAll 支持并发调用且每次调用都是独立帧，输出与新建编码器逐字节一致
+// （由 official_egress_openai_decode_sharing_test.go 锁定）。
+var officialOpenAIZstdEncoders sync.Map
+
+func officialOpenAIZstdEncoder(level int) (*zstd.Encoder, error) {
+	if cached, ok := officialOpenAIZstdEncoders.Load(level); ok {
+		if typed, isEncoder := cached.(*zstd.Encoder); isEncoder {
+			return typed, nil
+		}
+	}
 	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)))
+	if err != nil {
+		return nil, err
+	}
+	cached, loaded := officialOpenAIZstdEncoders.LoadOrStore(level, encoder)
+	if !loaded {
+		return encoder, nil
+	}
+	typed, isEncoder := cached.(*zstd.Encoder)
+	if !isEncoder {
+		// 缓存里不是编码器：以本次新建的为准并覆盖缓存
+		officialOpenAIZstdEncoders.Store(level, encoder)
+		return encoder, nil
+	}
+	_ = encoder.Close()
+	return typed, nil
+}
+
+func compressOfficialOpenAIHTTPRequest(req *http.Request, body []byte, level int) error {
+	encoder, err := officialOpenAIZstdEncoder(level)
 	if err != nil {
 		return fmt.Errorf("create OpenAI official zstd encoder: %w", err)
 	}
 	compressed := encoder.EncodeAll(body, nil)
-	if err := encoder.Close(); err != nil {
-		return fmt.Errorf("close OpenAI official zstd encoder: %w", err)
-	}
 	resetOfficialEgressRequestBody(req, compressed)
 	req.Header.Set("Content-Encoding", "zstd")
 	return nil
@@ -564,14 +651,34 @@ func finalizeOfficialOpenAIHTTPBody(
 	if contract == nil {
 		return nil, false, errors.New("OpenAI official egress body contract is nil")
 	}
-	// 解构一次，保持下方定型逻辑的可读性与原实现一致。
-	isCompact := options.IsCompact
-	useResponsesLite := options.UseResponsesLite
-	supportsParallelTools := options.SupportsParallelTools
 	payload, err := decodeOfficialJSONObjectUseNumber(body)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode OpenAI official egress body: %w", err)
 	}
+	return finalizeOfficialOpenAIHTTPBodyPayload(payload, body, contract, identity, reasoningDefaults, options)
+}
+
+// finalizeOfficialOpenAIHTTPBodyPayload 是 finalizeOfficialOpenAIHTTPBody 的已解码入口：
+// payload 必须是 body 的解码结果，调用方据此避免为定型再解码一次整段正文。payload 会被
+// 就地改写，调用后不得再当作未定型内容使用。
+func finalizeOfficialOpenAIHTTPBodyPayload(
+	payload map[string]any,
+	body []byte,
+	contract *officialOpenAIHTTPBodyContract,
+	identity officialOpenAIHTTPIdentity,
+	reasoningDefaults officialOpenAIReasoningDefaults,
+	options officialOpenAIHTTPBodyOptions,
+) ([]byte, bool, error) {
+	if contract == nil {
+		return nil, false, errors.New("OpenAI official egress body contract is nil")
+	}
+	if payload == nil {
+		return nil, false, errors.New("OpenAI official egress decoded body is nil")
+	}
+	// 解构一次，保持下方定型逻辑的可读性与原实现一致。
+	isCompact := options.IsCompact
+	useResponsesLite := options.UseResponsesLite
+	supportsParallelTools := options.SupportsParallelTools
 
 	modified := false
 	// 顶层 instructions 的所有权必须以入口契约为准，而不能由当前模型是否

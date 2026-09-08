@@ -229,6 +229,9 @@ type OpenAIForwardAttempt struct {
 	headers        http.Header
 	authentication http.Header
 	body           officialegress.RequestBody
+	// bodyBytes 是与 body 内容完全相同的只读字节，由 executeHTTPRequest 在构造 body 时一并
+	// 提供，让 ExecuteAttempt 不必再向 RequestBody 索取一份副本；为空时退回 ReplayableBytes。
+	bodyBytes []byte
 	// WS 握手本身没有语义 Body；路由提示只能从已解析的首个
 	// response.create 帧单独携带，不能回读同名普通 Header。
 	routingHint   officialegress.CodexRoutingHintFacts
@@ -245,8 +248,10 @@ type openAIForwardAttemptInput struct {
 	Headers        http.Header
 	Authentication http.Header
 	Body           officialegress.RequestBody
-	RoutingHint    officialegress.CodexRoutingHintFacts
-	DynamicInputs  officialegress.EndpointDynamicInputs
+	// BodyBytes 可选：与 Body 内容相同的只读字节，见 OpenAIForwardAttempt.bodyBytes。
+	BodyBytes     []byte
+	RoutingHint   officialegress.CodexRoutingHintFacts
+	DynamicInputs officialegress.EndpointDynamicInputs
 }
 
 func (p *OpenAIForwardInvocationPlan) NewAttempt(
@@ -321,6 +326,7 @@ func (p *OpenAIForwardInvocationPlan) newAttemptLocked(
 		protocol: input.Protocol, method: strings.ToUpper(strings.TrimSpace(input.Method)),
 		target: &clonedTarget, headers: input.Headers.Clone(),
 		authentication: input.Authentication.Clone(), body: input.Body,
+		bodyBytes:     input.BodyBytes,
 		routingHint:   input.RoutingHint,
 		dynamicInputs: input.DynamicInputs,
 	}, nil
@@ -367,9 +373,18 @@ func (p *OpenAIForwardInvocationPlan) ExecuteAttempt(
 			headers.Add(name, value)
 		}
 	}
-	bodyBytes, replayable := attempt.body.ReplayableBytes()
-	if !replayable {
+	if attempt.body.Mode() != officialegress.RequestBodyReplayable {
 		return officialegress.TransportResult{}, errors.New("Responses Forward 只接受 replayable 语义 Body")
+	}
+	// 优先复用构造 attempt 时提供的只读字节（docs/bug.md 6.4 第 3 点）；长度对不上说明不是
+	// 同一份内容，退回向 RequestBody 索取副本。
+	bodyBytes := attempt.bodyBytes
+	if bodyBytes == nil || int64(len(bodyBytes)) != attempt.body.ContentLength() {
+		var replayable bool
+		bodyBytes, replayable = attempt.body.ReplayableBytes()
+		if !replayable {
+			return officialegress.TransportResult{}, errors.New("Responses Forward 只接受 replayable 语义 Body")
+		}
 	}
 	semanticRequest, err := http.NewRequestWithContext(
 		ctx, attempt.method, attempt.target.String(), bytes.NewReader(bodyBytes),
@@ -453,7 +468,7 @@ func (p *OpenAIForwardInvocationPlan) executeHTTPRequest(
 	if p == nil || request == nil || request.URL == nil {
 		return nil, errors.New("OpenAI Forward HTTP attempt 输入不完整")
 	}
-	body, err := readReplayableHTTPRequestBody(request)
+	body, err := readOfficialEgressRequestBodyBytes(request)
 	if err != nil {
 		return nil, fmt.Errorf("读取 OpenAI Forward HTTP 请求体：%w", err)
 	}
@@ -472,7 +487,7 @@ func (p *OpenAIForwardInvocationPlan) executeHTTPRequest(
 		Protocol: officialegress.WireProtocolHTTP,
 		Method:   request.Method, URL: request.URL,
 		Headers: headers, Authentication: authentication,
-		Body: officialegress.NewReplayableRequestBody(body),
+		Body: officialegress.NewReplayableRequestBody(body), BodyBytes: body,
 	}
 	var attempt OpenAIForwardAttempt
 	if fallback != nil {

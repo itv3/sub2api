@@ -64,8 +64,6 @@ var officialOpenAITurnMetadataFieldOrder = []string{
 	"compaction",
 }
 
-type officialJSONRawPool map[string]json.RawMessage
-
 func marshalOfficialOpenAITurnMetadata(payload map[string]any) ([]byte, error) {
 	return marshalOfficialOrderedJSONObject(payload, officialOpenAITurnMetadataFieldOrder)
 }
@@ -127,13 +125,21 @@ func marshalOfficialJSONObjectPreservingOrderAndRaw(
 // marshalOfficialOrderedJSONObjectPreservingRaw 只固定官方结构体可观察的
 // 顶层字段顺序。未变化的嵌套值直接复用原始 JSON 字节；需要局部修改的对象和
 // 数组也会保留其余成员的原始字节与相对顺序，避免画像修正改写用户数据。
+// 实现见 official_egress_openai_json_index.go：对原始正文做一次只读扫描建立字节
+// 区间索引，未改动的值零分配比对后直接拼接，不再解码整段正文，也不再建立
+// 全文查找池；输出字节与旧实现逐字一致，由差分测试锁定。
 func marshalOfficialOrderedJSONObjectPreservingRaw(
 	payload map[string]any,
 	order []string,
 	original []byte,
 ) ([]byte, error) {
-	originalFields, originalKeys, _ := decodeOrderedRawJSONObject(original)
-	originalPool := collectOfficialJSONCompositeRawValues(original)
+	index := officialJSONRawIndexForOriginal(original)
+	root := int32(-1)
+	var originalKeys []string
+	if index != nil {
+		root = index.root
+		originalKeys = index.uniqueKeys(root)
+	}
 	known := make(map[string]struct{}, len(order))
 	keys := make([]string, 0, len(payload))
 	for _, key := range order {
@@ -165,34 +171,36 @@ func marshalOfficialOrderedJSONObjectPreservingRaw(
 	sort.Strings(unknown)
 	keys = append(keys, unknown...)
 
-	out := []byte{'{'}
-	for index, key := range keys {
-		if index > 0 {
+	out := make([]byte, 0, len(original)+256)
+	out = append(out, '{')
+	for index2, key := range keys {
+		if index2 > 0 {
 			out = append(out, ',')
 		}
 		encodedKey, err := json.Marshal(key)
 		if err != nil {
 			return nil, err
 		}
-		encodedValue, err := marshalOfficialJSONValuePreservingRaw(
-			payload[key],
-			originalFields[key],
-			originalPool,
-		)
+		out = append(out, encodedKey...)
+		out = append(out, ':')
+		child := int32(-1)
+		if index != nil {
+			child = index.memberNode(root, key)
+		}
+		out, err = officialJSONAppendValue(index, out, payload[key], child)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, encodedKey...)
-		out = append(out, ':')
-		out = append(out, encodedValue...)
 	}
 	out = append(out, '}')
 	return out, nil
 }
 
-// decodeOfficialJSONObjectUseNumber 在任何可能重新编码正文的官方出站路径中
-// 保留 JSON 数字的十进制文本，防止大整数经过 float64 后发生不可逆改写。
-func decodeOfficialJSONObjectUseNumber(body []byte) (map[string]any, error) {
+// decodeOfficialJSONObjectUseNumberSlow 是 encoding/json 路径的对象解码：保留 JSON 数字
+// 的十进制文本，防止大整数经过 float64 后发生不可逆改写。热路径已改为索引直建对象树
+// （见 official_egress_openai_json_decode.go），本函数只在扫描失败或顶层不是对象时被
+// 调用，用于给出与过去完全一致的错误值。
+func decodeOfficialJSONObjectUseNumberSlow(body []byte) (map[string]any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var payload map[string]any
@@ -220,7 +228,8 @@ func ensureOfficialJSONDecoderEOF(decoder *json.Decoder) error {
 	return err
 }
 
-func decodeOfficialJSONValueUseNumber(body []byte) (any, error) {
+// decodeOfficialJSONValueUseNumberSlow 是 encoding/json 路径的任意值解码，仅作错误回退。
+func decodeOfficialJSONValueUseNumberSlow(body []byte) (any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var value any
@@ -279,193 +288,6 @@ func decodeOrderedRawJSONObject(body []byte) (
 		return nil, nil, err
 	}
 	return fields, keys, nil
-}
-
-func marshalOfficialJSONValuePreservingRaw(
-	value any,
-	original json.RawMessage,
-	originalPool officialJSONRawPool,
-) ([]byte, error) {
-	if len(original) > 0 {
-		decoded, err := decodeOfficialJSONValueUseNumber(original)
-		if err == nil && reflectOfficialJSONEqual(value, decoded) {
-			return append([]byte(nil), original...), nil
-		}
-	}
-	if pooled := matchOfficialJSONCompositeRawValue(value, originalPool); len(pooled) > 0 {
-		return append([]byte(nil), pooled...), nil
-	}
-
-	switch typed := value.(type) {
-	case map[string]any:
-		return marshalOfficialNestedJSONObjectPreservingRaw(typed, original, originalPool)
-	case []any:
-		return marshalOfficialJSONArrayPreservingRaw(typed, original, originalPool)
-	case json.RawMessage:
-		if json.Valid(typed) {
-			return append([]byte(nil), typed...), nil
-		}
-	}
-	return marshalOpenAIUpstreamJSON(value)
-}
-
-func marshalOfficialNestedJSONObjectPreservingRaw(
-	payload map[string]any,
-	original json.RawMessage,
-	originalPool officialJSONRawPool,
-) ([]byte, error) {
-	originalFields, originalKeys, _ := decodeOrderedRawJSONObject(original)
-	keys := make([]string, 0, len(payload))
-	seen := make(map[string]struct{}, len(payload))
-	for _, key := range originalKeys {
-		if _, exists := payload[key]; !exists {
-			continue
-		}
-		keys = append(keys, key)
-		seen[key] = struct{}{}
-	}
-	additional := make([]string, 0, len(payload)-len(keys))
-	for key := range payload {
-		if _, exists := seen[key]; !exists {
-			additional = append(additional, key)
-		}
-	}
-	sort.Strings(additional)
-	keys = append(keys, additional...)
-
-	out := []byte{'{'}
-	for index, key := range keys {
-		if index > 0 {
-			out = append(out, ',')
-		}
-		encodedKey, err := json.Marshal(key)
-		if err != nil {
-			return nil, err
-		}
-		encodedValue, err := marshalOfficialJSONValuePreservingRaw(
-			payload[key],
-			originalFields[key],
-			originalPool,
-		)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, encodedKey...)
-		out = append(out, ':')
-		out = append(out, encodedValue...)
-	}
-	out = append(out, '}')
-	return out, nil
-}
-
-func marshalOfficialJSONArrayPreservingRaw(
-	items []any,
-	original json.RawMessage,
-	originalPool officialJSONRawPool,
-) ([]byte, error) {
-	var originalItems []json.RawMessage
-	_ = json.Unmarshal(original, &originalItems)
-	used := make([]bool, len(originalItems))
-	out := []byte{'['}
-	for index, item := range items {
-		if index > 0 {
-			out = append(out, ',')
-		}
-		originalIndex := matchOfficialJSONOriginalArrayItem(item, originalItems, used)
-		if originalIndex < 0 && index < len(originalItems) && !used[index] {
-			originalIndex = index
-		}
-		var originalItem json.RawMessage
-		if originalIndex >= 0 {
-			used[originalIndex] = true
-			originalItem = originalItems[originalIndex]
-		}
-		encoded, err := marshalOfficialJSONValuePreservingRaw(item, originalItem, originalPool)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, encoded...)
-	}
-	out = append(out, ']')
-	return out, nil
-}
-
-// collectOfficialJSONCompositeRawValues 收集原始正文中的对象和数组字节。
-// Profile 可能把工具或消息搬到另一个顶层字段；局部父节点因此无法直接命中，
-// 全文池仍可复用未变化的用户对象，避免跨字段搬运时重排其内部键。
-func collectOfficialJSONCompositeRawValues(body []byte) officialJSONRawPool {
-	values := make(officialJSONRawPool, 32)
-	var collect func(json.RawMessage)
-	collect = func(raw json.RawMessage) {
-		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
-			return
-		}
-		decoded, err := decodeOfficialJSONValueUseNumber(trimmed)
-		if err != nil {
-			return
-		}
-		canonical, err := marshalOpenAIUpstreamJSON(decoded)
-		if err != nil {
-			return
-		}
-		key := string(canonical)
-		if _, exists := values[key]; !exists {
-			values[key] = append(json.RawMessage(nil), trimmed...)
-		}
-		if trimmed[0] == '{' {
-			fields, keys, err := decodeOrderedRawJSONObject(trimmed)
-			if err != nil {
-				return
-			}
-			for _, key := range keys {
-				collect(fields[key])
-			}
-			return
-		}
-		var items []json.RawMessage
-		if err := json.Unmarshal(trimmed, &items); err != nil {
-			return
-		}
-		for _, item := range items {
-			collect(item)
-		}
-	}
-	collect(body)
-	return values
-}
-
-func matchOfficialJSONCompositeRawValue(
-	value any,
-	originalPool officialJSONRawPool,
-) json.RawMessage {
-	switch value.(type) {
-	case map[string]any, []any:
-	default:
-		return nil
-	}
-	canonical, err := marshalOpenAIUpstreamJSON(value)
-	if err != nil {
-		return nil
-	}
-	return originalPool[string(canonical)]
-}
-
-func matchOfficialJSONOriginalArrayItem(
-	item any,
-	originalItems []json.RawMessage,
-	used []bool,
-) int {
-	for index, raw := range originalItems {
-		if used[index] {
-			continue
-		}
-		decoded, err := decodeOfficialJSONValueUseNumber(raw)
-		if err == nil && reflectOfficialJSONEqual(item, decoded) {
-			return index
-		}
-	}
-	return -1
 }
 
 func reflectOfficialJSONEqual(left, right any) bool {

@@ -58,8 +58,12 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 规则和事实宇宙保持不变。
 # 2026-08-31：目标升级到 0.151.0；新增 Files C2PA 正、负和 retry 三类候选事实，
 # 并绑定同源文件上传实现与测试摘要。
+# 2026-09-08：docs/bug.md 6.4 第 3 点「减少解码副本」变更集改动 `official_egress_openai_http.go`
+# 与 `official_egress_integration.go`，问题三工具续接轮次修复改动 `official_egress_openai_ws.go`
+# 与 `openai_gateway_forward.go`；映射只更新这四份源码快照，不改变测试、事实或规则语义，
+# 受影响的 4 个候选验收测试已重跑通过。
 FROZEN_MAPPING_SHA256 = (
-    "cf286e1a565d974a325186bba95209885b46fd1ccdb43c6a8a384b363e150b8b"
+    "08cfda945a1572dc6dac0aa85505aaf4f10a8dfbace57cf25dfe4f11427bca9d"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。
