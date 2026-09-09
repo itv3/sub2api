@@ -2727,10 +2727,10 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 48455,
-        "sha256": "0dcf40c34a2840220d1698d13a61324c4e5a3c4252be4895eeb7eb1fded77b33"
+        "size": 48436,
+        "sha256": "7a9c8b05f3f93bb3ba921e5ab0dc88f0ff60824c69a8082f1291ae01195ce066"
       },
-      "reason": "承接问题三工具续接与问题四内存优化后的受管工具树摘要；旧历史收据保持只读。"
+      "reason": "承接 Sub2API v0.2.3 源码摘要重绑后的受管工具树摘要；旧历史收据保持只读。"
     },
     {
       "path": "tools/official_client_capture/candidate_rule_assertion.py",
@@ -2937,5 +2937,5 @@
     "current 0.151 受影响闭集测试"
   ],
   "result": "pending_current_worktree_reconciliation",
-  "identity_sha256": "00f59cae2ace1ad659876da8e20b4463589c0e8d7a5c9177589f3d83e3d1ba40"
+  "identity_sha256": "a0c1d51ddbfa769b91de48d4c74f9e41cb7f93f5008f2a0a800f8de40828b085"
 }

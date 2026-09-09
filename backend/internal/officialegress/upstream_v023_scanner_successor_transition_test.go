@@ -120,7 +120,11 @@ func validateUpstreamV023ScannerSuccessorTransition(receipt upstreamV023ScannerS
 		return errors.New("上游 v0.2.3 scanner successor transition 前序非法")
 	}
 	predecessorRaw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(receipt.Predecessor.Path)))
-	if err != nil || upstreamMergeFrameworkDigest(predecessorRaw) != receipt.Predecessor.SHA256 {
+	predecessorDigest := upstreamMergeFrameworkDigest(predecessorRaw)
+	if err != nil || (predecessorDigest != receipt.Predecessor.SHA256 &&
+		!upstreamMergeFrameworkV4SuccessorSupersedes(
+			receipt.Predecessor.Path, receipt.Predecessor.SHA256, predecessorDigest,
+		)) {
 		return errors.New("上游 v0.2.3 scanner successor transition 前序摘要不一致")
 	}
 	if !slices.Equal(receipt.Verification, []string{

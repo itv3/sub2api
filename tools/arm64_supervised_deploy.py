@@ -29,10 +29,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 
-# 2026-09-08：candidate_test_fact_map_0_151_0.json 与 candidate_test_trace.py 随 docs/bug.md 6.4
-# 第 3 点「减少解码副本」及问题三工具续接修复更新源码快照摘要，受管工具树摘要随之变更。
+# 2026-09-09：candidate_test_fact_map_0_151_0.json 与 candidate_test_trace.py 在合并
+# Sub2API v0.2.3 后重绑五份生产源码摘要；事实和规则语义不变，受管工具树摘要随之更新。
 DEFAULT_TOOL_DIGEST = (
-    "ad11096b24aebc031752d5c4310be89907924d059a7287665afbe7defb7949f2"
+    "87156bb3a6f75a7633fa46cfbdf0997abd692f5ccee539f6a8d7b9aa502bdf45"
 )
 DEFAULT_SUPERVISOR_DIGEST = (
     "bec3322056c66a3dfdb8ad570dafdb2ec322fbbb4219f09b0e6b2b6a58421703"

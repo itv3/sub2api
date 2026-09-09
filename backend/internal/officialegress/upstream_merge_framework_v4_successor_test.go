@@ -94,7 +94,7 @@ func validateUpstreamMergeFrameworkV4Successor(receipt upstreamMergeFrameworkV4R
 		receipt.TargetUpstreamCommit != "8fa67d477d6651a744754392a8982ea589c26ae6" ||
 		receipt.Scope != "upstream-v0.2.3-framework-v3-successor" ||
 		receipt.Result != "passed_local_evidence_successor" ||
-		len(receipt.Transitions) != 6 ||
+		len(receipt.Transitions) != 9 ||
 		!slices.Equal(receipt.Verification, []string{
 			"go test ./internal/service -count=1",
 			"go test ./internal/officialegress/... -count=1",
@@ -130,23 +130,44 @@ func validateUpstreamMergeFrameworkV4Successor(receipt upstreamMergeFrameworkV4R
 		return errors.New("上游合并框架 v0.2.3 successor 通用 transition 提交绑定不一致")
 	}
 	expectedFrom := map[string]string{
-		"backend/internal/handler/openai_gateway_handler.go":              "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168",
-		"backend/internal/service/gateway_context_management_test.go":     "a15304642a243ef16f2d91870c6a9d9d1b089481d62c5c697986d82ac9706f41",
-		"backend/internal/service/gateway_forward_as_chat_completions.go": "ce75d3720da98bde94c17ccba387b5b0ca9c4c8a25a492e1afc5248f2a6b5fc7",
-		"backend/internal/service/gateway_forward_as_responses.go":        "2657c0f62fc269ddb604738ca17d43b0dbe6f38828747b8351f1a840d03473ac",
-		"backend/internal/service/official_egress_openai_ws_test.go":      "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f",
-		"backend/internal/service/openai_ws_pool.go":                      "fa1d3b3f437ee3b387117982bee04b9c91762a925f427c5230cc28ba5b8b947d",
+		"backend/internal/handler/openai_gateway_handler.go":                                 "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168",
+		"backend/internal/officialegress/upstream_v023_scanner_successor_transition_test.go": "7c68256f32a4468c85748b78bdeb5f8f9e11d4ec127064fcdc71935396c59261",
+		"backend/internal/service/gateway_context_management_test.go":                        "a15304642a243ef16f2d91870c6a9d9d1b089481d62c5c697986d82ac9706f41",
+		"backend/internal/service/gateway_forward_as_chat_completions.go":                    "ce75d3720da98bde94c17ccba387b5b0ca9c4c8a25a492e1afc5248f2a6b5fc7",
+		"backend/internal/service/gateway_forward_as_responses.go":                           "2657c0f62fc269ddb604738ca17d43b0dbe6f38828747b8351f1a840d03473ac",
+		"backend/internal/service/official_egress_openai_ws_test.go":                         "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f",
+		"backend/internal/service/openai_ws_pool.go":                                         "fa1d3b3f437ee3b387117982bee04b9c91762a925f427c5230cc28ba5b8b947d",
+		"backend/internal/service/upstream_v023_scanner_successor_transition_test.go":        "52e28ddc1cfc79e25809407cb9905ba810b0c1a6c97247e7beb27cdb7b2bb010",
+		"docs/egress/maintenance/codex-cli-0151-worktree-successor.json":                     "49ca837b912bfbe33c2631a6bc0b6bbfe6dba1d3ad37efbc835bb45d043045be",
 	}
 	expectedSources := []string{
 		"docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
 		"docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json",
 	}
+	successorSources := map[string][]string{
+		"backend/internal/officialegress/upstream_v023_scanner_successor_transition_test.go": {
+			"docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+			"docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+		},
+		"backend/internal/service/upstream_v023_scanner_successor_transition_test.go": {
+			"docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+			"docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+		},
+		"docs/egress/maintenance/codex-cli-0151-worktree-successor.json": {
+			"docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+			"docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+		},
+	}
 	paths := make([]string, 0, len(receipt.Transitions))
 	for _, transition := range receipt.Transitions {
 		from, ok := expectedFrom[transition.Path]
+		sources := expectedSources
+		if successorSource, found := successorSources[transition.Path]; found {
+			sources = successorSource
+		}
 		if !ok || !slices.Equal(transition.PredecessorSHA256s, []string{from}) ||
 			!receiptSHA256(transition.ToSHA256) || transition.ToSHA256 == from ||
-			!slices.Equal(transition.SourceReceipts, expectedSources) ||
+			!slices.Equal(transition.SourceReceipts, sources) ||
 			strings.TrimSpace(transition.Reason) == "" {
 			return errors.New("上游合并框架 v0.2.3 successor 条目非法")
 		}
