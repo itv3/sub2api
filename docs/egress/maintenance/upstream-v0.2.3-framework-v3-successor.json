@@ -1,5 +1,6 @@
 {
   "base_commit": "681909c2e1bddcbf2a3700c7713e03647507fe26",
+  "identity_sha256": "255b4a7f3ef3071ba9da68e2231b0f51250f5d37651184bcd926319772de87e9",
   "issued_at_utc": "2026-09-09T10:30:00Z",
   "predecessor": {
     "path": "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
@@ -16,9 +17,9 @@
   "scope": "upstream-v0.2.3-framework-v3-successor",
   "source_transition": {
     "base_commit": "681909c2e1bddcbf2a3700c7713e03647507fe26",
-    "current_commit": "ead3510a55d77040c781ef7daa4e573e1cd8c57b",
+    "current_commit": "af6cd31b45d1bbbe5eaef78ffa05680b015a57f6",
     "path": "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
-    "sha256": "dfb3ce0653166e7370cedefb8cab74963264326a683debc83433c3fb528f71e9"
+    "sha256": "6dd61409cdda7f3f7a74632158374f37547f91c18b529d954f90f06a462b407d"
   },
   "target_upstream_commit": "8fa67d477d6651a744754392a8982ea589c26ae6",
   "target_upstream_tag": "v0.2.3",
@@ -137,6 +138,5 @@
     "go test ./internal/officialegress/... -count=1",
     "make test-upstream-merge-tools",
     "make check-egress-spec"
-  ],
-  "identity_sha256": "ac933ec8a21dc3c9b0b2dce4c0314e8674f954d9f7a92afd0cff72aad8a7957e"
+  ]
 }
