@@ -1,0 +1,106 @@
+{
+  "base_commit": "681909c2e1bddcbf2a3700c7713e03647507fe26",
+  "identity_sha256": "b1105964af72ade5d6559db67672574bd761478fe12435f81485eaebee272611",
+  "issued_at_utc": "2026-09-09T10:30:00Z",
+  "predecessor": {
+    "path": "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+    "sha256": "ce48d7b4d6c0adcca18948a55683dcd177dca9be854d588d38da6a2bdde43403"
+  },
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-v0.2.3-framework-v3-successor/v1",
+  "scope": "upstream-v0.2.3-framework-v3-successor",
+  "source_transition": {
+    "base_commit": "681909c2e1bddcbf2a3700c7713e03647507fe26",
+    "current_commit": "ddd18252d8f22054b0015bc0e051af6f50b0656f",
+    "path": "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+    "sha256": "33804a553b37652135200e1e1471eb8a60c8c0c0bccadae329454be916ec9f02"
+  },
+  "target_upstream_commit": "8fa67d477d6651a744754392a8982ea589c26ae6",
+  "target_upstream_tag": "v0.2.3",
+  "transitions": [
+    {
+      "path": "backend/internal/handler/openai_gateway_handler.go",
+      "predecessor_sha256s": [
+        "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "0f04299d8b4a7358634f87fcfc3f671df7cbf7acf5d27ebb09982b25806d294d"
+    },
+    {
+      "path": "backend/internal/service/gateway_context_management_test.go",
+      "predecessor_sha256s": [
+        "a15304642a243ef16f2d91870c6a9d9d1b089481d62c5c697986d82ac9706f41"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "6aa493340bca5fec6e1349a3c61166726443a9a0b6d1bf7e260216af05f5ff44"
+    },
+    {
+      "path": "backend/internal/service/gateway_forward_as_chat_completions.go",
+      "predecessor_sha256s": [
+        "ce75d3720da98bde94c17ccba387b5b0ca9c4c8a25a492e1afc5248f2a6b5fc7"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "2428c9ef1e95d56a3af9e35b9fa8f3786d43559e51cd54aec104cfd1ae78eea6"
+    },
+    {
+      "path": "backend/internal/service/gateway_forward_as_responses.go",
+      "predecessor_sha256s": [
+        "2657c0f62fc269ddb604738ca17d43b0dbe6f38828747b8351f1a840d03473ac"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "e1255635c4041634bc1fca300c2579099c42deab96dc0fe6759a26c1314b1ec1"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_ws_test.go",
+      "predecessor_sha256s": [
+        "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "a3b5a1a6dac6583421032cadc81ad12e5ac3337359c712539f2b2e090ffc906f"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_pool.go",
+      "predecessor_sha256s": [
+        "fa1d3b3f437ee3b387117982bee04b9c91762a925f427c5230cc28ba5b8b947d"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "0ec8eeef4acdaa81b46d79334f0ba45e236f378d5e47d8f79c7b48dc1badcb02"
+    }
+  ],
+  "verification": [
+    "go test ./internal/service -count=1",
+    "go test ./internal/officialegress/... -count=1",
+    "make test-upstream-merge-tools",
+    "make check-egress-spec"
+  ]
+}
