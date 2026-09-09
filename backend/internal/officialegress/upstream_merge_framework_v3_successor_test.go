@@ -196,6 +196,11 @@ func upstreamMergeFrameworkV3SuccessorSupersedes(
 		priorDigest == currentDigest {
 		return false
 	}
+	// 先走非递归的精确 successor 闭包；不能在另一个收据的 sync.Once
+	// 初始化期间回调该收据 loader，否则会再次形成递归等待。
+	if auditedSourceSuccessorReaches(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamMergeFrameworkV3Successor()
 	if err != nil {
 		return false

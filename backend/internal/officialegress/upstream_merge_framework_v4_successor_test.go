@@ -190,6 +190,9 @@ func upstreamMergeFrameworkV4SuccessorSupersedes(path, priorDigest, currentDiges
 	if !receiptSHA256(priorDigest) || !receiptSHA256(currentDigest) || priorDigest == currentDigest {
 		return false
 	}
+	if auditedSourceSuccessorReaches(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamMergeFrameworkV4Successor()
 	if err != nil {
 		return false

@@ -191,6 +191,9 @@ func upstreamMergeFrameworkV4SuccessorSupersedesService(path, priorDigest, curre
 		!validOpenAIReplayOOMRepairServiceSHA(currentDigest) || priorDigest == currentDigest {
 		return false
 	}
+	if auditedSourceSuccessorReachesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamMergeFrameworkV4SuccessorService()
 	if err != nil {
 		return false

@@ -91,9 +91,9 @@ func readUpstreamV023PostBootstrapSourceSuccessorService() (upstreamV023PostBoot
 
 func validateUpstreamV023PostBootstrapSourceSuccessorService(receipt upstreamV023PostBootstrapSourceSuccessorReceiptService) error {
 	if receipt.SchemaVersion != "official-egress-upstream-v0.2.3-post-bootstrap-source-successor/v1" ||
-		receipt.IssuedAtUTC != "2026-09-10T06:20:00Z" ||
+		receipt.IssuedAtUTC != "2026-09-10T06:40:00Z" ||
 		receipt.BaseCommit != "25f279bd34775f6817ee9c3eec56ad546e263976" ||
-		receipt.CurrentCommit != "f0233cc3e5b27f295b12009f5018c6f450faf8ce" ||
+		receipt.CurrentCommit != "1dce5ba1f505038b52fea7259b45f40c15731013" ||
 		receipt.Scope != "upstream-v0.2.3-post-bootstrap-source-successor" ||
 		receipt.Result != "passed_local_evidence_successor" || len(receipt.Transitions) != 15 ||
 		!slices.Equal(receipt.Verification, []string{
@@ -197,41 +197,115 @@ func auditedSourceSuccessorReachesService(path, priorDigest, currentDigest strin
 	return false
 }
 
+type auditedSourceSuccessorEdgeService struct {
+	path string
+	from string
+	to   string
+}
+
+var (
+	auditedSourceSuccessorEdgesServiceOnce   sync.Once
+	auditedSourceSuccessorEdgesServiceCached []auditedSourceSuccessorEdgeService
+)
+
+// loadAuditedSourceSuccessorEdgesService 只读取各收据中明确登记的
+// path/from/to 边，不调用收据 loader，避免 sync.Once 初始化期间的递归等待。
+// 各收据的完整 fail-close 校验仍由其自身 read/validate 函数负责；本函数
+// 仅为 successor 闭包提供非递归的边集。
+func loadAuditedSourceSuccessorEdgesService() []auditedSourceSuccessorEdgeService {
+	auditedSourceSuccessorEdgesServiceOnce.Do(func() {
+		appendJSON := func(path string, target any) bool {
+			raw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(path)))
+			if err != nil {
+				return false
+			}
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(target); err != nil {
+				return false
+			}
+			return errors.Is(decoder.Decode(&struct{}{}), io.EOF)
+		}
+		add := func(path, from, to string) {
+			if strings.TrimSpace(path) == "" || !validOpenAIReplayOOMRepairServiceSHA(from) ||
+				!validOpenAIReplayOOMRepairServiceSHA(to) || from == to {
+				return
+			}
+			auditedSourceSuccessorEdgesServiceCached = append(
+				auditedSourceSuccessorEdgesServiceCached,
+				auditedSourceSuccessorEdgeService{path: path, from: from, to: to},
+			)
+		}
+
+		var post upstreamV023PostBootstrapSourceSuccessorReceiptService
+		if appendJSON(upstreamV023PostBootstrapSourceSuccessorServicePath, &post) {
+			for _, transition := range post.Transitions {
+				for _, predecessor := range transition.PredecessorSHA256s {
+					add(transition.Path, predecessor, transition.ToSHA256)
+				}
+			}
+		}
+
+		var historical historicalSourceDriftLedger
+		if appendJSON(historicalSourceDriftSuccessorPath, &historical) {
+			for _, entry := range historical.Entries {
+				for _, predecessor := range entry.PredecessorSHA256s {
+					add(entry.Path, predecessor, entry.HeadSHA256)
+				}
+			}
+		}
+
+		var scanner upstreamV023ScannerSuccessorReceiptService
+		if appendJSON(upstreamV023ScannerSuccessorTransitionServicePath, &scanner) {
+			for _, transition := range scanner.Transitions {
+				add(transition.Path, transition.FromSHA256, transition.ToSHA256)
+			}
+		}
+
+		var source upstreamV023SourceTransitionReceiptService
+		if appendJSON(upstreamV023SourceTransitionServicePath, &source) {
+			for _, entry := range source.Entries {
+				if entry.PredecessorSHA256 != nil && entry.CurrentSHA256 != nil {
+					add(entry.Path, *entry.PredecessorSHA256, *entry.CurrentSHA256)
+				}
+			}
+		}
+
+		var worktree codex0151WorktreeSuccessorServiceReceipt
+		if appendJSON(codex0151WorktreeSuccessorServicePath, &worktree) {
+			for _, entry := range worktree.Entries {
+				if entry.Before.Existence == "present" && entry.After.Existence == "present" {
+					add(entry.Path, entry.Before.SHA256, entry.After.SHA256)
+				}
+			}
+		}
+
+		var frameworkV3 upstreamMergeFrameworkV3ServiceReceipt
+		if appendJSON(upstreamMergeFrameworkV3SuccessorServicePath, &frameworkV3) {
+			for _, transition := range frameworkV3.Transitions {
+				for _, predecessor := range transition.PredecessorSHA256s {
+					add(transition.Path, predecessor, transition.ToSHA256)
+				}
+			}
+		}
+
+		var frameworkV4 upstreamMergeFrameworkV4ServiceReceipt
+		if appendJSON(upstreamMergeFrameworkV4SuccessorServicePath, &frameworkV4) {
+			for _, transition := range frameworkV4.Transitions {
+				for _, predecessor := range transition.PredecessorSHA256s {
+					add(transition.Path, predecessor, transition.ToSHA256)
+				}
+			}
+		}
+	})
+	return auditedSourceSuccessorEdgesServiceCached
+}
+
 func auditedSourceSuccessorNextService(path, from string) []string {
 	var next []string
-	if receipt, err := loadUpstreamV023PostBootstrapSourceSuccessorService(); err == nil {
-		for _, transition := range receipt.Transitions {
-			if transition.Path == path && slices.Contains(transition.PredecessorSHA256s, from) {
-				next = append(next, transition.ToSHA256)
-			}
-		}
-	}
-	if entries, err := loadHistoricalSourceDriftEntries(); err == nil {
-		if entry, ok := entries[path]; ok && slices.Contains(entry.PredecessorSHA256s, from) {
-			next = append(next, entry.HeadSHA256)
-		}
-	}
-	if receipt, err := loadUpstreamV023ScannerSuccessorTransitionService(); err == nil {
-		for _, transition := range receipt.Transitions {
-			if transition.Path == path && transition.FromSHA256 == from {
-				next = append(next, transition.ToSHA256)
-			}
-		}
-	}
-	if receipt, err := loadUpstreamV023SourceTransitionService(); err == nil {
-		for _, entry := range receipt.Entries {
-			if entry.Path == path && entry.PredecessorSHA256 != nil && entry.CurrentSHA256 != nil &&
-				*entry.PredecessorSHA256 == from {
-				next = append(next, *entry.CurrentSHA256)
-			}
-		}
-	}
-	if receipt, err := loadCodex0151WorktreeSuccessorService(); err == nil {
-		for _, entry := range receipt.Entries {
-			if entry.Path == path && entry.Before.Existence == "present" && entry.After.Existence == "present" &&
-				entry.Before.SHA256 == from && validOpenAIReplayOOMRepairServiceSHA(entry.After.SHA256) {
-				next = append(next, entry.After.SHA256)
-			}
+	for _, edge := range loadAuditedSourceSuccessorEdgesService() {
+		if edge.path == path && edge.from == from {
+			next = append(next, edge.to)
 		}
 	}
 	return next

@@ -198,6 +198,9 @@ func upstreamMergeFrameworkV3SuccessorSupersedesService(
 		priorDigest == currentDigest {
 		return false
 	}
+	if auditedSourceSuccessorReachesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamMergeFrameworkV3SuccessorService()
 	if err != nil {
 		return false
