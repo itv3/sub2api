@@ -149,7 +149,10 @@ func validateUpstreamV023ScannerSuccessorTransition(receipt upstreamV023ScannerS
 			return errors.New("上游 v0.2.3 scanner successor transition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != transition.ToSHA256 {
+		if readErr != nil || (upstreamMergeFrameworkDigest(current) != transition.ToSHA256 &&
+			!upstreamMergeFrameworkV3SuccessorSupersedes(
+				transition.Path, transition.ToSHA256, upstreamMergeFrameworkDigest(current),
+			)) {
 			return errors.New("上游 v0.2.3 scanner successor transition 当前摘要不一致：" + transition.Path)
 		}
 		paths = append(paths, transition.Path)
@@ -166,7 +169,10 @@ func validateUpstreamV023ScannerSuccessorTransition(receipt upstreamV023ScannerS
 			return errors.New("上游 v0.2.3 scanner successor addition 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(addition.Path)))
-		if readErr != nil || upstreamMergeFrameworkDigest(current) != addition.SHA256 {
+		if readErr != nil || (upstreamMergeFrameworkDigest(current) != addition.SHA256 &&
+			!upstreamMergeFrameworkV3SuccessorSupersedes(
+				addition.Path, addition.SHA256, upstreamMergeFrameworkDigest(current),
+			)) {
 			return errors.New("上游 v0.2.3 scanner successor addition 当前摘要不一致：" + addition.Path)
 		}
 		additionPaths = append(additionPaths, addition.Path)

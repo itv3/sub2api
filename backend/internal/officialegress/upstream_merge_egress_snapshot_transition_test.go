@@ -134,6 +134,9 @@ func upstreamMergeEgressSnapshotTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamMergeFrameworkV3SuccessorSupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
 	if upstreamV0180EgressPrerequisiteTransitionSupersedes(
 		path, priorDigest, currentDigest,
 	) {

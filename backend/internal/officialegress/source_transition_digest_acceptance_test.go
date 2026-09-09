@@ -5,6 +5,9 @@ package officialegress
 // 它不读取目录、不生成新收据，也不会把任意未登记的工作树修改视为合法。
 func codex0151CurrentSourceDigestAccepted(path, expectedDigest, currentDigest string) bool {
 	return expectedDigest == currentDigest ||
+		upstreamMergeFrameworkV3SuccessorSupersedes(
+			path, expectedDigest, currentDigest,
+		) ||
 		codex0151WorktreeSuccessorEdge(path, expectedDigest, currentDigest) ||
 		historicalSourceDriftSupersedes(path, expectedDigest, currentDigest) ||
 		upstreamV023ScannerSuccessorTransitionSupersedes(path, expectedDigest, currentDigest)

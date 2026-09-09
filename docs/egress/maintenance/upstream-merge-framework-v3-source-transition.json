@@ -1,0 +1,1286 @@
+{
+  "schema_version": "official-egress-upstream-merge-framework-v3-source-transition/v1",
+  "issued_at_utc": "2026-09-09T06:00:00Z",
+  "base_commit": "236eb3d82f347effc4856d45940e7f9c071b7e0b",
+  "scope": "upstream-merge-framework-historical-successor",
+  "purpose": "historical_evidence_successor",
+  "transitions": [
+    {
+      "path": ".gitignore",
+      "predecessor_sha256s": [
+        "48dc589ef806a56cda1fbaccd7dc27572e7de7028f1bfae43ebcbf0cb088339a",
+        "b31486272278ea54a2fecfcb4fd2be8f69ebca13f9179c084af108c36054a31e",
+        "df1cdba2e13c5f37e5e5c64c18bdf03d321d329d1908bb0e57b434ca15b505fc",
+        "f77204a3f1da502d1819f53129ad3d8daa523f716096d86ff4d0ab550015baf3"
+      ],
+      "to_sha256": "62e6137beb38465ae94434eef97e6041a03d517225cdeef2a2281cd775b54446",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "Makefile",
+      "predecessor_sha256s": [
+        "070cfac169fefc59dcfc968d0f46a72935d825ef44332a5364adeeb7cc40b490",
+        "1bcb83eed48dbe0a5198f98e8fc3d59cf16d96bbb8292abe44cb540783f24462",
+        "1c1e7f1b3f60294b980812140a223a2cbf6ac499302b777338a034a38920c80a",
+        "460cb1464501eca6ecbe59ee38fb4de721076ce2ef7cfb74f66f9d0d2cbf24ee",
+        "fda874af797442e8238a7a4b011cedc7f4f724e5ace635244b19d770b454782d"
+      ],
+      "to_sha256": "1e18de2ac45648df973e8c2d86d1924ae3fd80b42f9ca9f68148b0f478b7e54a",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-offline-ci-stabilization-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-arm64-typescript-dependency-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/fw-d-control-workspace-transition/manifest.json",
+        "docs/egress/maintenance/fw-e-workspace-transition/manifest.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition-v2/manifest.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition/manifest.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/cmd/egressscan/classify.go",
+      "predecessor_sha256s": [
+        "1ed55101182ad64efaed965794a982ac4dad1a62fcde58260f02969d6d830378",
+        "5d20596c2e4da6f5e64cb454f7dd045ba92664cc5673f9b869a889dfe5436b2d",
+        "962c55574a319669db36eb6810068802a0271ec0c4bbe696638563e50347fe78",
+        "c1da6c5a9db7be862cbb5f58c8dcde33c8b67d29407073f5e1da7d2d71709a7f",
+        "c39ba21bc773991c5eb5929b3fdb8e646fac85b612d68e88be738d160e26f9b4",
+        "dc3449aed5f180862f3e294d6f518130b05ae4df325fd79badb7a6538e7aee33",
+        "fc7b999cb57fa47dca212c4653524b0acd5b6304c912294971948bcc54abca49"
+      ],
+      "to_sha256": "abc6ebdafa23be62c75520cbe96b1d1951939bb80f5e2b6c04e7a544f5a241fe",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-source-transition.json",
+        "docs/egress/maintenance/claude-fw-h-source-transition.json",
+        "docs/egress/maintenance/codex-models-unwired-transport-retirement.json",
+        "docs/egress/maintenance/compatibility-code-retirement-closure.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-v0.1.177-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-prerequisite-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/version-leak-debt-closure.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "上游扫描器后继校正后的现行摘要补登记；仅闭合历史证据链，不改变生产官方 wire。"
+    },
+    {
+      "path": "backend/cmd/egressscan/lifecycle_test.go",
+      "predecessor_sha256s": [
+        "0169dcfffe9e1203d2017bde9a67b0467aec08fb38bba90218aba036608f1a16",
+        "352ab440f07c20f53df5745950eca64bafbd71ca62087c275f43674eef068cd6",
+        "49e815d5a098989d34b1f6151591178a3954c3db7e4801fbf2de80117ba68501",
+        "526b0cd3099b78b4587c2496b3233c6096617c89cbecd8da33fbc13b42856255",
+        "7e8b8392916180921093e8db9c2423cf76fec817f5573c1329eadb78027bcae4",
+        "9b225bcd4b1ffbe20a9f03fccd6efd84f8d8422b3a08df301d8a519a3f9d1f32",
+        "b20d6ff74b93b9cc9c827bb1284060e46ce7f3ca76d43e99b221dcaaa37f8ab9",
+        "f0f4b3e03341e2b949b91a5722f8b0951ddd055906a63f8fbc015f6c2e02532b"
+      ],
+      "to_sha256": "bb0809cdd5c2af81942c653a9ea07f01fd41e07d0be2307d297343cb55aaf52c",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-source-transition.json",
+        "docs/egress/maintenance/codex-models-unwired-transport-retirement.json",
+        "docs/egress/maintenance/compatibility-code-retirement-closure.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-prerequisite-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_handler.go",
+      "predecessor_sha256s": [
+        "076853dfb076bc9fe7e43ec862fb46c5f928f3bffbd76b10dd9aad6ae46b8681",
+        "0b6444f70bf9f9817cb16691ed839864e2c48e4f4d5c674e60132e78ae31fb04",
+        "115748d4ea4a9f009944f598036b2ed7aada49c9cadb3a22fbb4aca54e531a23",
+        "1429d9ece1a89503f4b8befa27063b70e55dca4215f36899b89852e724c15dfa",
+        "1f4db1948c8a7d9b6e067691607508789201fe919fd286558a89a097b1a66142",
+        "226800bec6331094a49d36d6150cfe3fe31424c566d1c204b162d0baba7729e5",
+        "268eb5fc6b126320167bb349ac5d38c915338a474512ca946a275e1daa3ed184",
+        "3215161bf39abcff270d037e4716153339aafeb547f6870c5b7a52da6fcdecfd",
+        "347285814f8c1834c84cf6653ec470196fc980273ed5ebaf29143f1bb712eba8",
+        "4394832ea1bef783ca26d9ec8d38e7c8d9a83202cf2a56e73079dbbad1155329",
+        "45d532bd6fed98adf2d31a42a8954600a5a2a13ce20dc9560e048441b8f68d4c",
+        "4a207d4ec69bfd30bc9532b4151fcad45ef4bf0e9ef26a8e13337ae1edc1f03b",
+        "4fdb75691f1366905c4f5c2496047f48cac4eda1359ea92ab908bae01fe1500c",
+        "59ec92faadd717c60db73c56122b977968d8a5a07a73b56e0c1ac835931b1821",
+        "5bd24e93d1f8729db3f9bfc849ed6ec848f3e58fada48a6bb1ee25b95cd57eb4",
+        "5ece0a9cd1bdb3aa4544fc1773b8f7333b78efc149f2ba44ce9ee0d09b4227f4",
+        "669c00dcd45e04b7b3a74f38b581a7d5754fc3c975ece6d1a983d945a3bd03f6",
+        "722035f14db2aed0a2bec9b4db4538bec8617f98a1aec8bf166551c347280555",
+        "735f6408b0f0acba6e73b17481783340c0b2c24545f22adf2ba767c5c77fded8",
+        "94d81cb4088347f310479e3017a7ce9cd330f9e558cfff1ca801850a346ea517",
+        "b13338232461e5bca51eace56c792821dc6e7f3f231e7285d8752de1678f20d9",
+        "b914234cb2f0d25ed9c3bffa75f51393282a0f51a582e2399bbea02d6857e3cf",
+        "b96c5d1ba708e16d6636283cc8cd4e39b93b1766f557bb375f06b3da8b22ecc2",
+        "c348ab5128eccc73e6043fe71ece18b6ecfb2eed2a2da7b3f29b7444ce05e832",
+        "ca3dde660f38dacdf1b1cd285b3d8df7f06fd93cdcf0096d8d70dbf4b5522e13",
+        "d193ea3f81eb44c7ffe3700ba3d7fec4beeff7f7be86325997d231b9023c208b",
+        "d444247ddbe03bf24246e6ccfe1909cf2d9cf8428ded4d9e6ebbf42deb620ca4",
+        "d45dd7cbf0775211d33ec0f4785263d2186a70e7de044af3f650653402a61b61",
+        "e04a4a304b17b67442e77f3b32d38b477970e2656200ff189a46dc8e2ad450a6",
+        "eaf943a49c3838be83efe4c26dd88e6bb3cdbe34e8c6c459ddf6cbccb9c8d8cf",
+        "f0a9f2af2588956e360c2998fa25960a8ee36fd8299be3be132e84ec03e092d4",
+        "fcb44519ab1cf9382d9f1b1f456b64d07f613fa8fd3611db722524f7fb5f977d"
+      ],
+      "to_sha256": "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-third-party-strict-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/post-conflict-inventory/full.json",
+        "docs/egress/maintenance/post-conflict-inventory/governable.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.179-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/catalog_retirements_test.go",
+      "predecessor_sha256s": [
+        "214a2a7d63c241a9380fa60ea5f6e252e5e8d0f7820459534185251c073a9a4e",
+        "2f597cac545897f1f33bd99db52dd877d2b790e9c72602f7d3976284a994aa35",
+        "4c87fe2d74d780911b570b5a18127e9ed9c82b356c3f7a55a4e981c554f93913",
+        "598fcad7db865ea09b74c0690078053bc84f89d2d210b85a26382fb149414afd",
+        "c3e6e3261b7658e5da04953a1b7edf41ccc57a70478a5852902a34f08377503a",
+        "de6b85f943953917d9c61804da10ddc1105dc3b9c9dffecfebf2d217b43c9ba8",
+        "ebb7e1a9314f1ce50983631d201ba7777cfd525d346bce8fe6c9e495313b61f0",
+        "faf01f281a90aec462f9b023c35131b4d9cb7a832679e1f6fd616a5e33ce98bd"
+      ],
+      "to_sha256": "6fd1997f5d350c02ae65029ea1ff572662b16d81d8d794c3081b3a202441d126",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-test-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/compatibility-code-retirement-closure.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_fw_h_legacy_retirement_transition_test.go",
+      "predecessor_sha256s": [
+        "02953064979285ed9cfb302c076f018b295ece14547f189ce9f436e0d4549e8a",
+        "284d94c43ce4e2742796026484c3b93e2251b9aa156fdb51cc32b71e6b5be01c",
+        "63cbd59d9fb97d71531f32fef80e720ff192747fe42e7e1e12fd4cab79fd8c73",
+        "6882ec3399ad4bcdcf11728847e314f69f4308f1f632139705f901d3395735e2",
+        "6f608a1c2e05b25ee06f50dea3f8a174a38f50126a7541dadaee50da5704c752",
+        "cf1695ce7eb3dcd50d982fd54d6d8aa42d0d3e5424ca7c1522622d7dc78e2b9a",
+        "fabaf5cf55fdb973b07015a9b4baf2ecc1b3258d9e108a83fd124eea36aa815f"
+      ],
+      "to_sha256": "ab7d3f3749821d093ecb7412279bce87139fa140820a709ceebe6d63613e53a4",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-fable-declared-fallback-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-state-durability-test-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/claude-offline-ci-stabilization-transition.json",
+        "docs/egress/maintenance/claude-offline-release-repair-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_fw_h_source_transition_test.go",
+      "predecessor_sha256s": [
+        "092c202b754038c012351d60cd0eea8efa1d26a8669b690a95a6f3b8fd95a380",
+        "87cb831e452973be7d42f99144ea97efbc03fd06fd2fe1ba3841f0c2662b78c4",
+        "a1ff79a9197ce1252856fa8829e17971e0d6061a060e7d006d66a257ba5ae8cb",
+        "abe5c12961a4b887f2390425a17f52ef5af0247ceac3657e2b76c883ef220954",
+        "bee369a73147fdeefb706a8d76a087a3628188a7289ee41bc2bce45902aa4337",
+        "d21ab94266805733e2037ed84a9d4dc3b069e955acacccc1d55c740d18657110",
+        "d3f3c5011c03cc5915cfbf4b5c5c55bcbf7671646a220ef707cef946e68faf4f",
+        "f0fb7bc7b99f8500d43785f85d4cb9033aa1be6674caa315e11a9f4c95dfa79c"
+      ],
+      "to_sha256": "2185caa6c1f92624f7a110f94834516706a3862512fc35d58159d3f7b41a5e61",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-fable-declared-fallback-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-production-acceptance-package.json",
+        "docs/egress/maintenance/claude-fw-h-state-durability-test-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_official_client_only_transition_test.go",
+      "predecessor_sha256s": [
+        "730a5ac4e08805b5036d5a2e904ff1823a67e2c55114e0928cdfc6c879117bf3",
+        "8e8fdcee9f00d586a1b04eb91aee8b974078b56da83f2fb860574a097b0c33c5",
+        "9fadd328ac7823c558e858f376d4f5d53ee6eeb8c56fd5ae72f9d49b27101520",
+        "cadf9ee72387d1b938dcc845b71127f74d22680a8bc4a4149cc5eb9a8b80a746"
+      ],
+      "to_sha256": "d25f5d647b9e35b8fc617288e81961978a37b992c08aea0b60b73adbfc2c29e2",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-offline-release-repair-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_offline_release_repair_transition_test.go",
+      "predecessor_sha256s": [
+        "56e083ea4e3e4962a5b9474c7354ee242a503e92c795ab7fc21dbd583afb0329",
+        "5b8c34d1b412434d5af10adf614397a1ba8a1700f39c25bda02506d4cffd29d3",
+        "be8fc931c1e20a8a061ab1f9275b7fe9e8dff92973f5884d9568684ec9af1568"
+      ],
+      "to_sha256": "114574ac4a18b5c828fc475f1bff9ca93a8bf96dc5c12844f56a12823d78cae1",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-offline-ci-stabilization-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/claude_persona_release_catalog_transition_test.go",
+      "predecessor_sha256s": [
+        "225ce22881c654e193ad095d424446c0c23bda3dfdf4c765a4726f0c9c9b2e4d",
+        "31fed94b6c57d65dd785d08fe525b66bdcda971d343f5e2b20cadca1f53dd463",
+        "356c481f6add4afff14871da01b66c1876a95d02ec4cdb0718ddaa6c8fa65d54",
+        "5a5a60ad47ed0ccf35c02507b52a5050e82cb0c40b2cef1af3f64be27a2dc255",
+        "6446c7890abe5fb3063696bcac131961dc226a1ffffb44997fe7bb9d54cc6b5d",
+        "865126826fb0fdbe736015a39e9246db9b2e960724f21c304a05194e7f9860eb"
+      ],
+      "to_sha256": "4d0cd59cd424d063acf4768642b4170f6e82a649449e631a97418e846a5f5841",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/claude-offline-ci-stabilization-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/fw_e_observation_source_transition_test.go",
+      "predecessor_sha256s": [
+        "1220cb3e80454304720c8bb4763fe4454926261a75304a05c2bd25e2857e7bd5",
+        "2d15e35e00d03c1e5f9c4c9b0cbaf21a35bb9daebf0900d848de8a01e31c2307",
+        "46e0442369a36a869ac0d6243bf3f7e5213736d8789fb9f21e4ca50726b9b113",
+        "8009c8dae09ef8863bf1d65917b5690d77cf5d85f8b4bf25d6bee6e89f22b15f"
+      ],
+      "to_sha256": "2e358eef560f3d1d325f376daeb2b1369923279de60f2d9fa5e6beb7e8605798",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-test-transition.json",
+        "docs/egress/maintenance/claude-offline-ci-stabilization-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/fw-e-workspace-transition/manifest.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/source_transition_digest_acceptance_test.go",
+      "predecessor_sha256s": [
+        "1c2f952bd7ed834b0ffc49826a9ac29e399c945d4eace07dc59d76c05327ce5d",
+        "9a34ceb3ba6482271a0eb643762849e474c7180e9ba6705af4d18c17a018b685"
+      ],
+      "to_sha256": "319fa8b522739d201ec1e9d632c3743e8167769a5d7ae7f3230486889302745f",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "摘要接受器接入 successor 门禁后的现行摘要补登记；仅扩大已登记历史证据承接，不改变业务发送面。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_merge_egress_snapshot_transition_test.go",
+      "predecessor_sha256s": [
+        "5d757fe1ae7372e658d358ddb09a49f395ca4290ecbc7a138737d22d88f6ac95",
+        "6b19ea585910eb13091d5995cab13ec5817ea62c693c35da6c2095f7575d7e4d",
+        "d63e163f3246b6adf60510592bcd6556f77705fd5044d2a573f280377ce91bb5",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "39212d3c45b0c620bd4c5a563f8d9e6c7ae3a6130a908849a9478e4b66faf756",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-prerequisite-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json"
+      ],
+      "reason": "合并框架 successor 门禁接入后补登记测试校验器的现行摘要；仅闭合历史证据链，不改变生产 wire。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_merge_framework_transition_test.go",
+      "predecessor_sha256s": [
+        "11ea1e9db4f989f1bf5dbdc6612858125cb467d327506eb6b49a77a435fb0d12",
+        "1c917085f00d2b3a0ce8892652589cdffaf5d15dcd01547e5e21b7d8f185a9b8",
+        "1d5f701752a2f1960b4f87924af5ceb3e93e3049bd2a34947599166aeb7a66af",
+        "3c3fce6bcb8f0dd3f5c1dbb18b39b7887680ab56c059df8c1f532760a6941102",
+        "bb0af3ce58f351054fea326a660c1bc635b93daaf39ed67c260498070a8f0edf",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "e53ad1c9b514311bcb247d90135283d1d593d2f0d3edd98b37b936c29e3df23e",
+        "ff03fe3995be282fcb9fc7f0181704c072859249635ea629b2cb3de33b2af3eb"
+      ],
+      "to_sha256": "a79f2fc9412851ac04e0f1362f86b6903eeb3d2c5407e6beb21e709172d5c68b",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/composite-model-protocol-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-route-scope-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json"
+      ],
+      "reason": "合并框架 successor 门禁接入后补登记测试校验器的现行摘要；仅闭合历史证据链，不改变生产 wire。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_merge_route_scope_transition_test.go",
+      "predecessor_sha256s": [
+        "0a2bf5f80b2ad6c6343bd61acb53272dfe9c6ac3deee70b115167ade6c2f7cc8",
+        "bd80c8fdc01e848bc1156e255232c817e0428063dcf70845da147e11fa55d582",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "e0375f68d7ad4b8324adeaa358ec41d6192c8d365630b01de387cc400ada03cc",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-route-scope-source-transition.json"
+      ],
+      "reason": "合并框架 successor 门禁接入后补登记测试校验器的现行摘要；仅闭合历史证据链，不改变生产 wire。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v023_scanner_successor_transition_test.go",
+      "predecessor_sha256s": [
+        "5632b715a999dd42f692b1161c71bbde1f3d322e06a414664d7965b3fa50dc87"
+      ],
+      "to_sha256": "7c68256f32a4468c85748b78bdeb5f8f9e11d4ec127064fcdc71935396c59261",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "scanner successor 门禁接入后补登记测试校验器的现行摘要；仅闭合历史证据链，不改变扫描器生产行为。"
+    },
+    {
+      "path": "backend/internal/service/claude_fw_g_source_transition_test.go",
+      "predecessor_sha256s": [
+        "2802379d33652a36b5d1c0d19c2723ffea7e2c220df14f1b28be99fedd16c55d",
+        "9ef2cc4a97c023f6ad4921e2664d823ffcfc2435442b18a9673529d136e93893",
+        "bba44a4afd16836b158710d0ca7d66642863647d867ea396c299a825c78018f5",
+        "f7ac7a794bde6e297d560c0ab84efe6fc6a8db08360f8a2ff17c3fa1a9c8d4b4"
+      ],
+      "to_sha256": "af150bb2d69255212bb6e44b856cfd7ca73bbacf4f4e4e117e4fba08fee7d6b6",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-model-capability-source-transition.json",
+        "docs/egress/maintenance/claude-fw-g-query-fail-close-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/claude_fw_g_test_transition_test.go",
+      "predecessor_sha256s": [
+        "1658b7647c238493228183ff8d23a21a794e1e2e57e8c94ce65af4493df5c7a1",
+        "8babbac8d5049542c2f0f6cc31c1577a5dcc1afe4b9107aad74e1915fbb575cf",
+        "de32b4c8f5447382049f2386083aaf1d2fad155a48ae5673d60d729a6a5993e3"
+      ],
+      "to_sha256": "725da9037a210b8d1c8f16086bf219ccf6b669efc4df465e207b351ff7f92f3d",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/claude_fw_h_source_transition_test.go",
+      "predecessor_sha256s": [
+        "0983cda9fb876c383749660e81f32829d4e27d44dd7971424c670b02d58b5f92",
+        "280167279665623d67031281401d22e50826e64921c9fb32e90e10ab5b0ce597",
+        "52071ccab574e1761f0d3771dd525ffe8a22667953031a0679a3078f307f93d1",
+        "9acfc4ea876cacc39e72314ca4e9c7b7150dc5f29c16532208ac290acc649ad6",
+        "dba53b2c016460d109b4f68e3ad29b63d3781de84bb56e10b796ecc7b6455180"
+      ],
+      "to_sha256": "aed440f91801cd70ddd9e715598b5cb6b46f6f591e307e324cdf1a15859dac35",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-test-transition.json",
+        "docs/egress/maintenance/claude-fw-h-state-durability-test-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/claude-offline-ci-stabilization-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/compatibility_code_retirement_closure_test.go",
+      "predecessor_sha256s": [
+        "2ede77848d2d45c86b6a03ae4ee22f56a5de18b9571516ae19a4aa084547b681",
+        "2fbdceac5e91d51bb20b192f8c26f964e19648faaadad94b4b39f9dc6e1d6923",
+        "6836d0f491155c396be34228437ce0bab3cee835a9343a9b6f2b8921574c1309",
+        "82f2ed1dc63c5da7002f1041ea4d48dc1c2f1749a8221e09e54db046c2054842",
+        "9e7ba19d2a4dc810c660836e07da9a583f58e97ac7cf4a6ef7b7dd7093c323ad",
+        "cb24f66960018283cb228330f0046728ab8ae56088aba03a717b64a26b52cad5"
+      ],
+      "to_sha256": "b7084a5d07443fd8b0b3cd0ba9315703f82e3758fc0a16cc781b31c81eaf8f5c",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-test-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/fw-e-observation-source-transition.json",
+        "docs/egress/maintenance/fw-e-workspace-transition/manifest.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition-v2/manifest.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition/manifest.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/gateway_context_management_test.go",
+      "predecessor_sha256s": [
+        "806f03addf0884548ea34e3ee4ac252c736a3f1e08c875f4861f0aa75f0068f3",
+        "8d55618054876037df8df965d644f84acba08ec17924b3c9800b4eb4c0465ed7",
+        "ab6efe1dc65548fd59b8497e69f68892ca12421d71df9242803ad388e68e6f50",
+        "c172a385e3e89ef3926a5daa44fca3aa1a29a689bed3548591b60a51013a333a"
+      ],
+      "to_sha256": "a15304642a243ef16f2d91870c6a9d9d1b089481d62c5c697986d82ac9706f41",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-test-transition.json",
+        "docs/egress/maintenance/claude-offline-release-repair-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-release-ci-repair-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/gateway_forward_as_chat_completions.go",
+      "predecessor_sha256s": [
+        "1395a0760ade13707b4242bc604fe6b26851c2f615042624d503ca3a4cf45de2",
+        "243be47814ab71d960b87032644092e90ef2f8c2f319cdefcc9e7aebc1fd04ae",
+        "62c236ca8f8a65c22334c75b59fe199d0c39f13a3964425b63f6865d7c505e92"
+      ],
+      "to_sha256": "ce75d3720da98bde94c17ccba387b5b0ca9c4c8a25a492e1afc5248f2a6b5fc7",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-source-transition.json",
+        "docs/egress/maintenance/claude-fw-h-third-party-strict-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/gateway_forward_as_responses.go",
+      "predecessor_sha256s": [
+        "1efd342643a33c111339e09a4dc173cfdb776c65e186673e0ffd736950db9180",
+        "751b2a0cc80a5c04d8b078325a8841a9f1fa46bafa9a9d0077b6325a8e768fe7",
+        "c9d297ecc04022104f727dadb0cf048581d972fc76a5909042d296558e4324bb"
+      ],
+      "to_sha256": "2657c0f62fc269ddb604738ca17d43b0dbe6f38828747b8351f1a840d03473ac",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-h-legacy-retirement-source-transition.json",
+        "docs/egress/maintenance/claude-fw-h-third-party-strict-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_codex_files.go",
+      "predecessor_sha256s": [
+        "109c39f3e608b8fb1b5a3e86b24be2afae65f3fceef1df639ab12ac32f0048ca",
+        "2421f642b3e3ecf167cce207c9a9c9a8d1167a1c907d476ab6e2941629263df4",
+        "9f4389d53158cff54932511db0cc25ac7c289646d35ab0b48a2201d965ff1ca5",
+        "dc9a1f3311d498656bc07412b67a6d8681d7d1bba36d2c702ec26e23b3dc04bb",
+        "f52e89fb7659ac5af8b3321fb98bc2af7dd68d5fcce95f2478ac79a5387e14f0"
+      ],
+      "to_sha256": "f2cc2ec726b18510cb4103c260f8cd85ab1e103ee5d00b9357c7e5955aad05ee",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/ci-repair-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.179-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-merge-ledger.json",
+        "docs/egress/maintenance/version-leak-debt-closure.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_ws.go",
+      "predecessor_sha256s": [
+        "3ea98e8a455fa9d84317a2bd025f587e423b68557d04101825f22ffce5cf8e2a",
+        "3ee8d5bea8ec90b23de0f15f704e12996b2ac9b746ef5ecb36cc64e663468490",
+        "4b47a3156a8689c1639bc66ed3079f5b7a3c831bc3ac2e42a8a3841e80484269",
+        "69f4ae554f120d6d5847d7caf39871062a149789a760b6c175d98556767d64fd",
+        "8ccd28fc1fb21d7d2abcd32914b3ac1c25d5b834cd13904121f4d81225f4d363",
+        "95601bf42caf100e2503ff09689cd4eb086e06bab47aa19e5e2b9b56f5ccd158",
+        "96045283a4861f38168c9673499ecc1bde50750c480f667e490380742ccecbb1"
+      ],
+      "to_sha256": "b11f348a872eb38a3c3f8159b50ee5a8f744a881ac8615b8c6ca451a3c27752e",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/openai-ws-compatibility-guard-repair-source-transition.json",
+        "docs/egress/maintenance/runtime-reliability-repair-source-transition.json",
+        "docs/egress/maintenance/sub2api-runtime-stability-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.179-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-merge-ledger.json",
+        "docs/egress/maintenance/version-leak-debt-closure.json",
+        "docs/egress/maintenance/websocket-finalizer-compat-retirement.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_ws_test.go",
+      "predecessor_sha256s": [
+        "069c00267e3976bc3f2b068ad08ddc07f4f60fe87627f2dd3073d6478f327b86",
+        "6e27091303470cc834c0e2be05263965319d852c809d7d36e7119bdc998c69f7",
+        "83882364e2c8b27fec18faab832fa6b3637d21bcff89b172d51ddf1210cd0f95",
+        "ad385312fadcdda6fa6f219e8829c828323d8c3ed80c8c2b7789046ebbc12188",
+        "dc1be426fb124b2e7c714088bf3e18b88acc4086343ac49a8324e19c4451439b"
+      ],
+      "to_sha256": "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/openai-ws-compatibility-guard-repair-source-transition.json",
+        "docs/egress/maintenance/runtime-reliability-repair-source-transition.json",
+        "docs/egress/maintenance/sub2api-runtime-stability-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/websocket-finalizer-compat-retirement.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_pool.go",
+      "predecessor_sha256s": [
+        "01c342286ee85d5108ba0ec22185a8a1bf7542f058662a695fff24f04e85c333",
+        "033a133f68a41901ae58ed76aaf36c1352771120772969cb2d88f069a827b205",
+        "04c91c125905efd57912cdd960f1db843638c48f106ca839d795df05035d1484",
+        "05210979d7267f0321b4444bf596f2f48350bb0cad9bde3287f7c9e9edb1a077",
+        "07d0b9cc50373b15471dfe04bfefd84ad8f32f437c4aee70b3cd392aeaab584c",
+        "0dd3d11785e31f9ac1719b9b04f2f5cf33b8a4e39f83d2512f15a409e054ff21",
+        "0ffe809e08c6c2333941fceffcd07cbc80b1fa03016bcfa14b6198dec846634f",
+        "14b6fd885adb545c053277dcac3e1b0dda92e7dd3c749aa43b660770d9cfd5ba",
+        "169f6d5122053585ee213ff1872fec21f1460bcd108fbc1dd41c513a54725726",
+        "174097a36af421f1e1ae1ef228c974b0fbd8efe451b7acc9a6190912c5263983",
+        "17bc6e663889084edfd4382cd6b03b21738733c0ef6fcec218270c71b9b03fdc",
+        "26186e609250a9cd93b7736ef62ac44742160e9e0c3971f7c7b62a23ec9cbc1c",
+        "2b3ffb52c63781f1c6e4a97e56cb58e87442dfaa676679eabcdee819ac344838",
+        "31636c37836eb71e127b1aebe1dbaa118418af5b400abc6fd87725d34a730c0d",
+        "320d1c3706b09a315d610e8a3771c3c90496943f88e92e8abe770ca184918eaa",
+        "3852be25e9301dad54bfb27121ae0a8cb7a3533389492a090f55856c4732a95a",
+        "3f016e01993277d7cba009c8fbda8c83bae6e6f603ea5ed64674cf862f861d9d",
+        "437891820af945977191b1a477560e885ec3344ddc03bd01854d4ff1ec5b857b",
+        "455d1e9c2cef42ae41eb92ee77f72fbdbd822500f7d0c1c220a0328ec8aa7991",
+        "4780e84fd3dd0f5f5423c0f9342d49a31ace5486801667ba871ac4c7b7195ef6",
+        "4974af082bedc10fc7f8415e152233e15894e4415667598933f2b37e5fa07462",
+        "502c6a92546256cbb98db5e0311718d790518cfef3f3da6129f1cb8749e51ab6",
+        "55652f7ed3ef72c97081ce150e9474284d4356e63542bd25a8bc9d34172ab9e3",
+        "55feca3a1765c2595d9089beaec69f012ebcdf0ca66ed2467e991859aab26eb3",
+        "5841febb481b28961b6b2e1d04e04475d0c2b1d599a17f9ddf1ec191422839da",
+        "584a77ef8889da0df90450f20ea4856154b7a5b9f070393c1513dd9f49581089",
+        "587e612e480b143651a788bca2e01bc1876cfb925f91725cc6d34e9af63b5d4f",
+        "5ca808f686624af92a617285c53e7a769a66610b77231719dce670a0e1627f67",
+        "5cfe89edf7f1785900492e3a4e8c778ca3b77310a6a30c3a808f6c0da745ad26",
+        "5fece4bc588e127afbffc952c2319858b1031b89e5a66ea13b637b4df38d2c42",
+        "62481261bb7b1e895ff8dd6885094705bd0203ea215e234944fbc437c740197d",
+        "6278ff35dcbf25af5a3ee0338df130e7828044b9bccaaf07de10a15565e1164f",
+        "62b8613d5f0d6aef1a02a8c92fcb4d8bb6f2f1d92fb5f842b09e82a3d0027fe7",
+        "69e50201a2fe6ae2aa9edbedd14d66e826e42f69dd2f06beffde0ccefc253d09",
+        "6a6e15e316780f530ee1d44dcfc9a8a1891e4b1ea9ba92dfe74a080694fc876e",
+        "6b595be4d1226b9b6e5f760d199e1d4a09a23159c9fcc284e96cb8c0f8c270c7",
+        "6c7779a66103f0af1ebbab42c66f1e3e7014609b52971dcdadf16a65e8e8f0bd",
+        "6d1f27575f0746c291abf10f3a5e243130e11bc8a7fcefe34db0c21a920f4e8a",
+        "6d3f0500ab84b5c03d5d29e290b674323e92047553085a60ee39846615407ffc",
+        "70086cc636167f58e8942c77b07a1c9ea2125b3da77f0976a83b8064f9bd3a8d",
+        "7117ce832dc59aea501472301a1c6928266353062a218819ca33b408c96ef570",
+        "794cccc02afedb9aa35e4cf6330615cf9827b15baabb0fc8363a3dd50569ec47",
+        "7bb9961cc663d283a07c7460e27e6658277db3d478624055cd9f8b62a26ab9ed",
+        "7c942326d5e729fb5bc1277e75ef6faceaaade42ea7d6f7d6a809fb11b907dad",
+        "7cc28e30a4b0f96f0b926ad6a75fd85419b6c3db8f2d609bc8da9c401c66bfb0",
+        "7f8292f5325cae2a675cc456eb69b7e4ed7ac4ee74dce9d49a6fed274b995728",
+        "7fb6570ad0364b6cd89f7b9bf2cea7273d2c42bb5c0ef396a77165fe05d5067d",
+        "820e546efb471255521d6fdd9ecf59d3ae054dfc5dde35f922279b014991fbb0",
+        "841bdbcca9a6f137a9181713ccc14102c4185fbca83e01a7398a14884bd7a802",
+        "856a67eb5f844fd67ec4288689c6b08f691c6cfd219995ede1210be1757ebcd2",
+        "86786e758faa1d5ba7d29b4bc5e5a5e054fc9d92b7d0e885001b335fccf1b19e",
+        "8dbe35b54a402446918ffd5959027d380b8018dd0fae57e4c3bd085c8301e874",
+        "8f4749189ef9ab1aa086fc7c272d2842a21f6fbc5a1a91488bece7954c45b588",
+        "911aa3c793eca9ceeaa6270fb940fc7253371beb5dec6baaf0623cc0ae40608e",
+        "92253ea60b48c1e02fb71462f1188fcf1599a6fc6b74320309108821601c3fe7",
+        "9284f1effd2424aa3515e1f6532e060f932a0163cfc0de95609eefdbe453ab47",
+        "93c4f3f56bf93bfc13d0465d582f99c2b04fb0d224d7993b2da3de87595cc01c",
+        "947013b12d808d0664d2d6375499b8759c24b11aac6717c427eaab0e7e8fbd6f",
+        "95cf15f51bca78b4492509a6b49a9c523b26a6f8fb2a1af450cbced89392d8b3",
+        "9a033b3c7a96e5dc120ead8299921da253cddedc30eb7e2d3ab4b07b8401fff5",
+        "9ae93e1ad2b219d6260ae106c7b77f4f0beccbef86da644b556370b11e7ba646",
+        "9ba8face6299442077bde6f4b71e0ddeac49e468aef6ec2c382645fb6f437182",
+        "9cf9cb230d0f11130b39dbaf817532124b60bff74e40e28a5df9ec95ea6d2193",
+        "9ded78bbdb4433049cbaa5b1872f25babbee3a2886be09610d0900268c08339a",
+        "a0da5a93fd0777db828f3a32c6b9424e2f0f446722e220ca66ebe3ff65a2f0d9",
+        "a7e2e3a460aee42a40a59927a3876f9ff467e2dcde287887dde448dd2336005d",
+        "acb3e72a34c95690f7541db608c9dc8d1b49921bbedecee6e6e96aca84502a20",
+        "aeb58e7542053f64448550bee79a29f373b4dcb2818c46ae905c5cbcacb39665",
+        "bae4f3e2477235b618db05bfc756a51d96680c1505da3152e1a387235af391a6",
+        "bc4b83a16d3b1d9b2dfa7f7827efbda8b4724a9eae1fe0d84cffc425e796d4cc",
+        "c4b2f4ac29a1d519f0ea4e25c433b56b5bfeec909d7cb2ef7988b629acfad9e5",
+        "c4d6c10cf9b912ae99d05db5036b65ede2b83050cdfd3b198141c5148c23af2c",
+        "c81d8365d21f4ec1c6cdd43a5f6a992696bf0c3b7252e78d8a4b297993ca9718",
+        "c86feb25e3aef5b992bdecd404d30b9d562c423eb52eb7d83c996189f73b98b0",
+        "c9a22263671f92c8a81ff978bd7d1cbbbc8828bf8bff1c0ef6061118a4f2d93b",
+        "d4200e5d7d2bf59c59bf47cf479a31b1c2d7f6f6c50021c53c866e1748f9b822",
+        "d6bf873748c921374a4ac85acf3ba04682d8962e6783c7d0c9c44e5ce97f3d3e",
+        "db8e5cf9937c00d3720cec3a80963b8d65efc0ed8a84dc9474c6acdbf4cb1e05",
+        "de1ab3bf423607344d51adbb2b33ffccf7a051a390b7191a5f5a2f6ced51b5d2",
+        "dfd60d3b43e5be3cf2e73a7e646e5f7b8dea555cf81203950469dffe90b02e6f",
+        "e56252152cb32ea47db00ea66983d7a987154e6691ff4d48532a556d960b8528",
+        "ea810e33a400fab6ae07ff2d2a374e5a68944ad98ad5febb8cb1f9ffdc0b5ee4",
+        "ef3cdf059880e3419db8819ed9f59118c3cbcee5df66bbf75aa2a73fc2202b58",
+        "f38f846ee145d2d80d80e7fe7fb2524196852a71190f68c6652d459e3fbac436",
+        "f4681c3b84e46273276b39b29774b94fa232754bf7c708746b3f27948be8acdf",
+        "f7487e67f5e27a9098c783c93897916b629593eccd36209e58dfb40f61a9c418",
+        "fb7e0550167448701c04abf327f755fd888fcdd5fd631735623146e68ad59ab2",
+        "fc74f0d9c56d7b7b6c5e731ed5448677f50100dfbd62ddaaf411766b72ec4330",
+        "fcbed9ed162dacaa00555977a9dddcb021f5e09c3e7cbaec4eef869b25ffaf25",
+        "ff8e4a079f7e22cfd9736d4dfdf0c2716392a63614d8444d5adf7bdf723e1a6c"
+      ],
+      "to_sha256": "fa1d3b3f437ee3b387117982bee04b9c91762a925f427c5230cc28ba5b8b947d",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/post-conflict-inventory/full.json",
+        "docs/egress/maintenance/post-conflict-inventory/governable.json",
+        "docs/egress/maintenance/sub2api-runtime-stability-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.177-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-egress-merge-ledger.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-merge-ledger.json",
+        "docs/egress/maintenance/websocket-tokenless-compat-retirement.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/source_transition_digest_acceptance_test.go",
+      "predecessor_sha256s": [
+        "66c0ccf8d8160f0bb60be228f574eeaa33728da586b2cf31099081798101224c",
+        "e0d8c11109d5ca90fae5161224cec5c5204c0821e3150547ae054b41dad550dd"
+      ],
+      "to_sha256": "962749df1a5e7a3e233944046aae8dee0b9e1e15ccedde42c10032cb61fab158",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "摘要接受器接入 successor 门禁后的现行摘要补登记；仅扩大已登记历史证据承接，不改变业务发送面。"
+    },
+    {
+      "path": "backend/internal/service/upstream_merge_framework_transition_test.go",
+      "predecessor_sha256s": [
+        "7b93338b91898234e83b59bc343c50b3eb4f775a66bd765d4f6ef24721a74085",
+        "9da70966f4168afa5551c1e45fdbff02ad4967978363b148d944bb8f541a490b",
+        "ad36563747358488e97d46051d9ba626a3dad1a003a94d97eb881b3891d519da",
+        "e134c9d9f357c7210cff0629ae50b551980809cff8888e39067869c9d5f0fd6b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "e741ec9be5e3c34868caf6ed615bb69d9ec74caa4784f6fc5329ab748bfba256"
+      ],
+      "to_sha256": "4c64990e25e3c2b70546f00e2466ab61afe7646a270534971dedf0c4d38900b3",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/composite-model-protocol-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json"
+      ],
+      "reason": "合并框架 successor 门禁接入后补登记测试校验器的现行摘要；仅闭合历史证据链，不改变生产 wire。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v023_scanner_successor_transition_test.go",
+      "predecessor_sha256s": [
+        "e6e54b78e87ba23d1d53438272e3b4bedc56db65ddd9711ad50953ad236343d5"
+      ],
+      "to_sha256": "52e28ddc1cfc79e25809407cb9905ba810b0c1a6c97247e7beb27cdb7b2bb010",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "scanner successor 门禁接入后补登记测试校验器的现行摘要；仅闭合历史证据链，不改变扫描器生产行为。"
+    },
+    {
+      "path": "docs/CLAUDE_CODE_CLIENT_EMULATION_GUIDE.md",
+      "predecessor_sha256s": [
+        "12d0c3042063bfabff6a3b0f666ced7ee5c94ad249695b4fb7849063dca6b58d",
+        "1a882aec8fcff55693126d5d2d8cadb6e8460cf59762c27de76e24a39a0e4a81",
+        "1c2dadb394a57928c5ff21a1ede8241d885932213e6db37d04a30754821f025c",
+        "258bdff4347573da38df8dcb721c92489dc43fc488018b7f062d25fbe8a65c0c",
+        "25b8688b5ef288826bf225ae3046250680f331906c1e0c09484320677f54e39d",
+        "300c6bbe506f6b195b4683f55fac1edf8ac79dad1ca4fb02693ad9add0cf3f1a",
+        "46cf897208663b4c9e462a882305c3ae2d99b92390f20f2b4798c8e28729e94c",
+        "48e222b72d889d29fb71796af5f12eda5d9fc11fc543ed593946451b3ea4256f",
+        "4cc9b2acbbc50203cab78eeeedaf0d4f46aaa4500d082e27fdf5a8e9b937b31b",
+        "6682bc38c52f01f84324fde155fc19a628c62a14c1734477a4fb4598ee328044",
+        "6729311fb0152a2e6c100412af96ed5c3c8939675e7daa584349e1bccd5704f8",
+        "798310f78d239c7eb00425b6e621171b2c10b0003954a10550b783bc7de0dd54",
+        "83c7f959af4a43b9b7e1a596ebea3ea2b1bd415da04a24c402ff568445c6b5d9",
+        "b21c647e9c7027d846ffb47a5bb654fa1b19dd4369fbc29ee65326b0cb2db3e8",
+        "e2f91f2e16edd5618446df27c5a31c2868e1197a762cc40b647c27c0d3a2529a",
+        "f764d050426d02b0ca8404747c698c21a42b545f224b93332a8a5dbad4a99bfe"
+      ],
+      "to_sha256": "353e2699077a45486315febe8b5879780abe062829db17ba0564b74078d1b746",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-desktop-title-source-transition.json",
+        "docs/egress/maintenance/claude-fw-g-model-capability-source-transition.json",
+        "docs/egress/maintenance/claude-fw-g-thinking-display-source-transition.json",
+        "docs/egress/maintenance/claude-fw-g-three-model-acceptance-attempt.json",
+        "docs/egress/maintenance/claude-fw-g-three-model-acceptance.json",
+        "docs/egress/maintenance/claude-fw-h-final-acceptance-package.json",
+        "docs/egress/maintenance/claude-fw-h-production-acceptance-package.json",
+        "docs/egress/maintenance/claude-fw-h-state-durability-source-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/claude-offline-release-repair-transition.json",
+        "docs/egress/maintenance/claude-persona-release-catalog-production-acceptance.json",
+        "docs/egress/maintenance/claude-persona-release-catalog-transition.json",
+        "docs/egress/maintenance/composite-model-protocol-source-transition.json",
+        "docs/egress/maintenance/fw-e-workspace-transition/manifest.json",
+        "docs/egress/maintenance/fw-f-discovery-clearance/receipt.json",
+        "docs/egress/maintenance/fw-f-profile-approval/receipt.json",
+        "docs/egress/maintenance/fw-f-required-rules-normalization/receipt.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition-v2/manifest.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记官方客户端仿真框架文档的现行后继摘要；仅闭合历史证据链，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "docs/CODEX_CLI_CLIENT_EMULATION_GUIDE.md",
+      "predecessor_sha256s": [
+        "0168d542f49d544ad1a85b092a9d05b12c9b82ac4e21a914ca22acefce12e43d",
+        "1b43ea3e8c54bdddc4973e09edeff2d71c3855e97c86d553d5fd1c8869213fe0",
+        "1d7beef5b945f77a8837d2631121acb607032684fde07d4ef37f83b1ffd49e38",
+        "25eefc5ff46abb6723550629d18f5f7b5bb42e360a48f3305a8b407d19393cfb",
+        "2db10a0bda73449cf5122a62c7c7e7da86d0cb2ad7dad21df6401c7c88472001",
+        "41525a31943a65535800649b3972edea69d2d2496e0eec1af68a6d5face3275b",
+        "43af2571424da85583debe82fac969fd252f6f9f635ced42e7fd9cda2aa987ba",
+        "49e4fa750d76e9d822ddadb02e9e68f3ed89d2d7dff7162386b7204bb0b75a9c",
+        "5025a988e5dee9dcb6fc653c238c3c3803f0f2fe6588d5e243d7b83e5f3e6f77",
+        "54f012645b71530fa737855bec0b10d10f8213a7605c674f7a76c1c83aa476ff",
+        "58a94e545deaae489c1b7fc562c9b3eff50f53783ab7461e98d23bb838c30890",
+        "5eb3541c0cade2736e79657f205d41c2d2002d4f5c8fb125c53e98005aabd3d5",
+        "6205099f4d6a50e8bac392ec09d9368d43d82e7b8f0ea39773d04947c7c013cf",
+        "67b9c7bcbc2e585e76eb7c5b34514a5bf42769e014fa211041945610f21313c7",
+        "82b45ac16832984bc3a4b82b801c7a2e70590cb33ca3089cad312f791898a28f",
+        "85d3a86211256c8f9f580a7ee8e9dfc6b2477f91a2131f0a174104e439c1e9e8",
+        "b2f1609bd2dc4d9cae66442abc9d7512ab411360d99ce85a131e319ab6c457f3",
+        "beee3741049a35515ee4da07d4888c2e723928b8e770b40b7a362aa38e1ffd9b",
+        "c2e3c1d420e2890bd0cf49529304dadb402b75019bda66fafb78487d781661b3",
+        "c3348ad333f5add6b51755a004c93109b9c5b1263454ccec33af05fe8b7701e3",
+        "d1ae527c8e0894e7adfef9ed2bafbd0127cd66961b6f2c45069ec0e57e806462",
+        "d52d40885e65eb9f9b059897216b6fe5fcd7c5402062ceafb6d944397f395910",
+        "e07a9565900677aa4bd4e5899a80ee554f96c20127cacd3361a6d215c856b61f",
+        "ec71ba5605953f9b4584032efe595cc2fbb7aca062d0148846643cd5ca54b8ac",
+        "efeb347285ee3d3fa74fd7e3471455fcf3f0b92b52ad7f252d3709d8eacee9f1",
+        "f5ad2e49f9f225f94cfc7deda008332a33a8da6e321c4d718da9def5ef7bd3cb",
+        "fa0f44f5509e2d31c350f3b6ef893bafaadfaad35a55647c5e608161cc07b2ba"
+      ],
+      "to_sha256": "8e1768151bac64e9270c0e98490abdce02eb1715d2673604d9ed5fb05259ba49",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/catalog-generic-bind-compat-retirement.json",
+        "docs/egress/maintenance/codex-cli-0145-to-0147-narrative-retirement.json",
+        "docs/egress/maintenance/codex-cli-0151-arm64-typescript-dependency-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-container-path-recovery-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-replay-closure-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-full-job-readiness-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-historical-rehearsal-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-r9-candidate-readiness-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-system-proxy-capture-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-timing-producer-replay-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/compatibility-code-retirement-closure.json",
+        "docs/egress/maintenance/composite-model-protocol-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/multi-persona-control-source-transition-v2.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition-v2/manifest.json",
+        "docs/egress/maintenance/runtime-reliability-repair-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-source-transition.json",
+        "docs/egress/maintenance/version-leak-debt-closure.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记官方客户端仿真框架文档的现行后继摘要；仅闭合历史证据链，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "predecessor_sha256s": [
+        "0b8f2adc69bc55c2efd75fee51624714b43f7bef5eb51b7319bfb0890f0df3b9",
+        "11c29285aab45c625818b32d5748dd2a70489f0cd94671864c3cf1f3e61ef2b3",
+        "22cda15d0f33544255d386525872fc4ffe9a48c03cd6874dc61983761e8ce65d",
+        "23eae275384371ab00d5786b755110332e7f6159e955dd16bdee85b4b0097c9c",
+        "273854123d12bc5762d401eb63e6654ac2f69e6e8a1c9d253eecace0452aa688",
+        "3036aff1ecaabadd45b1cc1bde2ab28f58c9367f645eb7ffe3735334112c9f04",
+        "5f9271412f2adde4c1fed3b67fafbbd25cf7ddf62df75354c78ed9d141c459f5",
+        "684e9c0f9d7acbf115dd8365ff27c66ce22eecfb6b381b805c0feb5249e5cc7c",
+        "6ab93d7f3aa01f5c14163cf3c2a13004951a8b53b24dce4bc36457567d3aee58",
+        "6d9a82b2d9e1346f543c9a12568511dd1f53a36049cc13edbd0e04912c66bbc9",
+        "6e9db8b6600c2b108bb7aef7d8b1c408c20c2448f26e2e45af4df7b6dc81f05a",
+        "74dc01ac86f6f44c77a508bc5834fe3a6699e92d436d9d0701fe00952e556b75",
+        "92ce59b2fc90014f11ae41127b4a1f6b8b71c8a248fc8078ef55125f4b3cec22",
+        "af1066176c33db3580ff4f47b22bbc90ae2fde587357570ad43430ac6975522e",
+        "c326a4e43f04692dace778410cc95f155687dab80d577231a18955be100ce9d4",
+        "c555e9cda6c558f9e2e09fa06b9561dc15d59add7adb3fe7be33be64c0b4d7c2",
+        "d053fb4841683e372da3b24961f9be0ba30c57cf85178a6d468ae13bb6e1c9e2",
+        "d11f439e4b2984539a5fcacbca00b29655a1302e9774c02736cdd9931ccc6f47",
+        "d274ab40f022da3124084d51f99b5c403518256ff27c1939282b0d49f7979560",
+        "d66f73d33602faacf1d7d1b796aa38a9f842e077609960328ec0ac38d64be7eb",
+        "f836ec63336f2f4c178a5617e6208e22a6573d7416938d6bb389e31856cc4eb3",
+        "fe969b696bee84456948673fcf051ab24b17cc72c97fa23dca58ee1d8e69c5ce"
+      ],
+      "to_sha256": "728e1cf865e7d6f4f45413aa312f679bcf9d0cd5c55fea20609587cc28844d56",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-desktop-title-source-transition.json",
+        "docs/egress/maintenance/claude-fw-h-final-acceptance-package.json",
+        "docs/egress/maintenance/claude-fw-h-production-acceptance-package.json",
+        "docs/egress/maintenance/claude-fw-h-state-durability-source-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/claude-offline-release-repair-transition.json",
+        "docs/egress/maintenance/claude-persona-release-catalog-production-acceptance.json",
+        "docs/egress/maintenance/claude-persona-release-catalog-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-replay-closure-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-framework-clarification-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-system-proxy-capture-tool-successor-source-transition.json",
+        "docs/egress/maintenance/composite-model-protocol-source-transition.json",
+        "docs/egress/maintenance/fw-e-workspace-transition/manifest.json",
+        "docs/egress/maintenance/fw-f-discovery-clearance/receipt.json",
+        "docs/egress/maintenance/fw-f-profile-approval/receipt.json",
+        "docs/egress/maintenance/fw-f-required-rules-normalization/receipt.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/multi-persona-control-workspace-transition-v2/manifest.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记官方客户端仿真框架文档的现行后继摘要；仅闭合历史证据链，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "docs/egress/maintenance/bootstrap-inventory-lock.json",
+      "predecessor_sha256s": [
+        "2ea1d70f7fb2885bd048d4d81a7c5d7fed8d9f283044d5f70df344cd66fa1d18",
+        "593130bca0612eb2584945c577a7d3a014e7cdc42b4ca544b6f8d6ef4a593532",
+        "629cb0a8b32532d98edc52693c8bf00c70ec81145f0a870b870a63cebd238594",
+        "88d027eefa197d564d1bc3a902581be412768239a06902facf448d51e5f7d24c",
+        "917fbcc0c6cf8f0a28b553837e167c07efc38aec566a98ab52c59d68ceec1b65",
+        "a354f834db1b5cecaa2f70989fe1cf72ebcdbb1987a79029ef3409755b0229ac",
+        "d94bfe584b1cfb61bb852c7c6de9dbc3298084c0a95e329c960b0ee12fc0f0a2",
+        "edf349af67eb9821014c8639df4f2a76e61f6cb1a024d09a2019bb37816200b1"
+      ],
+      "to_sha256": "d83c17afaa7800a7575fd8668f201f64c2ba51a520cc85504131ef3d37fd1c0d",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/claude-fw-g-source-transition.json",
+        "docs/egress/maintenance/claude-fw-h-source-transition.json",
+        "docs/egress/maintenance/codex-models-unwired-transport-retirement.json",
+        "docs/egress/maintenance/compatibility-code-retirement-closure.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.177-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-egress-prerequisite-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "上游扫描器后继校正后的现行摘要补登记；仅闭合历史证据链，不改变生产官方 wire。"
+    },
+    {
+      "path": "tools/check_ledger_completeness.py",
+      "predecessor_sha256s": [
+        "1b6acef5b27e4f73994e04b6338256ca22ad223da72794f7f9a290e88cd1b248",
+        "3e650b9d07982ff96f1c90f6fcf70b4ba9264df7183b0ef91edfcc3cbd1cf375",
+        "b9481a9b6acaa7c1b26943ca51dd8e5f98fb8b8e039aeab597d7bdbc3bd169c0"
+      ],
+      "to_sha256": "5ea82d4f334fab130617ab1d422ab2df155950dbc4d396c77b0f457491b0ff9d",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade.py",
+      "predecessor_sha256s": [
+        "085e06e89aa9e9885974c84d278c81f6e4e0b2a2992c9a1c9b2e3c2e15d54fbe",
+        "11b4d8ef561052155b9282069353a45b1d6fd1030fda30e9dda12c8334e64195",
+        "2d908fa6bfda9ad2cfcea8d8af8fcd62ac6bdf4735b1175cd622b526eb3ba329",
+        "33016a16fcbb93eaf6fde54a2fd3982ddc856dd7dbe4d8d1f69128b9e1979f55",
+        "38fc19c54804ff7b106ccd6950522bb11bbca432cc93a88875ea3fe836c549ac",
+        "40688af442fe2da95d4a81f7a0ac7b18ea6b3a3932f9d122c8e2b60fe9a01b81",
+        "4f411eb90e141a2706ac2ad69e5b145a44f3ebb300b0597947ad18dbe232fa8f",
+        "6f65d94cd79cae8d04ca442c50c24337fd4bf2242dbb7f0f70d4f4499d32f35d",
+        "9388177d89a380b9a0d6e3fa575a00ec60393e796a60658bfe9249359017a72e",
+        "93fdecaec04ba6e92fb1b55008faa55b263f739413c38defa5a9e248d1c08bb2",
+        "955e61bc012e25575f8c93462a5fc988267736cc7a6cd886774ab92959a1ec1f",
+        "ac9d51ce5fa01bc067371f5cf1198b6290eb241438c0b35d00b4fb08bfe1f585",
+        "cd643c5f9da9437dc7bc88b57d94cfc830b93f354b18c606955666d62457abcd",
+        "da84e04034b0583bd48ae3f5dafbbb29e3f2cc5f8d12b922a7a7eeec5cc1ad67"
+      ],
+      "to_sha256": "27e3cb289d107b173cd93d550fcceaeaa3050a358ffc94326d8b32a361e722f2",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-bwrap-zstd-readiness-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-replay-closure-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-full-job-readiness-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-historical-rehearsal-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-managed-scenario-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-model-policy-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-r9-candidate-readiness-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_gate_receipt.py",
+      "predecessor_sha256s": [
+        "861d07d5d6574c0e953df930907bfc8d5a2a64f34072b2f204992362f22327d8",
+        "c60b3c4992b5a6081e678eb6c3b23e308ca6ea82e8be395e66a9705c01375abb",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "5c925115f6c210212fed1a3a87f2ce8beb9e1588d4a0ddfa08d39c026a5a1a31",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/codex_upgrade_gate_receipt.schema.json",
+      "predecessor_sha256s": [
+        "9dd199157683be777a2a575ea06d947ec40d40ae321acdaf7e8f6109c9cc6131",
+        "b140621fb5fbf27292ab11e7ac4eec165bc8e86932528736c0bb4f6226ee4ea3",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "b8d1c89cd21e975d6e27cc9568f02e06cde2141aebcd4879a4194138af7af160",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/production_activation_receipt.py",
+      "predecessor_sha256s": [
+        "09fdd6afeaa003ca4f35a7b5281392780ed60bd37e9fad732527c9adc4976202",
+        "83ed012547421355251e0cbc28a3c8b9cb471250170e9b2d11242356cd085382",
+        "f292af9d4d81c8d839618cc0065fbe89ce23761365929490b5300a756ecf9ae5"
+      ],
+      "to_sha256": "3b4ddbf874a9164654e8496fb6f2a88fbd50b22557f16b5285f0aa0aca7d1292",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade.py",
+      "predecessor_sha256s": [
+        "07e83941855530c71fc548a93662a73e99bb2745113338e5d284b08ab7803606",
+        "15ffcbd6975fc0cbd798d893aa50ecd1ea428cdc10c0ff91b9fb490733eb8039",
+        "1e9742f3953e625792264da1b74c910479765b047c61e2c3a7d0756fabbc943b",
+        "2f29e29a06c082d36ece4c59b022ea206f81e4bf92d5f83c63e62069b908cf06",
+        "349b024d590e3d3f540e9fa0033027c95d76bfa08992ec0cb9e284c69dd80396",
+        "3df8d26a1264bacb899188fa2d69954968a90f91aab4aff11151c7193c45841f",
+        "5d7f299b7019f154b68d65c1dd36e7c4e708848b68d6b71aaebdfd1b89ed03e3",
+        "7b405fba5ea25d38de899be90cf0e888ba19851a0c4c86f9bd5cb9dc457aabd4",
+        "848ce51843cf6076c8730530887a64a33f5b0a7f6778f18c559ae37ea5a40fa8",
+        "a4074100b278b817a6c20a2c6859435649f250c64aee11f0d6ac423b37da39bf",
+        "b4a1d1183d383e1316a5466ecf380b27784619eb9b15d9365cef3dcbad46cc7a",
+        "b87b55aa9741a10f49fbc5da495104b483be089522fde7218effc577717ee002",
+        "c15862fc4d709bc2fc732abc70346bf3674ef5765ca2feaa686e9ec336ff3b24",
+        "ce450f428db89c5a6f2295914267c35e436b8297ee6044836e03e4e234b8e534",
+        "e8c97b5d40e991dc9600a9acd55c9e8ed6d6a66f8929d36f53f5c53740f59b46",
+        "f104aeef4fff9181925903fbedb708ad9683e61e56184295b44999316ed8df8e",
+        "f5889686d7ce9efe53561be4c0a9adccc49ab42c4ed29691ca615cb7303b8631"
+      ],
+      "to_sha256": "e364debf7b87496206d6b89dd8268aaa3fd188bec2d880181c72621c6abc86ce",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-bwrap-zstd-readiness-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-c2pa-capture-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-c2pa-job-identity-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-deterministic-package-fixture-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-label-preflight-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-replay-closure-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-full-job-readiness-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-historical-rehearsal-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-managed-scenario-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-model-policy-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_upgrade_gate_receipt.py",
+      "predecessor_sha256s": [
+        "c0d4d642248a00687c4bf9d462ea3ec8d69830cd1cbcfaecd49552486edd16d7",
+        "dcbb5b251bbf7ff376ecf75b88bcb684679d9eb3ed0ad5f30dbcb8b6812ce3b3",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "4077748a0a2824d974f846fab83de872ba98d76fd092443642924c109772d2a2",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_production_activation_receipt.py",
+      "predecessor_sha256s": [
+        "0f894bc143480dbacd634aa76dd2870520225580aa5776a85271128692580e52",
+        "9871203509cb1087e785a62ebdfcd56b5a2795d756510c51a381ba3ac81c850b",
+        "eab63014f52a0cb3047ea18ddb8b716f822856a901b42bd83bf9a9fe74b7be7a"
+      ],
+      "to_sha256": "79b0fec450db1bea0196c1c1ed2051d2a81823604d43645dc4d4278463ccef3c",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/codex-cli-0151-tool-readiness-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/workspace-transition/manifest.json"
+      ],
+      "reason": "合并框架升级后补登记历史冻结收据所指向的现行后继摘要；不改写旧收据，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge/__main__.py",
+      "predecessor_sha256s": [
+        "b81e7a85a9581bcb165475fbcb2151a2b0ba0c29fb244334c711f6f1ae994eaa",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "e1053bbb9d57de60575c9d64723ee936bbb00dfaac814e9c19e56090980e7a59",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge/canonical.py",
+      "predecessor_sha256s": [
+        "c134e5be0d0c6d6a978224c37a189b9d579cadcace9cfd9992d0872e650bfbf5",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "b836d7e28bfbfa7da23a9e5465aae47e2668de4aa71de20bf7c472621305cdd1",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge/contracts.py",
+      "predecessor_sha256s": [
+        "8a6f56dde81714b044d2ce7af8ff5a471a6b71d87565dcd5c04ccbbd5849afbf",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "55eebf5eea4d184bf761c984e7f09bac7795a21d3e13f5c014edd7761206b142",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge/gitops.py",
+      "predecessor_sha256s": [
+        "44d33ec647d18aaf23622310a451d2c4f8be489842b7a61acb91b8a9090c4a7c",
+        "5bfe32178bc3f3e456178761d328c360efd0ae4ef0214f6aae78c7ca3465f5e6",
+        "a9d4ea4a532e4352d6b3caf58dd0eeb391e058b6a9679faabb401f30d417abf0",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "a3189647b359e213da2d9692ed744fa534ad61ab2e538bcd35b2f23216fbe30b",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-route-scope-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge/tests/test_workflow.py",
+      "predecessor_sha256s": [
+        "4bfd6c6eadc4b7dd22b769346de000aef2b9baf24d9274e35fa5086e33d822a9",
+        "81dbb171da724fc5a2ace027a28fb055af9034088a302418b220ee8cffb69b60",
+        "8783e42366787c049e09edca51f642016ccc4e5de8ffab9dd018f7be8e6d8c10",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "83654c10693ea13eed3ec8b1132e2109fcc0abc37bb7525afb3f4475d7364c8e",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-route-scope-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge/workflow.py",
+      "predecessor_sha256s": [
+        "490c6d3186f95fe67fcf5440df1a0286e0d8fee537c4613ab5f640235d16404a",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "e4a891b951459488333d8cc69dff8305b9bc2461a7abec769578fc4418e48c6c",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge_artifacts.schema.json",
+      "predecessor_sha256s": [
+        "510e4a57214cf13169ebb10064ad87097f5f5ef313df52c3628478cec5f1b625",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "631439862d9eba61eed4a133b70bc261a394bd8e5435964d0c3f169576dde486",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge_plan.schema.json",
+      "predecessor_sha256s": [
+        "952ca5e3ffb8f4e972137d73747c169ae9968eafc1dd405561337776bac89451",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "30c80f6524ac69a895a247f25f23259b320be923db32d533a8d60c8bc67f47d2",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "tools/upstream_merge_request.schema.json",
+      "predecessor_sha256s": [
+        "67cf3ea1c63f2ab7c6a68456e0554201284e2c2a8f89368bb510ef43f05efaaa",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "58c4a6d74f123c26d34563a9fe74ea378213e4f1de943d9cd7a88b8397f408ab",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "reason": "合并框架基线门禁改造后补登记工具与 schema 的现行后继摘要；仅闭合历史证据链，不改变官方 wire、Persona 或路由选择。"
+    }
+  ],
+  "allowed_wire_deltas": [],
+  "verification": [
+    "go test ./internal/service -count=1",
+    "go test ./internal/officialegress/... -count=1",
+    "make test-upstream-merge-tools",
+    "make check-egress-spec"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "4e1e1839018b30dd392d1bd20c9275b9e920535094046483099c5429a2ebc9a7"
+}

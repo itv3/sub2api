@@ -126,6 +126,9 @@ func upstreamMergeRouteScopeTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamMergeFrameworkV3SuccessorSupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamMergeRouteScopeTransition()
 	if err != nil {
 		return false
