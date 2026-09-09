@@ -117,8 +117,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 14438,
-        "sha256": "460cb1464501eca6ecbe59ee38fb4de721076ce2ef7cfb74f66f9d0d2cbf24ee"
+        "size": 17935,
+        "sha256": "1e18de2ac45648df973e8c2d86d1924ae3fd80b42f9ca9f68148b0f478b7e54a"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -135,8 +135,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 10,
-        "sha256": "231db48c68264349ff291add90025e4ef67260f279be5acd4a14765280f46b07"
+        "size": 6,
+        "sha256": "3ab94c04d24986f3af288ba1cda2c0bbddbc5a89dff097182805f54578e1ea75"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
@@ -153,8 +153,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 202623,
-        "sha256": "fc53921e37337bb2538d4781c4776919d7ce903c0e2e6439046d6ce857a960c7"
+        "size": 202801,
+        "sha256": "7210850bce51bf12b29b201d73ae849c77564501b0cd9a3a49bedd2b44185c29"
       },
       "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
     },
@@ -171,8 +171,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 154685,
-        "sha256": "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168"
+        "size": 173075,
+        "sha256": "0f04299d8b4a7358634f87fcfc3f671df7cbf7acf5d27ebb09982b25806d294d"
       },
       "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
     },
@@ -729,8 +729,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 614,
-        "sha256": "1c2f952bd7ed834b0ffc49826a9ac29e399c945d4eace07dc59d76c05327ce5d"
+        "size": 884,
+        "sha256": "8f0c974889d60694e2f98a0baa5b6c14012dd3e93015a02f42c4c7118ee5c4e3"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -747,8 +747,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 6943,
-        "sha256": "a79f2fc9412851ac04e0f1362f86b6903eeb3d2c5407e6beb21e709172d5c68b"
+        "size": 7039,
+        "sha256": "a1f2577d0aca2404afc8e7053b50d5e17b33a3de3bcc2b5638442d45c30351f6"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -783,8 +783,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 5431,
-        "sha256": "a6f731cbe9fb220163f3cbbbefc924eaf6623462204ed0dbd1f8d11b219576ef"
+        "size": 5527,
+        "sha256": "06269504739368bad831dd1b349a57a66edd63c7e0138d1f82fe648cf8213d99"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -801,8 +801,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 108598,
-        "sha256": "e90f413946f1bd898b31f075ae0810bad69f043cc5b06459f4479718cfa5d533"
+        "size": 108924,
+        "sha256": "c0db99a0668a17e444645086fe26922f06a892215e2f996505765ca8158128b5"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1377,8 +1377,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 46964,
-        "sha256": "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f"
+        "size": 46982,
+        "sha256": "a3b5a1a6dac6583421032cadc81ad12e5ac3337359c712539f2b2e090ffc906f"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1467,8 +1467,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 7857,
-        "sha256": "0571e69492a1a808030e5b37d132bb5df51209bf3e3f8ec4cea0ca00021ad8fd"
+        "size": 8165,
+        "sha256": "f498f9505bf3b7647e6523f3a997dddd2ff0c63c0c473d6d74158ec8e2a8ead8"
       },
       "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
@@ -1503,8 +1503,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 74675,
-        "sha256": "1b15d642f4d80023b9067096f1a896fb36d977f6a9eb85191afa9698c374644b"
+        "size": 80995,
+        "sha256": "ff300dd374ac17b74af8f4c72bdce4ee7cba4e80f8f4a8b63e99b511b7904268"
       },
       "reason": "承接问题三工具续接轮次误判的 HTTP 回退修复；历史收据保持只读。"
     },
@@ -1521,8 +1521,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 87968,
-        "sha256": "12e787207800f03e78032d8403bda571d0371cb30ff088734725c82dde26053f"
+        "size": 97427,
+        "sha256": "70bba6fd80cca657488d3635f49e5ba5fc48c48723aa8140d90dfbdef523c23d"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
@@ -1539,8 +1539,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 63011,
-        "sha256": "dd8c3fd04eabb98322e27e91e43f526a20d708bb803cb1a616c5256d3ce67c20"
+        "size": 71795,
+        "sha256": "2b890ac87a1c5ccb2ff8efb0401c4673d009a0458856666682e300f590c4042c"
       },
       "reason": "承接 docs/bug.md 6.4 第 3 点「减少解码副本」变更集（字节区间拼接编码器、索引直建对象树解码器、零解码预检与零拷贝正文视图）；历史收据保持只读。"
     },
@@ -1557,8 +1557,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 45667,
-        "sha256": "110fe7a35904883d4f00afed1a062d38ff11a6c94ae6fda54dfc1a8606a470ee"
+        "size": 46609,
+        "sha256": "2a2cebe92fa0d44834b4cfa93c3fc0b32aa171ee8926b383603ae9ccbdffe595"
       },
       "reason": "承接问题三工具续接轮次误判的明确客户端错误映射；历史收据保持只读。"
     },
@@ -1575,8 +1575,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 42912,
-        "sha256": "88e49d50f5cca1feb119536350ed71e25fe1644c04958e97115e8f50465e9bc9"
+        "size": 42755,
+        "sha256": "1eedad9d9f260d0a554dc7820411ad6e819bdd376f87a7496c0f097fda10825d"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
@@ -1719,8 +1719,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 35747,
-        "sha256": "13f6ecaa9ee291113b13b7fa6b633bcd9d0ea4cd0e6d6d8acb0772341521d98e"
+        "size": 36718,
+        "sha256": "74259825b7d73e939af810a7b7627ef1a14aae5badad33e816c07570079a0f05"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1809,8 +1809,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 16289,
-        "sha256": "a7e98a4af45e8a5d01a3d74a74e43d5da54a808ce3f561ea0bdabb3ec5ac8957"
+        "size": 16014,
+        "sha256": "69fac262645eecdad880d9afa65d4ec66a0d8435c441e7f1e8b97360fa6b70d0"
       },
       "reason": "承接 Lite 能力路由修复后的当前工作区源码；历史收据保持只读。"
     },
@@ -1827,8 +1827,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 20627,
-        "sha256": "ffd683ecab26bd70dd5158a91d17100c1e926a732fd567cf6b0f503a3d1f5cdf"
+        "size": 26923,
+        "sha256": "70b8926fa430dfa999b9e40613ac36d8de48617bd59221274df3f87fba879c9d"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
@@ -1845,8 +1845,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 11711,
-        "sha256": "c1751c2ba130d62aca5f751a0c749f1921827d659141ff882d3edcf3e010145d"
+        "size": 13851,
+        "sha256": "a851baf6a5878a544ef0c57d4c15b2952afe0d10e84f98136eb5db96bcaec8a7"
       },
       "reason": "覆盖模糊工具轮次的 HTTP 400 错误映射；历史收据保持只读。"
     },
@@ -1863,8 +1863,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 91387,
-        "sha256": "9e3fc1926c4dc02a64e97bb99c744de64a1fbf8cdf72cba3cefe3102d7d5e338"
+        "size": 97380,
+        "sha256": "2d09a920a40c8d1fcad6a91b3c3711c5c05750cdecb6c2572e38227f47951fab"
       },
       "reason": "复用工具轮次歧义错误身份，原生 WS ingress 仍严格拒绝；历史收据保持只读。"
     },
@@ -1881,8 +1881,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 29940,
-        "sha256": "128e3e5e1183f6f44161ca986fcb7a87e3827f5aa3d278bd3270775c69e65a95"
+        "size": 30946,
+        "sha256": "f26bc0dcedbb19ba07a5480a50bf1e21838213266b87838b3a5e49df076a1c00"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
@@ -1899,8 +1899,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 33820,
-        "sha256": "f827a87f30af5b351077015bdf629a3a190a064d5c4a0f2afa65eb1a9fac8500"
+        "size": 33701,
+        "sha256": "130095df553b6f63579b86ba33f6998941ba9071d2cfa2ef7c4ee1b41344ae0a"
       },
       "reason": "将工具轮次歧义单独分类，供 HTTP 来源安全回退；历史收据保持只读。"
     },
@@ -1953,8 +1953,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 628,
-        "sha256": "e0d8c11109d5ca90fae5161224cec5c5204c0821e3150547ae054b41dad550dd"
+        "size": 919,
+        "sha256": "7087b531632fff337dde75dc1c6788fd3c48b519b3b773b81627878f10e84765"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -1989,8 +1989,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 5054,
-        "sha256": "4c64990e25e3c2b70546f00e2466ab61afe7646a270534971dedf0c4d38900b3"
+        "size": 5157,
+        "sha256": "f99d4c3cb1eb2f25ba031bd0a11fb8df7c9c6588a01ea4c8e7828b1290d9661d"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -2007,8 +2007,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 11098,
-        "sha256": "ebdf5a98aa5c1387c0c06c511e469617e33dee66243b9ca59b1c523459c6b959"
+        "size": 11304,
+        "sha256": "660bedc58b9a87b81ee6980f5ef15e8e92f114c34535cb28c917f38261f930e7"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -2025,8 +2025,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 3988,
-        "sha256": "cfc6dfb0161044f83dc659ad8724f4bd5f692471a591d9d165355da88dd52d49"
+        "size": 4091,
+        "sha256": "6fa935ae902cb80634ad032072a8d404ff6766915b466822e5835148c728f01e"
       },
       "reason": "Codex CLI 0.151 当前工作区承接；旧历史收据保持只读。"
     },
@@ -2097,8 +2097,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 60812,
-        "sha256": "fd8e528296bbbca00d7a4e10fb93158d0b33a35d9b194ddc0c7b9b760d637d6e"
+        "size": 62159,
+        "sha256": "62c370d1ed0d692400c496890ce4c286df98740a5379fe75f51bccaa66b95376"
       },
       "reason": "承接 9588 修复后的当前工作区源码；历史收据保持只读。"
     },
@@ -2187,8 +2187,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 17640,
-        "sha256": "6406ff4a0b67097ea68d84bd517a88f568882d1141e7a4fcc7cfe43695063266"
+        "size": 17892,
+        "sha256": "e0813a7eea998312b9145f1efc4c75e7e7735e992d2433c918f164c20eba4701"
       },
       "reason": "承接当前工作区修复变更；历史收据保持只读。"
     },
@@ -2800,7 +2800,7 @@
         "file_type": "regular",
         "mode": "0644",
         "size": 22575,
-        "sha256": "08cfda945a1572dc6dac0aa85505aaf4f10a8dfbace57cf25dfe4f11427bca9d"
+        "sha256": "afe4464d775b0a9e6cc6a8e47904dc1e2302e71b6c7f790315c434dcca707cc7"
       },
       "reason": "同步问题三工具续接与问题四内存优化涉及的四份源码快照摘要；事实与规则语义不变。"
     },
@@ -2817,8 +2817,8 @@
         "existence": "present",
         "file_type": "regular",
         "mode": "0644",
-        "size": 42514,
-        "sha256": "e9833b0f586c92cbb10c1768f75bb2dce189e1fd9922ee16f4b78ed1bd453d6c"
+        "size": 42774,
+        "sha256": "e6059dbda3d64c9bc3a88e80fa17f7d4a7561732ef79de9b379197e2b12f2f9f"
       },
       "reason": "冻结补全三份源码快照后的候选事实映射摘要；旧历史收据保持只读。"
     },
@@ -2937,5 +2937,5 @@
     "current 0.151 受影响闭集测试"
   ],
   "result": "pending_current_worktree_reconciliation",
-  "identity_sha256": "f90551f61ca04714117d35afce98f1696a7907978ed2f5d9aaee930f5047212e"
+  "identity_sha256": "00f59cae2ace1ad659876da8e20b4463589c0e8d7a5c9177589f3d83e3d1ba40"
 }

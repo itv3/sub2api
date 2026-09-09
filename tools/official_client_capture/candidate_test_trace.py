@@ -62,8 +62,11 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 与 `official_egress_integration.go`，问题三工具续接轮次修复改动 `official_egress_openai_ws.go`
 # 与 `openai_gateway_forward.go`；映射只更新这四份源码快照，不改变测试、事实或规则语义，
 # 受影响的 4 个候选验收测试已重跑通过。
+# 2026-09-09：合并 Sub2API v0.2.3 后，WebSocket payload、gateway 转发、alpha search、
+# live 转发及 HTTP upstream 五份生产源码发生受管变化；本轮只重绑对应源码摘要，不改变
+# 候选测试、事实宇宙或断言规则。
 FROZEN_MAPPING_SHA256 = (
-    "08cfda945a1572dc6dac0aa85505aaf4f10a8dfbace57cf25dfe4f11427bca9d"
+    "afe4464d775b0a9e6cc6a8e47904dc1e2302e71b6c7f790315c434dcca707cc7"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。
