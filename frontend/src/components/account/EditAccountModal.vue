@@ -4219,11 +4219,6 @@ const syncAntigravityUpstreamModels = async () => {
       appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
       return
     }
-    if (addedCount > 0) {
-      appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
-    } else {
-      appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
-    }
     if (hasPartialMetadata) {
       appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
     }
