@@ -1,0 +1,142 @@
+{
+  "base_commit": "681909c2e1bddcbf2a3700c7713e03647507fe26",
+  "issued_at_utc": "2026-09-09T10:30:00Z",
+  "predecessor": {
+    "path": "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+    "sha256": "ce48d7b4d6c0adcca18948a55683dcd177dca9be854d588d38da6a2bdde43403"
+  },
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-v0.2.3-framework-v3-successor/v1",
+  "scope": "upstream-v0.2.3-framework-v3-successor",
+  "source_transition": {
+    "base_commit": "681909c2e1bddcbf2a3700c7713e03647507fe26",
+    "current_commit": "ead3510a55d77040c781ef7daa4e573e1cd8c57b",
+    "path": "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+    "sha256": "dfb3ce0653166e7370cedefb8cab74963264326a683debc83433c3fb528f71e9"
+  },
+  "target_upstream_commit": "8fa67d477d6651a744754392a8982ea589c26ae6",
+  "target_upstream_tag": "v0.2.3",
+  "transitions": [
+    {
+      "path": "backend/internal/handler/openai_gateway_handler.go",
+      "predecessor_sha256s": [
+        "7052b4455af267b889b9eb4deeb97d856697f3db61e97e6a2a5a636a89221168"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "0f04299d8b4a7358634f87fcfc3f671df7cbf7acf5d27ebb09982b25806d294d"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v023_scanner_successor_transition_test.go",
+      "predecessor_sha256s": [
+        "7c68256f32a4468c85748b78bdeb5f8f9e11d4ec127064fcdc71935396c59261"
+      ],
+      "reason": "登记 scanner successor 校验对当前工作区收据后继的精确接受边；旧 scanner 收据保持只读。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "to_sha256": "a3abe6ab0d0b5381357d183f9925cc9af53deebf1153ca46e8f8b5f9b5efbec3"
+    },
+    {
+      "path": "backend/internal/service/gateway_context_management_test.go",
+      "predecessor_sha256s": [
+        "a15304642a243ef16f2d91870c6a9d9d1b089481d62c5c697986d82ac9706f41"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "6aa493340bca5fec6e1349a3c61166726443a9a0b6d1bf7e260216af05f5ff44"
+    },
+    {
+      "path": "backend/internal/service/gateway_forward_as_chat_completions.go",
+      "predecessor_sha256s": [
+        "ce75d3720da98bde94c17ccba387b5b0ca9c4c8a25a492e1afc5248f2a6b5fc7"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "2428c9ef1e95d56a3af9e35b9fa8f3786d43559e51cd54aec104cfd1ae78eea6"
+    },
+    {
+      "path": "backend/internal/service/gateway_forward_as_responses.go",
+      "predecessor_sha256s": [
+        "2657c0f62fc269ddb604738ca17d43b0dbe6f38828747b8351f1a840d03473ac"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "e1255635c4041634bc1fca300c2579099c42deab96dc0fe6759a26c1314b1ec1"
+    },
+    {
+      "path": "backend/internal/service/official_egress_openai_ws_test.go",
+      "predecessor_sha256s": [
+        "4fac8d6e1adb48b20f914690ea12377c3704d9db61cea368d942b13f6d28906f"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "a3b5a1a6dac6583421032cadc81ad12e5ac3337359c712539f2b2e090ffc906f"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_pool.go",
+      "predecessor_sha256s": [
+        "fa1d3b3f437ee3b387117982bee04b9c91762a925f427c5230cc28ba5b8b947d"
+      ],
+      "reason": "登记 v0.2.3 上游合并对历史冻结路径产生的精确后继摘要；不改写旧收据，不改变官方客户端画像或 Persona 选择。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-egress-merge-ledger.json"
+      ],
+      "to_sha256": "0ec8eeef4acdaa81b46d79334f0ba45e236f378d5e47d8f79c7b48dc1badcb02"
+    },
+    {
+      "path": "backend/internal/service/upstream_v023_scanner_successor_transition_test.go",
+      "predecessor_sha256s": [
+        "52e28ddc1cfc79e25809407cb9905ba810b0c1a6c97247e7beb27cdb7b2bb010"
+      ],
+      "reason": "在 service 包登记同一 scanner successor 精确接受边，避免双包证据口径分叉。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "to_sha256": "c4a331f9a75d037c7b6208bc15be99cb79f42b51f9a3439a01c86341f360e884"
+    },
+    {
+      "path": "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+      "predecessor_sha256s": [
+        "49ca837b912bfbe33c2631a6bc0b6bbfe6dba1d3ad37efbc835bb45d043045be"
+      ],
+      "reason": "登记 Codex CLI 0.151 当前工作区收据随 v0.2.3 合并更新后的精确后继摘要；旧 scanner 前序保持只读。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "to_sha256": "2c00b05fc67f3b343c0bfb273e980c07191405a82ee61fa1276fcfca21c6c073"
+    }
+  ],
+  "verification": [
+    "go test ./internal/service -count=1",
+    "go test ./internal/officialegress/... -count=1",
+    "make test-upstream-merge-tools",
+    "make check-egress-spec"
+  ],
+  "identity_sha256": "ac933ec8a21dc3c9b0b2dce4c0314e8674f954d9f7a92afd0cff72aad8a7957e"
+}
