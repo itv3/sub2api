@@ -60,3 +60,39 @@ func TestCodexModelsManifestRequestSupportsCompositeGroup(t *testing.T) {
 		})
 	}
 }
+
+func TestDispatchCodexModelsGatewayKeepsOnlyOpenAIOnLiveManifestHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		platform   string
+		wantOpenAI bool
+	}{
+		{platform: service.PlatformOpenAI, wantOpenAI: true},
+		{platform: service.PlatformComposite},
+		{platform: service.PlatformGrok},
+		{platform: service.PlatformDeepseek},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.platform, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
+			c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+				Group: &service.Group{Platform: tt.platform},
+			})
+			called := ""
+
+			dispatchCodexModelsGateway(c,
+				func(c *gin.Context) { called = "openai" },
+				func(c *gin.Context) { called = "generated" },
+			)
+
+			if tt.wantOpenAI {
+				require.Equal(t, "openai", called)
+			} else {
+				require.Equal(t, "generated", called)
+			}
+		})
+	}
+}

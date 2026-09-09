@@ -6,6 +6,7 @@
 import { apiClient } from '../client'
 import type {
   Account,
+  AccountListItem,
   CreateAccountRequest,
   UpdateAccountRequest,
   PaginatedResponse,
@@ -25,6 +26,7 @@ import type {
   KeeperState,
   UpstreamBillingProbeResult,
   UpstreamBillingProbeSettings,
+  UpstreamBillingRatesResponse,
   OllamaCloudUsageSettings,
   OllamaCloudUsageState
 } from '@/types'
@@ -54,8 +56,8 @@ export async function list(
   options?: {
     signal?: AbortSignal
   }
-): Promise<PaginatedResponse<Account>> {
-  const { data } = await apiClient.get<PaginatedResponse<Account>>('/admin/accounts', {
+): Promise<PaginatedResponse<AccountListItem>> {
+  const { data } = await apiClient.get<PaginatedResponse<AccountListItem>>('/admin/accounts', {
     params: {
       page,
       page_size: pageSize,
@@ -69,7 +71,46 @@ export async function list(
 export interface AccountListWithEtagResult {
   notModified: boolean
   etag: string | null
-  data: PaginatedResponse<Account> | null
+  data: PaginatedResponse<AccountListItem> | null
+}
+
+export interface AccountUpstreamBillingRatesWithEtagResult {
+  notModified: boolean
+  etag: string | null
+  data: UpstreamBillingRatesResponse | null
+}
+
+export async function getUpstreamBillingRatesWithEtag(
+  page: number = 1,
+  pageSize: number = 20,
+  filters?: {
+    platform?: string
+    type?: string
+    status?: string
+    group?: string
+    search?: string
+    privacy_mode?: string
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  },
+  options?: {
+    signal?: AbortSignal
+    etag?: string | null
+  }
+): Promise<AccountUpstreamBillingRatesWithEtagResult> {
+  const headers: Record<string, string> = {}
+  if (options?.etag) headers['If-None-Match'] = options.etag
+
+  const response = await apiClient.get<UpstreamBillingRatesResponse>('/admin/accounts/upstream-billing-rates', {
+    params: { page, page_size: pageSize, ...filters },
+    headers,
+    signal: options?.signal,
+    validateStatus: (status) => (status >= 200 && status < 300) || status === 304
+  })
+
+  const etagHeader = typeof response.headers?.etag === 'string' ? response.headers.etag : null
+  if (response.status === 304) return { notModified: true, etag: etagHeader, data: null }
+  return { notModified: false, etag: etagHeader, data: response.data }
 }
 
 export async function listWithEtag(
@@ -97,7 +138,7 @@ export async function listWithEtag(
     headers['If-None-Match'] = options.etag
   }
 
-  const response = await apiClient.get<PaginatedResponse<Account>>('/admin/accounts', {
+  const response = await apiClient.get<PaginatedResponse<AccountListItem>>('/admin/accounts', {
     params: {
       page,
       page_size: pageSize,
@@ -622,6 +663,25 @@ export async function runKeeperTarget(target: string): Promise<{ status: string 
 
 export interface SyncUpstreamModelsResult {
   models: string[]
+  metadata?: Record<string, UpstreamModelMetadata>
+  warnings?: UpstreamModelSyncWarning[]
+}
+
+export interface UpstreamModelSyncWarning {
+  code: string
+  message: string
+}
+
+export interface UpstreamModelMetadata {
+  id: string
+  display_name?: string
+  description?: string
+  reasoning?: boolean
+  default_reasoning_level?: string
+  supported_reasoning_levels?: string[]
+  input_modalities?: string[]
+  context_window?: number
+  max_output_tokens?: number
 }
 
 /**
@@ -639,6 +699,7 @@ export interface SyncUpstreamPreviewParams {
   type: string
   base_url?: string
   api_key: string
+  model_mapping?: Record<string, string>
 }
 
 /**
@@ -1093,6 +1154,7 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
 export const accountsAPI = {
   list,
   listWithEtag,
+  getUpstreamBillingRatesWithEtag,
   getById,
   create,
   createOpenAIFromOAuth,

@@ -547,6 +547,36 @@
         </div>
       </div>
 
+      <!-- Zhipu 团队版 Coding Plan：组织/项目 ID（可选，填写后额度探测走团队版端点） -->
+      <div v-if="form.platform === 'zhipu' && accountMode === 'coding'" class="mt-4">
+        <div class="flex items-center">
+          <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.title') }}</label>
+          <HelpTooltip trigger="click" width-class="w-80">
+            <p class="mb-1 font-medium">{{ t('admin.accounts.cnProviders.zhipuTeam.help.title') }}</p>
+            <ol class="list-decimal space-y-1 pl-4">
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step1') }}</li>
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step2') }}</li>
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step3') }}</li>
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step4') }}</li>
+            </ol>
+            <p class="mt-2 break-all rounded bg-black/20 p-1.5 font-mono text-[11px] leading-relaxed">
+              {{ t('admin.accounts.cnProviders.zhipuTeam.help.example') }}
+            </p>
+          </HelpTooltip>
+        </div>
+        <div class="mt-2 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.organization') }}</label>
+            <input v-model="zhipuOrganization" type="text" class="input" :placeholder="t('admin.accounts.cnProviders.zhipuTeam.organizationPlaceholder')" />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.project') }}</label>
+            <input v-model="zhipuProject" type="text" class="input" :placeholder="t('admin.accounts.cnProviders.zhipuTeam.projectPlaceholder')" />
+          </div>
+        </div>
+        <p class="input-hint mt-2">{{ t('admin.accounts.cnProviders.zhipuTeam.hint') }}</p>
+      </div>
+
       <!-- Account Type Selection (Gemini) -->
       <div v-if="form.platform === 'gemini'">
         <div class="flex items-center justify-between">
@@ -1289,7 +1319,7 @@
               />
             </div>
           </div>
-          <p v-if="form.platform !== 'deepseek'" class="input-hint">
+          <p v-if="!cnSupportsNativeResponses(form.platform)" class="input-hint">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
@@ -1402,7 +1432,12 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
+              <ModelWhitelistSelector
+                v-model="allowedModels"
+                :platform="form.platform"
+                :sync-credentials="syncPreviewCredentials"
+                @upstream-synced="upstreamModelsPreviewed = true"
+              />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
@@ -1884,7 +1919,12 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" :sync-credentials="syncPreviewCredentials" />
+            <ModelWhitelistSelector
+              v-model="allowedModels"
+              platform="anthropic"
+              :sync-credentials="syncPreviewCredentials"
+              @upstream-synced="upstreamModelsPreviewed = true"
+            />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
@@ -2239,7 +2279,12 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
+            <ModelWhitelistSelector
+              v-model="allowedModels"
+              :platform="form.platform"
+              :sync-credentials="syncPreviewCredentials"
+              @upstream-synced="upstreamModelsPreviewed = true"
+            />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{
@@ -2799,6 +2844,12 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
+      <UpstreamRequestIdHeaderField
+        v-model="upstreamRequestIdHeader"
+        :platform="form.platform"
+        :type="form.type"
+      />
+
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
@@ -2832,7 +2883,18 @@
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
         <input v-model="expiresAtInput" type="datetime-local" class="input" />
-        <p class="input-hint">{{ t('admin.accounts.expiresAtHint') }}</p>
+        <div class="mt-2 flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(1)">
+            {{ t('payment.oneMonth') }}
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(12)">
+            {{ t('payment.oneYear') }}
+          </button>
+        </div>
+        <p class="input-hint">
+          {{ t('admin.accounts.expiresAtHint') }}
+          {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
+        </p>
       </div>
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
@@ -3181,6 +3243,37 @@
         </div>
       </div>
 
+      <!-- OpenAI APIKey images: backfill b64_json from url -->
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div>
+          <label class="input-label mb-0">{{ t('admin.accounts.openai.imagesUrlToB64Json') }}</label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.imagesUrlToB64JsonDesc') }}
+          </p>
+        </div>
+        <button
+          type="button"
+          data-testid="openai-images-url-to-b64-json-toggle"
+          role="switch"
+          :aria-checked="openAIImagesUrlToB64JsonEnabled"
+          @click="openAIImagesUrlToB64JsonEnabled = !openAIImagesUrlToB64JsonEnabled"
+          :class="[
+            'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+            openAIImagesUrlToB64JsonEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+          ]"
+        >
+          <span
+            :class="[
+              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+              openAIImagesUrlToB64JsonEnabled ? 'translate-x-5' : 'translate-x-0'
+            ]"
+          />
+        </button>
+      </div>
+
       <div>
         <div class="flex items-center justify-between">
           <div>
@@ -3269,7 +3362,6 @@
 
         <!-- Group Selection - 仅标准模式显示 -->
         <GroupSelector
-          v-if="!authStore.isSimpleMode"
           v-model="form.group_ids"
           :groups="groups"
           :platform="form.platform"
@@ -3635,6 +3727,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+
 import {
   claudeModels,
   getPresetMappingsByPlatform,
@@ -3646,7 +3739,6 @@ import {
   getOfficialAntigravityModelIDs,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
-import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import {
@@ -3673,6 +3765,8 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -3689,6 +3783,7 @@ import {
   applyAntigravityProjectID,
   applyHeaderOverride,
   applyInterceptWarmup,
+  cnSupportsNativeResponses,
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
   isHeaderOverrideCapable,
@@ -3698,8 +3793,13 @@ import {
   type CnNativeApiProtocol,
   type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
-import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
+import {
+  formatDateTimeLocalInput,
+  getBrowserTimeZone,
+  parseDateTimeLocalInput
+} from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -3729,7 +3829,7 @@ interface OAuthFlowExposed {
 }
 
 const { t } = useI18n()
-const authStore = useAuthStore()
+const browserTimeZone = getBrowserTimeZone()
 
 const oauthStepTitle = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
@@ -3740,6 +3840,14 @@ const oauthStepTitle = computed(() => {
 })
 
 // Platform-specific hints for API Key type
+// 上游ID：直接上游声明请求标识的响应头名，留空不记录。
+const upstreamRequestIdHeader = ref('')
+const withUpstreamRequestIdHeader = <T extends Record<string, unknown> | undefined>(extra: T): T | Record<string, unknown> => {
+  const name = upstreamRequestIdHeader.value.trim()
+  if (!name) return extra
+  return { ...(extra || {}), upstream_request_id_header: name }
+}
+
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
@@ -3876,8 +3984,11 @@ const upstreamBillingAutoProbeEnabled = ref(true)
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）账号类型、API 协议与端点 ──
 const accountMode = ref<CnAccountMode>('payg')
 // API 协议决定转发端点与格式：cc=现有转换链，anthropic=原生直通（Claude Code），
-// responses=deepseek 原生 Responses 端点（Codex）。与账号类型正交。
+// responses=deepseek / kimi 原生 Responses 端点（Codex）。与账号类型正交。
 const apiProtocol = ref<CnApiProtocol>('adaptive')
+// 智谱团队版 Coding Plan：组织/项目 ID，写入 credentials 供额度探测切换团队端点
+const zhipuOrganization = ref('')
+const zhipuProject = ref('')
 const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   chat_completions: '',
   anthropic: '',
@@ -3894,14 +4005,14 @@ const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
   }
   return 'kimi'
 })
-// 当前平台可选的协议档（responses 仅 deepseek）。
+// 当前平台可选的协议档（responses 仅 deepseek / kimi）。
 const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
   const opts: Array<{ value: CnApiProtocol; labelKey: string }> = [
     { value: 'adaptive', labelKey: 'adaptive' },
     { value: 'chat_completions', labelKey: 'chatCompletions' },
     { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (form.platform === 'deepseek') {
+  if (cnSupportsNativeResponses(form.platform)) {
     opts.push({ value: 'responses', labelKey: 'responses' })
   }
   return opts
@@ -3911,7 +4022,7 @@ const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; l
     { value: 'chat_completions', labelKey: 'chatCompletions' },
     { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (form.platform === 'deepseek') opts.push({ value: 'responses', labelKey: 'responses' })
+  if (cnSupportsNativeResponses(form.platform)) opts.push({ value: 'responses', labelKey: 'responses' })
   return opts
 })
 
@@ -3996,11 +4107,17 @@ const syncPreviewCredentials = computed(() => {
   const baseUrl = isCNPlatform.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
     : apiKeyBaseUrl.value.trim()
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
   return {
     platform: form.platform,
     type: form.type,
     base_url: baseUrl || undefined,
-    api_key: apiKeyValue.value
+    api_key: apiKeyValue.value,
+    ...(modelMapping ? { model_mapping: modelMapping } : {})
   }
 })
 
@@ -4017,6 +4134,7 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const upstreamModelsPreviewed = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -4090,6 +4208,8 @@ const openAILongContextBillingEnabled = ref(false)
 const openAILongContextBillingTouched = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
+// Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
+const openAIImagesUrlToB64JsonEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -4526,6 +4646,7 @@ watch(
     }
     // Clear model-related settings
     allowedModels.value = []
+    upstreamModelsPreviewed.value = false
     modelMappings.value = []
     if (newPlatform === 'antigravity') {
       void loadAntigravityOfficialModelDefaults()
@@ -4585,6 +4706,7 @@ watch(
     // 避免上一平台的配置行被提交到新平台账号
     headerOverrideEnabled.value = false
     headerOverrideRows.value = []
+    openAIImagesUrlToB64JsonEnabled.value = false
     grokOAuthCustomBaseUrlEnabled.value = false
     grokOAuthBaseUrl.value = ''
     // Reset OAuth states
@@ -4912,6 +5034,26 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
   submitting.value = true
   try {
     const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(payload))
+    const modelMapping = payload.credentials.model_mapping
+    const hasConcreteMappedTarget = payload.type === 'apikey' &&
+      typeof modelMapping === 'object' &&
+      modelMapping !== null &&
+      Object.values(modelMapping).some((target) =>
+        typeof target === 'string' && target.trim() !== '' && !target.includes('*')
+      )
+    if (upstreamModelsPreviewed.value || hasConcreteMappedTarget) {
+      try {
+        const result = await adminAPI.accounts.syncUpstreamModels(account.id)
+        const warnings = result.warnings ?? []
+        if (warnings.some(warning => warning.code === 'upstream_model_metadata_incomplete')) {
+          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
+        } else if (warnings.some(warning => warning.code === 'upstream_model_metadata_partial')) {
+          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
+        }
+      } catch {
+        appStore.showWarning(t('admin.accounts.syncUpstreamModelsFailed'))
+      }
+    }
     if (
       payload.type === 'apikey' &&
       payload.upstream_billing_probe_enabled === true
@@ -4964,6 +5106,7 @@ const resetForm = () => {
   adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  upstreamRequestIdHeader.value = ''
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
@@ -4988,6 +5131,7 @@ const resetForm = () => {
   customErrorCodeInput.value = null
   headerOverrideEnabled.value = false
   headerOverrideRows.value = []
+  openAIImagesUrlToB64JsonEnabled.value = false
   grokOAuthCustomBaseUrlEnabled.value = false
   grokOAuthBaseUrl.value = ''
   interceptWarmupRequests.value = false
@@ -5043,6 +5187,7 @@ const resetForm = () => {
   grokOAuth.resetState()
   oauthFlowRef.value?.reset()
   antigravityMixedChannelConfirmed.value = false
+  upstreamModelsPreviewed.value = false
   clearMixedChannelDialog()
 }
 
@@ -5118,6 +5263,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_responses_mode = openAIResponsesMode.value
   } else {
     delete extra.openai_responses_mode
+  }
+  if (accountCategory.value === 'apikey' && openAIImagesUrlToB64JsonEnabled.value) {
+    extra.images_url_to_b64_json = true
+  } else {
+    delete extra.images_url_to_b64_json
   }
   applyBuiltInOfficialEgressExtra(extra, form.platform, form.type)
 
@@ -5457,6 +5607,11 @@ const handleSubmit = async () => {
     if (apiProtocol.value !== 'adaptive' && resolvedCNBase) {
       credentials.base_url = resolvedCNBase
     }
+    // 智谱团队版 Coding Plan：组织/项目 ID 写入凭据（非空才写）
+    if (form.platform === 'zhipu' && accountMode.value === 'coding') {
+      if (zhipuOrganization.value.trim()) credentials.zhipu_organization = zhipuOrganization.value.trim()
+      if (zhipuProject.value.trim()) credentials.zhipu_project = zhipuProject.value.trim()
+    }
   }
 
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）
@@ -5513,7 +5668,7 @@ const handleSubmit = async () => {
   await doCreateAccount({
     ...form,
     group_ids: form.group_ids,
-    extra,
+    extra: withUpstreamRequestIdHeader(extra),
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
@@ -5576,9 +5731,9 @@ const createAccountAndFinish = async (
     return
   }
   // Inject quota limits for apikey/bedrock accounts
-  let finalExtra = extra
+  let finalExtra = withUpstreamRequestIdHeader(extra)
   if (type === 'apikey' || type === 'bedrock') {
-    const quotaExtra: Record<string, unknown> = { ...(extra || {}) }
+    const quotaExtra: Record<string, unknown> = { ...(finalExtra || {}) }
     if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
       quotaExtra.quota_limit = editQuotaLimit.value
     }
@@ -5705,7 +5860,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra,
+          extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -5882,7 +6037,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra,
+          extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -5963,7 +6118,7 @@ const handleOpenAIExchange = async (authCode: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra
+      extra: withUpstreamRequestIdHeader(extra)
     })
     appStore.showSuccess(t('admin.accounts.accountCreated'))
 
@@ -6069,7 +6224,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra,
+      extra: withUpstreamRequestIdHeader(extra),
       update_existing: true
     })
 
@@ -6147,10 +6302,10 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra
+      extra: withUpstreamRequestIdHeader(extra)
     })
 
-    appStore.showSuccess(t('admin.accounts.messages.accountCreated'))
+    appStore.showSuccess(t('admin.accounts.accountCreated'))
     emit('created')
     handleClose()
   } catch (error: any) {
@@ -6235,7 +6390,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'openai',
             type: 'oauth',
             credentials,
-            extra,
+            extra: withUpstreamRequestIdHeader(extra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -6339,7 +6494,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: {},
+          extra: withUpstreamRequestIdHeader({}),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -6685,7 +6840,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra,
+          extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

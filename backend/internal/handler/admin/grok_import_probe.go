@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -196,6 +197,7 @@ func (h *GrokOAuthHandler) scheduleGrokImportProbe(account *service.Account) {
 // ProvideAccountHandler 为生产环境注入 Grok 主动探活服务，
 // 同时保留 NewAccountHandler，方便聚焦的单元测试直接构造处理器。
 func ProvideAccountHandler(
+	cfg *config.Config,
 	adminService service.AdminService,
 	oauthService *service.OAuthService,
 	openaiOAuthService *service.OpenAIOAuthService,
@@ -231,5 +233,6 @@ func ProvideAccountHandler(
 		tokenCacheInvalidator,
 	)
 	handler.grokImportProber = grokQuotaService
+	handler.cfg = cfg
 	return handler
 }

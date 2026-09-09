@@ -80,7 +80,7 @@ func (s *OpenAIGatewayService) ForwardResponsesInputTokens(
 	}
 
 	proxyURL := ""
-	if account.Proxy != nil {
+	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 	resp, err := doOpenAIAPIKeyHTTPTransport(s.httpUpstream, upstreamReq, proxyURL, account, nil)
@@ -320,7 +320,7 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	}
 
 	proxyURL := ""
-	if account.Proxy != nil {
+	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 	// OAuth 账号的 count_tokens 同样打官方域名，必须与业务请求同一 TLS 画像；

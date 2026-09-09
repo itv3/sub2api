@@ -150,6 +150,53 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	writeUpstreamResponse(c, res)
 }
 
+// filterUpstreamGeminiModelsBody 按白名单过滤上游 /v1beta/models 响应中的
+// models[].name，其余信封字段（如 nextPageToken）原样保留。
+// 返回值：filtered 为过滤后的响应体；dropped 表示是否有条目被移除（全命中时
+// 为 false，调用方应保持原始响应以完整透传上游头）；ok=false 表示解析失败，
+// 调用方同样应透传原始响应。
+func filterUpstreamGeminiModelsBody(body []byte, allowlist service.GroupModelAllowlist) (filtered []byte, dropped bool, ok bool) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, false, false
+	}
+	rawModels, hasModels := envelope["models"]
+	if !hasModels {
+		return body, false, true
+	}
+	type geminiModelName struct {
+		Name string `json:"name"`
+	}
+	var models []json.RawMessage
+	if err := json.Unmarshal(rawModels, &models); err != nil {
+		return nil, false, false
+	}
+	kept := make([]json.RawMessage, 0, len(models))
+	for _, raw := range models {
+		var model geminiModelName
+		if err := json.Unmarshal(raw, &model); err != nil {
+			return nil, false, false
+		}
+		if allowlist.Allows(model.Name) {
+			kept = append(kept, raw)
+		}
+	}
+	if len(kept) == len(models) {
+		// 全部命中时直接透传原始响应体。
+		return body, false, true
+	}
+	mergedModels, err := json.Marshal(kept)
+	if err != nil {
+		return nil, false, false
+	}
+	envelope["models"] = mergedModels
+	merged, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, false, false
+	}
+	return merged, true, true
+}
+
 // GeminiV1BetaModels proxies Gemini native REST endpoints like:
 // POST /v1beta/models/{model}:generateContent
 // POST /v1beta/models/{model}:streamGenerateContent?alt=sse
@@ -579,33 +626,25 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		forceCacheBilling := fs.ForceCacheBilling
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
-		// 长上下文规则由计费服务统一持有（模型广场展示同源），入口只负责声明自己适用该规则。
-		var longContextThreshold int
-		var longContextMultiplier float64
-		if rule := h.gatewayService.LegacyLongContextRule(service.PlatformGemini); rule != nil {
-			longContextThreshold = rule.Threshold
-			longContextMultiplier = rule.Multiplier
-		}
+		// 长上下文阶梯由目录数据驱动，统一在计费路径内生效，入口无需声明。
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
-				Result:                result,
-				QuotaPlatform:         quotaPlatform,
-				APIKey:                apiKey,
-				User:                  apiKey.User,
-				Account:               account,
-				Subscription:          subscription,
-				PricingAt:             pricingAt,
-				InboundEndpoint:       inboundEndpoint,
-				UpstreamEndpoint:      upstreamEndpoint,
-				UserAgent:             userAgent,
-				IPAddress:             clientIP,
-				RequestPayloadHash:    requestPayloadHash,
-				LongContextThreshold:  longContextThreshold,
-				LongContextMultiplier: longContextMultiplier,
-				ForceCacheBilling:     forceCacheBilling,
-				APIKeyService:         h.apiKeyService,
-				SessionID:             sessionID,
-				ChannelUsageFields:    clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+				Result:             result,
+				QuotaPlatform:      quotaPlatform,
+				APIKey:             apiKey,
+				User:               apiKey.User,
+				Account:            account,
+				Subscription:       subscription,
+				PricingAt:          pricingAt,
+				InboundEndpoint:    inboundEndpoint,
+				UpstreamEndpoint:   upstreamEndpoint,
+				UserAgent:          userAgent,
+				IPAddress:          clientIP,
+				RequestPayloadHash: requestPayloadHash,
+				ForceCacheBilling:  forceCacheBilling,
+				APIKeyService:      h.apiKeyService,
+				SessionID:          sessionID,
+				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.gemini_v1beta.models"),

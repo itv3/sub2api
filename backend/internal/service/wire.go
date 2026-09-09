@@ -299,6 +299,7 @@ func ProvideAccountTestService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.openAIGatewayService = openAIGatewayService
+	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.officialEgress = officialEgress
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)

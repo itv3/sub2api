@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -41,6 +42,9 @@ func (s *OpenAIGatewayService) buildOpenAIResponsesWSURL(account *Account) (stri
 		}
 	case AccountTypeAPIKey:
 		baseURL := account.GetOpenAIBaseURL()
+		if account.UsesNativeCNResponses() && account.IsAdaptiveAPIProtocol() {
+			baseURL = account.GetCNProtocolBaseURL(APIProtocolResponses)
+		}
 		if baseURL == "" {
 			targetURL = openaiPlatformAPIURL
 		} else {
@@ -428,24 +432,46 @@ func alignStoreDisabledPreviousResponseID(
 	return updated, true, nil
 }
 
+// cloneOpenAIWSPayloadBytes 复制 WebSocket 正文，避免后续规范化或策略过滤
+// 改写底层字节时影响审计、计费和重试所需的原始请求。
 func cloneOpenAIWSPayloadBytes(payload []byte) []byte {
 	if len(payload) == 0 {
 		return nil
 	}
-	cloned := make([]byte, len(payload))
-	copy(cloned, payload)
-	return cloned
+	return append([]byte(nil), payload...)
 }
 
-func cloneOpenAIWSRawMessages(items []json.RawMessage) []json.RawMessage {
-	if items == nil {
-		return nil
+// Replay 状态所有权不变式：replay 序列中的 json.RawMessage 正文一经放入即视为
+// 不可变，所有持有者共享同一份字节，任何修改都必须整体替换元素或重建 payload。
+// 序列头数组在跨持有者保存时必须新建（combineOpenAIWSReplayItems），禁止通过
+// 共享头 append，否则会写入其他持有者可见的底层数组。
+
+// combineOpenAIWSReplayItems 合并历史与增量为新头数组，正文共享不复制。
+func combineOpenAIWSReplayItems(history, delta []json.RawMessage) []json.RawMessage {
+	if len(delta) == 0 {
+		return history
 	}
-	cloned := make([]json.RawMessage, 0, len(items))
-	for idx := range items {
-		cloned = append(cloned, json.RawMessage(cloneOpenAIWSPayloadBytes(items[idx])))
+	combined := make([]json.RawMessage, 0, len(history)+len(delta))
+	combined = append(combined, history...)
+	return append(combined, delta...)
+}
+
+// openAIWSPayloadStringView 返回与 payload 共享底层数组的零拷贝 string 视图，
+// 供 gjson.Get 使用（gjson.GetBytes 会整段复制结果 Raw，对 input 这类占
+// payload 主体的字段是每次 O(payload) 分配）。调用方必须保证 payload 在结果
+// 存活期间不可变（replay 所有权不变式）。
+func openAIWSPayloadStringView(payload []byte) string {
+	return unsafe.String(unsafe.SliceData(payload), len(payload))
+}
+
+// openAIWSRawMessageFromResult 优先返回 parent 的子切片（gjson 值零拷贝共享），
+// Index 不可用时回退为复制。共享要求 parent 遵守上面的不可变约定。
+func openAIWSRawMessageFromResult(parent []byte, value gjson.Result) json.RawMessage {
+	idx := value.Index
+	if idx > 0 && idx+len(value.Raw) <= len(parent) && string(parent[idx:idx+len(value.Raw)]) == value.Raw {
+		return json.RawMessage(parent[idx : idx+len(value.Raw)])
 	}
-	return cloned
+	return json.RawMessage(value.Raw)
 }
 
 const (
@@ -598,30 +624,38 @@ func normalizeOpenAIWSPayloadWithoutInputAndPreviousResponseID(payload []byte) (
 	return json.Marshal(decoded)
 }
 
+// openAIWSExtractNormalizedInputSequence 拆出 input 序列。返回的正文尽可能与
+// payload 共享底层数组（零拷贝），受 replay 所有权不变式保护。
 func openAIWSExtractNormalizedInputSequence(payload []byte) ([]json.RawMessage, bool, error) {
 	if len(payload) == 0 {
 		return nil, false, nil
 	}
-	inputValue := gjson.GetBytes(payload, "input")
+	inputValue := gjson.Get(openAIWSPayloadStringView(payload), "input")
 	if !inputValue.Exists() {
 		return nil, false, nil
 	}
 	if inputValue.Type == gjson.JSON {
-		raw := strings.TrimSpace(inputValue.Raw)
-		if strings.HasPrefix(raw, "[") {
-			var items []json.RawMessage
-			if err := json.Unmarshal([]byte(raw), &items); err != nil {
-				return nil, true, err
+		if inputValue.IsArray() {
+			// gjson 宽容解析；数组整体先做零分配合法性校验，避免把断裂
+			// JSON 塞进 replay 历史。
+			arrayRaw := openAIWSRawMessageFromResult(payload, inputValue)
+			if !json.Valid(arrayRaw) {
+				return nil, true, errors.New("input array json is invalid")
+			}
+			elems := inputValue.Array()
+			items := make([]json.RawMessage, 0, len(elems))
+			for _, elem := range elems {
+				items = append(items, openAIWSRawMessageFromResult(payload, elem))
 			}
 			return items, true, nil
 		}
-		return []json.RawMessage{json.RawMessage(raw)}, true, nil
+		return []json.RawMessage{openAIWSRawMessageFromResult(payload, inputValue)}, true, nil
 	}
 	if inputValue.Type == gjson.String {
 		encoded, _ := json.Marshal(inputValue.String())
 		return []json.RawMessage{encoded}, true, nil
 	}
-	return []json.RawMessage{json.RawMessage(inputValue.Raw)}, true, nil
+	return []json.RawMessage{openAIWSRawMessageFromResult(payload, inputValue)}, true, nil
 }
 
 func openAIWSInputIsPrefixExtended(previousPayload, currentPayload []byte) (bool, error) {
@@ -662,6 +696,7 @@ func openAIWSRawItemsHasPrefix(items []json.RawMessage, prefix []json.RawMessage
 		return false
 	}
 	for idx := range prefix {
+		// 快路径：客户端逐字节重发历史时直接比较，避免整轮历史的解码/再编码。
 		if !openAIWSRawJSONEqual(prefix[idx], items[idx]) {
 			return false
 		}
@@ -710,6 +745,7 @@ func openAIWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) bool
 	return true
 }
 
+// sanitizeOpenAIWSHistoricalReplayToolCalls 返回的新头数组与 previousItems 共享正文。
 func sanitizeOpenAIWSHistoricalReplayToolCalls(
 	previousItems []json.RawMessage,
 	currentItems []json.RawMessage,
@@ -757,7 +793,7 @@ func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
 	}
-	input := gjson.GetBytes(payload, "input")
+	input := gjson.Get(openAIWSPayloadStringView(payload), "input")
 	if !input.Exists() {
 		return false
 	}
@@ -773,6 +809,33 @@ func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 		return isCodexToolCallOutputItemType(input.Get("type").String())
 	}
 	return false
+}
+
+// buildOpenAIWSReplayInputSequenceFromItems 基于已解析的当前 turn input 构建
+// replay 序列。返回序列的正文与 previousFullInput/currentItems 共享所有权
+// （见 combineOpenAIWSReplayItems 上方的所有权不变式），头数组可能直接转移自
+// currentItems。
+func buildOpenAIWSReplayInputSequenceFromItems(
+	previousFullInput []json.RawMessage,
+	previousFullInputExists bool,
+	currentItems []json.RawMessage,
+	currentExists bool,
+	hasPreviousResponseID bool,
+) ([]json.RawMessage, bool) {
+	if !hasPreviousResponseID || !previousFullInputExists {
+		return currentItems, currentExists
+	}
+	previousFullInput = sanitizeOpenAIWSHistoricalReplayToolCalls(previousFullInput, currentItems)
+	if !currentExists || len(currentItems) == 0 {
+		return previousFullInput, true
+	}
+	if openAIWSRawItemsHasPrefix(currentItems, previousFullInput) {
+		return currentItems, true
+	}
+	merged := make([]json.RawMessage, 0, len(previousFullInput)+len(currentItems))
+	merged = append(merged, previousFullInput...)
+	merged = append(merged, currentItems...)
+	return merged, true
 }
 
 func buildOpenAIWSReplayInputSequence(
