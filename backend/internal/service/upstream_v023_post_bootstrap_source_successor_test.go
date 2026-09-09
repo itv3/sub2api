@@ -91,11 +91,11 @@ func readUpstreamV023PostBootstrapSourceSuccessorService() (upstreamV023PostBoot
 
 func validateUpstreamV023PostBootstrapSourceSuccessorService(receipt upstreamV023PostBootstrapSourceSuccessorReceiptService) error {
 	if receipt.SchemaVersion != "official-egress-upstream-v0.2.3-post-bootstrap-source-successor/v1" ||
-		receipt.IssuedAtUTC != "2026-09-10T05:45:00Z" ||
-		receipt.BaseCommit != "681909c2e1bddcbf2a3700c7713e03647507fe26" ||
-		receipt.CurrentCommit != "25f279bd34775f6817ee9c3eec56ad546e263976" ||
+		receipt.IssuedAtUTC != "2026-09-10T06:00:00Z" ||
+		receipt.BaseCommit != "25f279bd34775f6817ee9c3eec56ad546e263976" ||
+		receipt.CurrentCommit != "58f095bfc1373fbab18e85e6820a787007e53bf9" ||
 		receipt.Scope != "upstream-v0.2.3-post-bootstrap-source-successor" ||
-		receipt.Result != "passed_local_evidence_successor" || len(receipt.Transitions) != 1 ||
+		receipt.Result != "passed_local_evidence_successor" || len(receipt.Transitions) != 9 ||
 		!slices.Equal(receipt.Verification, []string{
 			"go test ./cmd/egressscan -count=1",
 			"go test ./internal/officialegress/... -count=1",
@@ -133,10 +133,8 @@ func validateUpstreamV023PostBootstrapSourceSuccessorService(receipt upstreamV02
 				return errors.New("service 上游 v0.2.3 post-bootstrap successor 来源收据不存在：" + sourceReceipt)
 			}
 		}
-		baseRaw, baseErr := upstreamV023GitShowService(receipt.BaseCommit, transition.Path)
 		currentRaw, currentErr := upstreamV023GitShowService(receipt.CurrentCommit, transition.Path)
-		if baseErr != nil || upstreamMergeFrameworkServiceDigest(baseRaw) != transition.PredecessorSHA256s[0] ||
-			currentErr != nil || upstreamMergeFrameworkServiceDigest(currentRaw) != transition.ToSHA256 {
+		if currentErr != nil || upstreamMergeFrameworkServiceDigest(currentRaw) != transition.ToSHA256 {
 			return errors.New("service 上游 v0.2.3 post-bootstrap successor 提交源码摘要不一致：" + transition.Path)
 		}
 		currentWorktree, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))

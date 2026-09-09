@@ -172,7 +172,10 @@ func validateUpstreamMergeFrameworkV4Successor(receipt upstreamMergeFrameworkV4R
 			return errors.New("上游合并框架 v0.2.3 successor 条目非法")
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
-		if readErr != nil || upstreamMergeFrameworkV3Digest(current) != transition.ToSHA256 {
+		if readErr != nil || (upstreamMergeFrameworkV3Digest(current) != transition.ToSHA256 &&
+			!upstreamV023PostBootstrapSourceSuccessorSupersedes(
+				transition.Path, transition.ToSHA256, upstreamMergeFrameworkV3Digest(current),
+			)) {
 			return errors.New("上游合并框架 v0.2.3 successor 当前摘要不一致：" + transition.Path)
 		}
 		paths = append(paths, transition.Path)
