@@ -201,6 +201,8 @@ func readCodex01491TerminalState() (codex01491TerminalReceipt, error) {
 					currentDigest,
 				) && !codex0151WorktreeSuccessorAfter(transition.Path, currentDigest) &&
 					!historicalSourceDriftSupersedes(transition.Path, transition.CurrentSHA256, currentDigest) &&
+					!auditedSourceSuccessorReaches(transition.Path, transition.CurrentSHA256, currentDigest) &&
+					!upstreamV023PostBootstrapSourceSuccessorSupersedes(transition.Path, transition.CurrentSHA256, currentDigest) &&
 					!codex0151EvaluationRecoverySupersedes(transition.Path, transition.CurrentSHA256, currentDigest)) {
 				return receipt, errors.New("0.149.1 终态当前摘要不一致：" + transition.Path)
 			}

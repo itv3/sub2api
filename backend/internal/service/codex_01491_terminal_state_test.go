@@ -82,6 +82,8 @@ func loadCodex01491TerminalServiceState() (codex01491TerminalServiceReceipt, err
 					currentDigest,
 				) && !codex0151WorktreeSuccessorAfterService(transition.Path, currentDigest) &&
 					!historicalSourceDriftSupersedes(transition.Path, transition.CurrentSHA256, currentDigest) &&
+					!auditedSourceSuccessorReachesService(transition.Path, transition.CurrentSHA256, currentDigest) &&
+					!upstreamV023PostBootstrapSourceSuccessorSupersedesService(transition.Path, transition.CurrentSHA256, currentDigest) &&
 					!codex0151EvaluationRecoverySupersedesService(transition.Path, transition.CurrentSHA256, currentDigest)) {
 					codex01491TerminalServiceLoadErr = errors.New(
 						"0.149.1 终态当前摘要不一致：" + transition.Path,

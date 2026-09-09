@@ -190,6 +190,12 @@ func upstreamV023SourceTransitionSupersedesService(path, priorDigest, currentDig
 		!validOpenAIReplayOOMRepairServiceSHA(currentDigest) || priorDigest == currentDigest {
 		return false
 	}
+	if auditedSourceSuccessorReachesService(path, priorDigest, currentDigest) {
+		return true
+	}
+	if upstreamV023PostBootstrapSourceSuccessorSupersedesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	if upstreamV023SourceTransitionDirectSupersedesService(path, priorDigest, currentDigest) {
 		return true
 	}

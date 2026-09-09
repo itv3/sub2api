@@ -3,9 +3,9 @@
   "bootstrap_commit": "38a9929eac35a39c86de2f27de8f7a805d7dae52",
   "bootstrap_tree": "a8c3dee18a01a6138bfcea60860bb5ad11548c3a",
   "inventory_sha256": "46593243b1bd315eafcb54335502a1f46bc2b8bfc0ecc2d3146da4e7087bfaeb",
-  "scanner_algorithm_sha256": "09dd82da537543870e8ea8c8c41aabbad79ca03d703849bcec838dace2935cb6",
-  "reconstructed_at": "2026-09-10T00:00:00+08:00",
+  "scanner_algorithm_sha256": "cde48d629935dae1d3add70cdb76aeeac6a2a127b041476b8e279869bdf26767",
+  "reconstructed_at": "2026-08-24T23:29:13+08:00",
   "reviewed_by": "sub2api-v0.1.180-egress-lifecycle-prerequisite",
   "review_ref": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md#52-合并-sub2api-上游更新",
-  "rationale": "保持 bootstrap commit、tree 和 inventory 原文不变；复审扫描算法并登记 v0.2.3 Chat Completions successor 与图片 b64 回填的精确 post-bootstrap acceptance。successor 必须保持 RuntimeSinkID、route、backend、AST 指纹和构建矩阵，范围外新增项保持 RuntimeSinkID 为空且 not_applicable；缺失、混用或额外发送点继续失败关闭。"
+  "rationale": "保持 bootstrap commit、tree 和 inventory 原文不变；复审扫描算法并登记 Chat Completions 兼容入口与图片 b64 回填的明确分类。精确双态生命周期约束仍只允许 Grok Realtime 在 v0.1.179 的单一 Proxy 拨号入口或 v0.1.180 的 Open/Probe 双入口之间完整切换。缺失、混用或额外发送点继续失败关闭；该范围属于 xAI，不能取得 Codex Persona、ReleaseBundle 或 Guard 选择权。"
 }

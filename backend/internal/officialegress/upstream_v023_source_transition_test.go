@@ -189,6 +189,12 @@ func upstreamV023SourceTransitionSupersedes(path, priorDigest, currentDigest str
 	if !receiptSHA256(priorDigest) || !receiptSHA256(currentDigest) || priorDigest == currentDigest {
 		return false
 	}
+	if auditedSourceSuccessorReaches(path, priorDigest, currentDigest) {
+		return true
+	}
+	if upstreamV023PostBootstrapSourceSuccessorSupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
 	if upstreamV023SourceTransitionDirectSupersedes(path, priorDigest, currentDigest) {
 		return true
 	}

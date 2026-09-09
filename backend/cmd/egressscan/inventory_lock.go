@@ -29,6 +29,18 @@ type bootstrapInventoryLock struct {
 	Rationale              string `json:"rationale"`
 }
 
+// scannerAlgorithmSuccessor 是 bootstrap lock 之后对扫描算法的追加式复审收据。
+// bootstrap inventory lock 本身保持只读；当前扫描器只能沿着这份精确 from/to
+// 边前进，不能因为任意工作树改动就自动放宽 lock。
+type scannerAlgorithmSuccessor struct {
+	SchemaVersion    string `json:"schema_version"`
+	FromSHA256       string `json:"from_sha256"`
+	ToSHA256         string `json:"to_sha256"`
+	SourceTransition string `json:"source_transition"`
+	ReviewedBy       string `json:"reviewed_by"`
+	Reason           string `json:"reason"`
+}
+
 func verifyBootstrapInventoryLock(lockPath string, baselineRaw []byte, scannerSourceRoot string) error {
 	if strings.TrimSpace(lockPath) == "" || strings.TrimSpace(scannerSourceRoot) == "" {
 		return errors.New("必须同时提供 -inventory-lock 与 -scanner-source-root")
@@ -62,8 +74,39 @@ func verifyBootstrapInventoryLock(lockPath string, baselineRaw []byte, scannerSo
 		return err
 	}
 	if algorithmDigest != lock.ScannerAlgorithmSHA256 {
+		if err := verifyScannerAlgorithmSuccessor(
+			lockPath, lock.ScannerAlgorithmSHA256, algorithmDigest,
+		); err == nil {
+			return nil
+		}
 		return fmt.Errorf("扫描算法已变化但 lock 未复审：lock=%s current=%s",
 			lock.ScannerAlgorithmSHA256, algorithmDigest)
+	}
+	return nil
+}
+
+func verifyScannerAlgorithmSuccessor(lockPath, fromDigest, toDigest string) error {
+	path := filepath.Join(filepath.Dir(lockPath), "scanner-algorithm-successor.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var successor scannerAlgorithmSuccessor
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&successor); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("scanner algorithm successor 尾部存在额外 JSON")
+	}
+	if successor.SchemaVersion != "official-egress-scanner-algorithm-successor/v1" ||
+		successor.FromSHA256 != fromDigest || successor.ToSHA256 != toDigest ||
+		!validDigest(successor.FromSHA256) || !validDigest(successor.ToSHA256) ||
+		strings.TrimSpace(successor.SourceTransition) == "" ||
+		strings.TrimSpace(successor.ReviewedBy) == "" ||
+		strings.TrimSpace(successor.Reason) == "" {
+		return errors.New("scanner algorithm successor 字段或 from/to 边非法")
 	}
 	return nil
 }

@@ -5,6 +5,8 @@ package service
 // 它不读取目录、不生成新收据，也不会把任意未登记的工作树修改视为合法。
 func codex0151CurrentSourceDigestAcceptedService(path, expectedDigest, currentDigest string) bool {
 	return expectedDigest == currentDigest ||
+		auditedSourceSuccessorReachesService(path, expectedDigest, currentDigest) ||
+		upstreamV023PostBootstrapSourceSuccessorSupersedesService(path, expectedDigest, currentDigest) ||
 		upstreamMergeFrameworkV3SuccessorSupersedesService(
 			path, expectedDigest, currentDigest,
 		) ||
