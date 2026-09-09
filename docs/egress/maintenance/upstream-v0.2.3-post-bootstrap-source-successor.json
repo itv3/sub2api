@@ -1,0 +1,203 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-post-bootstrap-source-successor/v1",
+  "issued_at_utc": "2026-09-10T07:00:00Z",
+  "base_commit": "25f279bd34775f6817ee9c3eec56ad546e263976",
+  "current_commit": "badc8c51a495b303313b76ac4e182eaf553e264a",
+  "scope": "upstream-v0.2.3-post-bootstrap-source-successor",
+  "transitions": [
+    {
+      "path": "backend/cmd/egressscan/main.go",
+      "predecessor_sha256s": [
+        "d927a4992234f6a33815fc889f636fa0fe2d2168ccf935847b37b39fcef66ec6"
+      ],
+      "to_sha256": "f65ca1b723de5f463c03dee1f5188a65a8c6a2c8a5f0513a1b37bfa217502a0c",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/codex_01491_terminal_state_test.go",
+      "predecessor_sha256s": [
+        "306b107855c74de640093e07b7c11fd64620cdc4cb64173a8f1c893d0847d6d9"
+      ],
+      "to_sha256": "3eba74a44008cb03b9af658a1f2a195f64fcfa6b87e0fa3ce79225fbe6987554",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/source_transition_digest_acceptance_test.go",
+      "predecessor_sha256s": [
+        "8f0c974889d60694e2f98a0baa5b6c14012dd3e93015a02f42c4c7118ee5c4e3"
+      ],
+      "to_sha256": "9b055efaaeb4adc6c9436b3320ad93fc80e282a6bc9254e579d931a24ceb6650",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_merge_framework_v3_successor_test.go",
+      "predecessor_sha256s": [
+        "f2295454fe40ce34bc5ef6a06f930d04d2a8f8289e57f2e2403c66bdbd2566b0"
+      ],
+      "to_sha256": "e3ac5eaf96237a115287d9ce266726ab8f265f6f4bc5310f1a35bd6e4a85430e",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_merge_framework_v4_successor_test.go",
+      "predecessor_sha256s": [
+        "2cfaef7b7a09364106b74a4a962362e0bdf906830f145ab356743adf3f4e82ad"
+      ],
+      "to_sha256": "b8b3f6e4c2bd4e1e2e9ecae4de829ecc57862010ea09c8241998da2e55c621d5",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v0180_egress_prerequisite_transition_test.go",
+      "predecessor_sha256s": [
+        "9c7ee24ff5ed9298fe45d0789696ea6287269b336062db77f403b84e8569e0fb"
+      ],
+      "to_sha256": "809640c39b211cd1c9e843497fcc894346a0dfb497723ddcf7ba3cb59841078c",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v023_scanner_successor_transition_test.go",
+      "predecessor_sha256s": [
+        "a3abe6ab0d0b5381357d183f9925cc9af53deebf1153ca46e8f8b5f9b5efbec3"
+      ],
+      "to_sha256": "2b2827c4214c95804e68688e8c58f4236001ab2afc5123b59baf08562ef4edd6",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/officialegress/upstream_v023_source_transition_test.go",
+      "predecessor_sha256s": [
+        "566f4d7eae4b734c55dceea64fc1f73743ef01af259db59a4ea7dc4745c6c6dd"
+      ],
+      "to_sha256": "e4c0526bbc892b57e6a35e6b545e425cdb8d4cf5d9ddf14a12a077c61662148d",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/codex_01491_terminal_state_test.go",
+      "predecessor_sha256s": [
+        "54082decde220206a89eb60a7d80e898fe743235d17fbe686e20f3ca70f56d13"
+      ],
+      "to_sha256": "69b1a899df6487b47e8afda9183ce77a6cf824335972c4c90383ee47a885fd3a",
+      "source_receipts": [
+        "docs/egress/maintenance/CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/source_transition_digest_acceptance_test.go",
+      "predecessor_sha256s": [
+        "7087b531632fff337dde75dc1c6788fd3c48b519b3b773b81627878f10e84765"
+      ],
+      "to_sha256": "168d530a3afd575e35fe23723eeb0beb1855a6a88d0ae413aba9fb4086dff429",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/upstream_merge_framework_v3_successor_test.go",
+      "predecessor_sha256s": [
+        "82d8b8d0dbc3986da2c997bc78d0af5eb2cc1383b4d5ca48ae1af52184746d4b"
+      ],
+      "to_sha256": "51ebe90232ee7a90fe4c6f9963e104c60c466d0538723c83cabbb9383413ed3f",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/upstream_merge_framework_v4_successor_test.go",
+      "predecessor_sha256s": [
+        "0c90983a9ca09cbd4588230ed95ff95b30e42b199fdd9623fc10ce60df16751a"
+      ],
+      "to_sha256": "1eed27ea406e49e47428772e8f028031b6c3df0b759bf0783741dc0ec8af3e27",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v0180_egress_prerequisite_transition_test.go",
+      "predecessor_sha256s": [
+        "29547ed77ea1b82fdbe1b4b8ef3970d05d8ad1e222fa53828692b4213d555dbb"
+      ],
+      "to_sha256": "28d53eb5c9f0cbac8ebb617e957291a7279a26f8f955fe9e64632ee377beb32d",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v023_scanner_successor_transition_test.go",
+      "predecessor_sha256s": [
+        "c4a331f9a75d037c7b6208bc15be99cb79f42b51f9a3439a01c86341f360e884"
+      ],
+      "to_sha256": "0e4ff2a952ec7b8a2254662eeedb0225e4133e06aad7e24ffb81dbfd78a7384c",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    },
+    {
+      "path": "backend/internal/service/upstream_v023_source_transition_test.go",
+      "predecessor_sha256s": [
+        "78918b95435a789add449bf7ca8934a65511972c82b346526c376b4ab3ffc2c0"
+      ],
+      "to_sha256": "af7d5d5d3f48bb8ab35f1cf16da028c39406a3a06cee22ffc5c5e1e907691857",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 successor 图闭包修正产生的精确源码后继；旧收据保持只读，不改变生产 wire、Persona 或路由选择。"
+    }
+  ],
+  "verification": [
+    "go test ./cmd/egressscan -count=1",
+    "go test ./internal/officialegress/... -count=1",
+    "go test ./internal/service -count=1"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "deployment_performed": false
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "ac507d9a75cca6ed0c632b8dea1fe42b70fe980524caadcb7847b573c275e478"
+}

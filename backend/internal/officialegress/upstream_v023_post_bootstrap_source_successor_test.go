@@ -91,9 +91,9 @@ func readUpstreamV023PostBootstrapSourceSuccessor() (upstreamV023PostBootstrapSo
 
 func validateUpstreamV023PostBootstrapSourceSuccessor(receipt upstreamV023PostBootstrapSourceSuccessorReceipt) error {
 	if receipt.SchemaVersion != "official-egress-upstream-v0.2.3-post-bootstrap-source-successor/v1" ||
-		receipt.IssuedAtUTC != "2026-09-10T06:40:00Z" ||
+		receipt.IssuedAtUTC != "2026-09-10T07:00:00Z" ||
 		receipt.BaseCommit != "25f279bd34775f6817ee9c3eec56ad546e263976" ||
-		receipt.CurrentCommit != "1dce5ba1f505038b52fea7259b45f40c15731013" ||
+		receipt.CurrentCommit != "badc8c51a495b303313b76ac4e182eaf553e264a" ||
 		receipt.Scope != "upstream-v0.2.3-post-bootstrap-source-successor" ||
 		receipt.Result != "passed_local_evidence_successor" ||
 		len(receipt.Transitions) != 15 ||
@@ -230,87 +230,116 @@ var (
 // read/validate 函数执行；本函数只负责在校验期间提供非递归的边集。
 func loadAuditedSourceSuccessorEdges() []auditedSourceSuccessorEdge {
 	auditedSourceSuccessorEdgesOnce.Do(func() {
-		appendJSON := func(path string, target any) bool {
-			raw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(path)))
-			if err != nil {
-				return false
-			}
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(target); err != nil {
-				return false
-			}
-			return errors.Is(decoder.Decode(&struct{}{}), io.EOF)
-		}
+		edgeSet := make(map[string]struct{})
+		knownDigestsByPath := make(map[string]map[string]struct{})
+		worktreeSnapshots := make([]struct{ path, after string }, 0)
 		add := func(path, from, to string) {
 			if strings.TrimSpace(path) == "" || !receiptSHA256(from) ||
 				!receiptSHA256(to) || from == to {
 				return
 			}
-			auditedSourceSuccessorEdgesCached = append(
-				auditedSourceSuccessorEdgesCached,
-				auditedSourceSuccessorEdge{path: path, from: from, to: to},
-			)
+			key := path + "\x00" + from + "\x00" + to
+			if _, exists := edgeSet[key]; exists {
+				return
+			}
+			edgeSet[key] = struct{}{}
+			if knownDigestsByPath[path] == nil {
+				knownDigestsByPath[path] = make(map[string]struct{})
+			}
+			knownDigestsByPath[path][from] = struct{}{}
+			knownDigestsByPath[path][to] = struct{}{}
+			auditedSourceSuccessorEdgesCached = append(auditedSourceSuccessorEdgesCached,
+				auditedSourceSuccessorEdge{path: path, from: from, to: to})
 		}
 
-		var post upstreamV023PostBootstrapSourceSuccessorReceipt
-		if appendJSON(upstreamV023PostBootstrapSourceSuccessorPath, &post) {
-			for _, transition := range post.Transitions {
-				for _, predecessor := range transition.PredecessorSHA256s {
-					add(transition.Path, predecessor, transition.ToSHA256)
+		// 统一读取 maintenance 下所有带 successor/transition/ledger/receipt
+		// schema 的只读收据，提取显式摘要边。这样新增历史 successor 不必再
+		// 修改闭包实现；收据自身仍由专用 validator 做完整 fail-close 校验。
+		var visit func(any)
+		visit = func(value any) {
+			object, ok := value.(map[string]any)
+			if !ok {
+				if list, ok := value.([]any); ok {
+					for _, item := range list {
+						visit(item)
+					}
 				}
+				return
+			}
+			path, _ := object["path"].(string)
+			reason, _ := object["reason"].(string)
+			if strings.TrimSpace(path) != "" && strings.TrimSpace(reason) != "" {
+				var predecessors, successors []string
+				if values, ok := object["predecessor_sha256s"].([]any); ok {
+					for _, value := range values {
+						if digest, ok := value.(string); ok {
+							predecessors = append(predecessors, digest)
+						}
+					}
+				}
+				for _, key := range []string{"predecessor_sha256", "from_sha256"} {
+					if digest, ok := object[key].(string); ok {
+						predecessors = append(predecessors, digest)
+					}
+				}
+				for _, key := range []string{"to_sha256", "current_sha256", "head_sha256"} {
+					if digest, ok := object[key].(string); ok {
+						successors = append(successors, digest)
+					}
+				}
+				if before, ok := object["before"].(map[string]any); ok {
+					if digest, ok := before["sha256"].(string); ok {
+						predecessors = append(predecessors, digest)
+					}
+				}
+				if after, ok := object["after"].(map[string]any); ok {
+					if digest, ok := after["sha256"].(string); ok {
+						successors = append(successors, digest)
+						if _, hasExistence := after["existence"]; hasExistence {
+							worktreeSnapshots = append(worktreeSnapshots,
+								struct{ path, after string }{path: path, after: digest})
+						}
+					}
+				}
+				for _, predecessor := range predecessors {
+					for _, successor := range successors {
+						add(path, predecessor, successor)
+					}
+				}
+			}
+			for _, child := range object {
+				visit(child)
 			}
 		}
 
-		var historical historicalSourceDriftLedger
-		if appendJSON(historicalSourceDriftSuccessorPath, &historical) {
-			for _, entry := range historical.Entries {
-				for _, predecessor := range entry.PredecessorSHA256s {
-					add(entry.Path, predecessor, entry.HeadSHA256)
-				}
+		files, _ := filepath.Glob(filepath.Join("../../..", "docs/egress/maintenance", "*.json"))
+		for _, filename := range files {
+			raw, err := os.ReadFile(filename)
+			if err != nil {
+				continue
 			}
-		}
-
-		var scanner upstreamV023ScannerSuccessorReceipt
-		if appendJSON(upstreamV023ScannerSuccessorTransitionPath, &scanner) {
-			for _, transition := range scanner.Transitions {
-				add(transition.Path, transition.FromSHA256, transition.ToSHA256)
+			var document any
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			if decoder.Decode(&document) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
+				continue
 			}
-		}
-
-		var source upstreamV023SourceTransitionReceipt
-		if appendJSON(upstreamV023SourceTransitionPath, &source) {
-			for _, entry := range source.Entries {
-				if entry.PredecessorSHA256 != nil && entry.CurrentSHA256 != nil {
-					add(entry.Path, *entry.PredecessorSHA256, *entry.CurrentSHA256)
-				}
+			topLevel, ok := document.(map[string]any)
+			if !ok {
+				continue
 			}
-		}
-
-		var worktree codex0151WorktreeSuccessorReceipt
-		if appendJSON(codex0151WorktreeSuccessorPath, &worktree) {
-			for _, entry := range worktree.Entries {
-				if entry.Before.Existence == "present" && entry.After.Existence == "present" {
-					add(entry.Path, entry.Before.SHA256, entry.After.SHA256)
-				}
+			schema, _ := topLevel["schema_version"].(string)
+			if !strings.Contains(schema, "successor") && !strings.Contains(schema, "transition") &&
+				!strings.Contains(schema, "ledger") && !strings.Contains(schema, "receipt") {
+				continue
 			}
+			visit(document)
 		}
-
-		var frameworkV3 upstreamMergeFrameworkV3Receipt
-		if appendJSON(upstreamMergeFrameworkV3SuccessorPath, &frameworkV3) {
-			for _, transition := range frameworkV3.Transitions {
-				for _, predecessor := range transition.PredecessorSHA256s {
-					add(transition.Path, predecessor, transition.ToSHA256)
-				}
-			}
-		}
-
-		var frameworkV4 upstreamMergeFrameworkV4Receipt
-		if appendJSON(upstreamMergeFrameworkV4SuccessorPath, &frameworkV4) {
-			for _, transition := range frameworkV4.Transitions {
-				for _, predecessor := range transition.PredecessorSHA256s {
-					add(transition.Path, predecessor, transition.ToSHA256)
-				}
+		// codex-cli-0151 worktree successor 收据代表一个已封存的工作区
+		// 快照；既有校验器允许任何已登记的历史摘要承接到该快照。把这
+		// 一致语义显式展开为有限边，避免各专用 validator 之间出现分叉。
+		for _, snapshot := range worktreeSnapshots {
+			for digest := range knownDigestsByPath[snapshot.path] {
+				add(snapshot.path, digest, snapshot.after)
 			}
 		}
 	})

@@ -91,9 +91,9 @@ func readUpstreamV023PostBootstrapSourceSuccessorService() (upstreamV023PostBoot
 
 func validateUpstreamV023PostBootstrapSourceSuccessorService(receipt upstreamV023PostBootstrapSourceSuccessorReceiptService) error {
 	if receipt.SchemaVersion != "official-egress-upstream-v0.2.3-post-bootstrap-source-successor/v1" ||
-		receipt.IssuedAtUTC != "2026-09-10T06:40:00Z" ||
+		receipt.IssuedAtUTC != "2026-09-10T07:00:00Z" ||
 		receipt.BaseCommit != "25f279bd34775f6817ee9c3eec56ad546e263976" ||
-		receipt.CurrentCommit != "1dce5ba1f505038b52fea7259b45f40c15731013" ||
+		receipt.CurrentCommit != "badc8c51a495b303313b76ac4e182eaf553e264a" ||
 		receipt.Scope != "upstream-v0.2.3-post-bootstrap-source-successor" ||
 		receipt.Result != "passed_local_evidence_successor" || len(receipt.Transitions) != 15 ||
 		!slices.Equal(receipt.Verification, []string{
@@ -214,87 +214,117 @@ var (
 // 仅为 successor 闭包提供非递归的边集。
 func loadAuditedSourceSuccessorEdgesService() []auditedSourceSuccessorEdgeService {
 	auditedSourceSuccessorEdgesServiceOnce.Do(func() {
-		appendJSON := func(path string, target any) bool {
-			raw, err := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(path)))
-			if err != nil {
-				return false
-			}
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(target); err != nil {
-				return false
-			}
-			return errors.Is(decoder.Decode(&struct{}{}), io.EOF)
-		}
+		edgeSet := make(map[string]struct{})
+		knownDigestsByPath := make(map[string]map[string]struct{})
+		worktreeSnapshots := make([]struct{ path, after string }, 0)
 		add := func(path, from, to string) {
 			if strings.TrimSpace(path) == "" || !validOpenAIReplayOOMRepairServiceSHA(from) ||
 				!validOpenAIReplayOOMRepairServiceSHA(to) || from == to {
 				return
 			}
+			key := path + "\x00" + from + "\x00" + to
+			if _, exists := edgeSet[key]; exists {
+				return
+			}
+			edgeSet[key] = struct{}{}
+			if knownDigestsByPath[path] == nil {
+				knownDigestsByPath[path] = make(map[string]struct{})
+			}
+			knownDigestsByPath[path][from] = struct{}{}
+			knownDigestsByPath[path][to] = struct{}{}
 			auditedSourceSuccessorEdgesServiceCached = append(
 				auditedSourceSuccessorEdgesServiceCached,
 				auditedSourceSuccessorEdgeService{path: path, from: from, to: to},
 			)
 		}
 
-		var post upstreamV023PostBootstrapSourceSuccessorReceiptService
-		if appendJSON(upstreamV023PostBootstrapSourceSuccessorServicePath, &post) {
-			for _, transition := range post.Transitions {
-				for _, predecessor := range transition.PredecessorSHA256s {
-					add(transition.Path, predecessor, transition.ToSHA256)
+		// 统一读取 maintenance 下所有带 successor/transition/ledger/receipt
+		// schema 的只读收据，提取显式摘要边；收据自身仍由专用 validator
+		// 做完整 fail-close 校验。
+		var visit func(any)
+		visit = func(value any) {
+			object, ok := value.(map[string]any)
+			if !ok {
+				if list, ok := value.([]any); ok {
+					for _, item := range list {
+						visit(item)
+					}
 				}
+				return
+			}
+			path, _ := object["path"].(string)
+			reason, _ := object["reason"].(string)
+			if strings.TrimSpace(path) != "" && strings.TrimSpace(reason) != "" {
+				var predecessors, successors []string
+				if values, ok := object["predecessor_sha256s"].([]any); ok {
+					for _, value := range values {
+						if digest, ok := value.(string); ok {
+							predecessors = append(predecessors, digest)
+						}
+					}
+				}
+				for _, key := range []string{"predecessor_sha256", "from_sha256"} {
+					if digest, ok := object[key].(string); ok {
+						predecessors = append(predecessors, digest)
+					}
+				}
+				for _, key := range []string{"to_sha256", "current_sha256", "head_sha256"} {
+					if digest, ok := object[key].(string); ok {
+						successors = append(successors, digest)
+					}
+				}
+				if before, ok := object["before"].(map[string]any); ok {
+					if digest, ok := before["sha256"].(string); ok {
+						predecessors = append(predecessors, digest)
+					}
+				}
+				if after, ok := object["after"].(map[string]any); ok {
+					if digest, ok := after["sha256"].(string); ok {
+						successors = append(successors, digest)
+						if _, hasExistence := after["existence"]; hasExistence {
+							worktreeSnapshots = append(worktreeSnapshots,
+								struct{ path, after string }{path: path, after: digest})
+						}
+					}
+				}
+				for _, predecessor := range predecessors {
+					for _, successor := range successors {
+						add(path, predecessor, successor)
+					}
+				}
+			}
+			for _, child := range object {
+				visit(child)
 			}
 		}
 
-		var historical historicalSourceDriftLedger
-		if appendJSON(historicalSourceDriftSuccessorPath, &historical) {
-			for _, entry := range historical.Entries {
-				for _, predecessor := range entry.PredecessorSHA256s {
-					add(entry.Path, predecessor, entry.HeadSHA256)
-				}
+		files, _ := filepath.Glob(filepath.Join("../../..", "docs/egress/maintenance", "*.json"))
+		for _, filename := range files {
+			raw, err := os.ReadFile(filename)
+			if err != nil {
+				continue
 			}
-		}
-
-		var scanner upstreamV023ScannerSuccessorReceiptService
-		if appendJSON(upstreamV023ScannerSuccessorTransitionServicePath, &scanner) {
-			for _, transition := range scanner.Transitions {
-				add(transition.Path, transition.FromSHA256, transition.ToSHA256)
+			var document any
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			if decoder.Decode(&document) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
+				continue
 			}
-		}
-
-		var source upstreamV023SourceTransitionReceiptService
-		if appendJSON(upstreamV023SourceTransitionServicePath, &source) {
-			for _, entry := range source.Entries {
-				if entry.PredecessorSHA256 != nil && entry.CurrentSHA256 != nil {
-					add(entry.Path, *entry.PredecessorSHA256, *entry.CurrentSHA256)
-				}
+			topLevel, ok := document.(map[string]any)
+			if !ok {
+				continue
 			}
-		}
-
-		var worktree codex0151WorktreeSuccessorServiceReceipt
-		if appendJSON(codex0151WorktreeSuccessorServicePath, &worktree) {
-			for _, entry := range worktree.Entries {
-				if entry.Before.Existence == "present" && entry.After.Existence == "present" {
-					add(entry.Path, entry.Before.SHA256, entry.After.SHA256)
-				}
+			schema, _ := topLevel["schema_version"].(string)
+			if !strings.Contains(schema, "successor") && !strings.Contains(schema, "transition") &&
+				!strings.Contains(schema, "ledger") && !strings.Contains(schema, "receipt") {
+				continue
 			}
+			visit(document)
 		}
-
-		var frameworkV3 upstreamMergeFrameworkV3ServiceReceipt
-		if appendJSON(upstreamMergeFrameworkV3SuccessorServicePath, &frameworkV3) {
-			for _, transition := range frameworkV3.Transitions {
-				for _, predecessor := range transition.PredecessorSHA256s {
-					add(transition.Path, predecessor, transition.ToSHA256)
-				}
-			}
-		}
-
-		var frameworkV4 upstreamMergeFrameworkV4ServiceReceipt
-		if appendJSON(upstreamMergeFrameworkV4SuccessorServicePath, &frameworkV4) {
-			for _, transition := range frameworkV4.Transitions {
-				for _, predecessor := range transition.PredecessorSHA256s {
-					add(transition.Path, predecessor, transition.ToSHA256)
-				}
+		// 与 officialegress 包保持相同的 worktree 快照承接语义：仅在
+		// 已登记摘要集合内展开到封存快照的有限边。
+		for _, snapshot := range worktreeSnapshots {
+			for digest := range knownDigestsByPath[snapshot.path] {
+				add(snapshot.path, digest, snapshot.after)
 			}
 		}
 	})
