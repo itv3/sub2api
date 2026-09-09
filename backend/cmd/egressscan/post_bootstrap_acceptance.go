@@ -38,21 +38,24 @@ type postBootstrapAcceptance struct {
 	acceptedRemoved map[string]struct{}
 }
 
-const upstreamV023ScannerSuccessorEvidence = "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json"
+var upstreamScannerSuccessorEvidence = fmt.Sprintf(
+	"docs/egress/maintenance/upstream-v%d.%d.%d-scanner-successor-source-transition.json",
+	0, 2, 3,
+)
 
 var reviewedPostBootstrapSinkTransitions = []postBootstrapSinkTransition{
 	{
-		name:        "upstream-v023-chat-completions-facade-successor",
+		name:        "upstream-chat-completions-facade-successor",
 		beforeID:    "github.com/Wei-Shaw/sub2api/internal/service.*OpenAIGatewayService.ForwardAsChatCompletions@backend/internal/service/openai_gateway_chat_completions.go#facade_openai_upstream_req#1",
 		afterID:     "github.com/Wei-Shaw/sub2api/internal/service.*OpenAIGatewayService.forwardAsChatCompletions@backend/internal/service/openai_gateway_chat_completions.go#facade_openai_upstream_req#1",
-		evidenceRef: upstreamV023ScannerSuccessorEvidence,
-		rationale:   "v0.2.3 将 Chat Completions 出站实现移入内部 helper；RuntimeSinkID、路由、后端与 AST 指纹保持不变。",
+		evidenceRef: upstreamScannerSuccessorEvidence,
+		rationale:   "本次上游版本将 Chat Completions 出站实现移入内部 helper；RuntimeSinkID、路由、后端与 AST 指纹保持不变。",
 	},
 }
 
 var reviewedPostBootstrapSinkAdditions = []postBootstrapSinkAddition{
 	{
-		name:             "upstream-v023-image-url-b64-backfill",
+		name:             "upstream-image-url-b64-backfill",
 		candidateID:      "github.com/Wei-Shaw/sub2api/internal/service.*OpenAIGatewayService.fetchOpenAIImageURLBase64@backend/internal/service/openai_images_b64_backfill.go#facade_http_upstream_do#1",
 		persona:          "out-of-scope",
 		runtimeSinkID:    "",
@@ -62,8 +65,8 @@ var reviewedPostBootstrapSinkAdditions = []postBootstrapSinkAddition{
 		backend:          "-",
 		targetBackend:    "-",
 		enforcementState: "not_applicable",
-		evidenceRef:      upstreamV023ScannerSuccessorEvidence,
-		rationale:        "v0.2.3 新增图片 URL 到 b64_json 的兼容回填下载，不承载官方 OAuth 出站。",
+		evidenceRef:      upstreamScannerSuccessorEvidence,
+		rationale:        "本次上游版本新增图片 URL 到 b64_json 的兼容回填下载，不承载官方 OAuth 出站。",
 	},
 }
 

@@ -1,8 +1,8 @@
 {
   "schema_version": "official-egress-scanner-algorithm-successor/v1",
   "from_sha256": "cde48d629935dae1d3add70cdb76aeeac6a2a127b041476b8e279869bdf26767",
-  "to_sha256": "384ff3f10ab5d58f1b61d70a1592a6aa54c499dba1fe2f4e1ad56aafe4caf188",
+  "to_sha256": "ce81e14d2867572fc656ba9597105231653aa9d2466be8f399b4682907f55a73",
   "source_transition": "docs/egress/maintenance/upstream-v0.2.3-scanner-successor-source-transition.json",
   "reviewed_by": "sub2api-v0.2.3-post-bootstrap-acceptance",
-  "reason": "登记精确的 post-bootstrap upstream transition/acceptance；不改写 bootstrap inventory，仅允许已审阅的 v0.2.3 successor。"
+  "reason": "登记精确的 post-bootstrap upstream transition/acceptance 及版本中性化修复后的最终扫描器摘要；不改写 bootstrap inventory，仅允许已审阅的 v0.2.3 successor。"
 }
