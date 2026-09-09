@@ -338,11 +338,11 @@ const (
 	configuredCodexModelPriority       = 50
 	configuredCodexCustomDescription   = "Custom model routed through Sub2API."
 	configuredCodexFallbackContext     = 272_000
-	configuredCodexDeepSeekV4Context   = 1_000_000
+	configuredDeepSeekV4Context        = 1_000_000
 	configuredCodexGrokContext         = 500_000
 	configuredCodexGrokBuildContext    = 256_000
 	configuredCodexGPT56MaxContext     = 872_000
-	configuredCodexGPT6AstraContext    = 1_050_000
+	configuredGPT6AstraContext         = 1_050_000
 	configuredCodexToolOutputMaxTokens = 10_000
 )
 
@@ -470,8 +470,8 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 			{Effort: "max", Description: "Maximum reasoning depth for complex tasks"},
 		}
 		descriptor.SupportsParallelToolCalls = true
-		descriptor.ContextWindow = configuredCodexDeepSeekV4Context
-		descriptor.MaxContextWindow = configuredCodexDeepSeekV4Context
+		descriptor.ContextWindow = configuredDeepSeekV4Context
+		descriptor.MaxContextWindow = configuredDeepSeekV4Context
 	}
 
 	if isGrokCodexModel(modelID) {
@@ -521,8 +521,8 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 				multiAgentEffort := "xhigh"
 				descriptor.MultiAgentReasoningEffort = &multiAgentEffort
 				descriptor.MultiAgentVersion = "v2"
-				descriptor.ContextWindow = configuredCodexGPT6AstraContext
-				descriptor.MaxContextWindow = configuredCodexGPT6AstraContext
+				descriptor.ContextWindow = configuredGPT6AstraContext
+				descriptor.MaxContextWindow = configuredGPT6AstraContext
 			}
 		}
 		if SupportsVerbosity(modelID) {
