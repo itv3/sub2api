@@ -706,10 +706,15 @@ func runCheck(
 	delegationByTargetID := removals.delegationByTargetID()
 	amendmentByCandidateID := amendments.byCandidateID()
 	seenSupplements := make(map[string]bool, len(supplementByID))
+	postBootstrapAcceptance, postBootstrapProblems := validateReviewedPostBootstrapSinkAcceptance(oldByID, curByID)
+	changed = append(changed, postBootstrapProblems...)
 
 	for id, cur := range curByID {
 		prev, ok := oldByID[id]
 		if !ok {
+			if _, accepted := postBootstrapAcceptance.acceptedAdded[id]; accepted {
+				continue
+			}
 			if receipts := delegationByTargetID[id]; len(receipts) > 0 {
 				for _, receipt := range receipts {
 					if err := validateLegacyDelegationTarget(receipt, cur); err != nil {
@@ -803,6 +808,9 @@ func runCheck(
 	}
 	for id, prev := range oldByID {
 		if _, ok := curByID[id]; !ok {
+			if _, accepted := postBootstrapAcceptance.acceptedRemoved[id]; accepted {
+				continue
+			}
 			receipt, reviewed := removalByID[id]
 			if !reviewed {
 				removed = append(removed, fmt.Sprintf("%s  (%s)", id, prev.Callee))
