@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical test-capture-tools test-official-client-control test-upstream-merge-tools upstream-preflight upstream-source-transition upstream-source-transition-validate check-egress-spec check-egress-spec-ci check-egress-spec-local-source check-egress-bootstrap-replay check-egress-seal
+.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical test-capture-tools test-official-client-control test-upstream-merge-tools upstream-preflight upstream-baseline-seal upstream-baseline-validate upstream-revision-preflight upstream-source-transition upstream-source-transition-validate check-egress-spec check-egress-spec-ci check-egress-spec-local-source check-egress-bootstrap-replay check-egress-seal
 
 EGRESS_BOOTSTRAP_COMMIT := 38a9929eac35a39c86de2f27de8f7a805d7dae52
 EGRESS_BOOTSTRAP_BASELINE := $(CURDIR)/docs/egress/foundation/sink-baseline.json
@@ -20,6 +20,10 @@ UPSTREAM_MERGE_PLAN ?= $(CURDIR)/docs/egress/maintenance/upstream-v0.1.177-merge
 UPSTREAM_MERGE_REPOSITORY ?= $(CURDIR)
 UPSTREAM_MERGE_REQUEST ?=
 UPSTREAM_MERGE_PREFLIGHT_OUTPUT ?=
+UPSTREAM_MERGE_BASELINE_INPUT ?=
+UPSTREAM_MERGE_BASELINE_OUTPUT ?=
+UPSTREAM_MERGE_BASELINE_RECEIPT ?=
+UPSTREAM_MERGE_TRANSITIONS ?=
 UPSTREAM_MERGE_BEFORE ?=
 UPSTREAM_MERGE_AFTER ?=
 UPSTREAM_MERGE_TRANSITION_OUTPUT ?=
@@ -251,6 +255,28 @@ upstream-preflight:
 		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
 		--request "$(UPSTREAM_MERGE_REQUEST)" \
 		$(if $(UPSTREAM_MERGE_PREFLIGHT_OUTPUT),--output "$(UPSTREAM_MERGE_PREFLIGHT_OUTPUT)",)
+
+# 将已执行的基线功能/证据检查绑定到当前干净提交；不会覆盖既有收据。
+upstream-baseline-seal:
+	@test -n "$(UPSTREAM_MERGE_BASELINE_INPUT)" || { echo "🔴 请设置 UPSTREAM_MERGE_BASELINE_INPUT"; exit 2; }
+	@test -n "$(UPSTREAM_MERGE_BASELINE_OUTPUT)" || { echo "🔴 请设置 UPSTREAM_MERGE_BASELINE_OUTPUT"; exit 2; }
+	@python3 -m tools.upstream_merge baseline-seal \
+		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
+		--input "$(UPSTREAM_MERGE_BASELINE_INPUT)" \
+		--output "$(UPSTREAM_MERGE_BASELINE_OUTPUT)"
+
+upstream-baseline-validate:
+	@test -n "$(UPSTREAM_MERGE_BASELINE_RECEIPT)" || { echo "🔴 请设置 UPSTREAM_MERGE_BASELINE_RECEIPT"; exit 2; }
+	@python3 -m tools.upstream_merge baseline-validate \
+		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
+		--receipt "$(UPSTREAM_MERGE_BASELINE_RECEIPT)"
+
+upstream-revision-preflight:
+	@test -n "$(UPSTREAM_MERGE_PLAN)" || { echo "🔴 请设置 UPSTREAM_MERGE_PLAN"; exit 2; }
+	@python3 -m tools.upstream_merge revision-preflight \
+		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
+		--plan "$(UPSTREAM_MERGE_PLAN)" \
+		$(foreach transition,$(UPSTREAM_MERGE_TRANSITIONS),--transition "$(transition)")
 
 # 从两个已冻结提交追加生成 source-transition 链尾；不会改写已有节点。
 upstream-source-transition:

@@ -9,7 +9,7 @@
     "official_clients", "baselines", "protected_repository_paths", "gates"
   ],
   "properties": {
-    "schema_version": {"const": "official-egress-upstream-merge-request/v1"},
+    "schema_version": {"enum": ["official-egress-upstream-merge-request/v1", "official-egress-upstream-merge-request/v2"]},
     "plan_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
     "upstream": {
       "type": "object",
@@ -54,12 +54,37 @@
         "production_ingress_inventory": {"$ref": "#/$defs/clientPaths"},
         "egress_disposition_inventory": {"$ref": "#/$defs/clientPaths"},
         "runtime_state_path": {"type": "string", "pattern": "^/"},
-        "recovery_point_path": {"type": "string", "pattern": "^/"}
+        "recovery_point_path": {"type": "string", "pattern": "^/"},
+        "baseline_acceptance_path": {"type": "string", "pattern": "^/", "description": "v2 新计划必填；必须绑定当前干净基线的 BaselineAcceptance 收据"}
       }
     },
     "protected_repository_paths": {"type": "array", "minItems": 6, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "gates": {"type": "array", "minItems": 12, "maxItems": 12, "items": {"type": "object"}}
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["schema_version"],
+        "properties": {"schema_version": {"const": "official-egress-upstream-merge-request/v2"}}
+      },
+      "then": {
+        "properties": {
+          "baselines": {"required": ["baseline_acceptance_path"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["schema_version"],
+        "properties": {"schema_version": {"const": "official-egress-upstream-merge-request/v1"}}
+      },
+      "then": {
+        "properties": {
+          "baselines": {"not": {"required": ["baseline_acceptance_path"]}}
+        }
+      }
+    }
+  ],
   "$defs": {
     "persona": {
       "type": "object",

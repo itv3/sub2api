@@ -3099,6 +3099,60 @@ def _load_impact_receipt(plan: LoadedPlan) -> dict[str, Any]:
     return document
 
 
+def preflight_revisions(
+    plan: LoadedPlan,
+    transition_paths: Sequence[Path] | None = None,
+) -> dict[str, Any]:
+    """在进入 U-4 前一次性复核当前 U-2/U-3 收据和源码 transition 链。
+
+    该检查只读，不生成或改写任何制品。它把最常见的“源码已经修好，但
+    Surface/Impact/Transition 仍绑定上一轮”问题提前挡住，避免把失败拖到
+    长时间的 U-4 门禁之后才发现。
+    """
+
+    source = _load_source_candidate(plan)
+    surface = _load_surface_receipt(plan)
+    impact = _load_impact_matrix(plan)
+    decision = _load_impact_receipt(plan)
+    if surface.get("result") != "closed":
+        raise UpstreamMergeError("U-2 SurfaceRecalculationReceipt 尚未闭合")
+    if impact.get("result") not in {"pending_change_decision", "closed"}:
+        raise UpstreamMergeError("U-3 ImpactMatrix 结果非法")
+    if decision.get("result") != "closed":
+        raise UpstreamMergeError("U-3 ChangeDecisionReceipt 尚未闭合")
+    worktree = _worktree_root(plan)
+    if rev_parse(worktree, "HEAD^{commit}") != source["source_commit"]:
+        raise UpstreamMergeError("revision preflight 的 worktree HEAD 与 SourceCandidate 不一致")
+    assert_clean(worktree, "U-2/U-3 revision preflight")
+
+    validated_transitions: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
+    for raw_path in transition_paths or ():
+        if not raw_path.is_absolute():
+            raise UpstreamMergeError("revision preflight transition 路径必须是绝对路径")
+        try:
+            path = raw_path.resolve(strict=True)
+        except OSError as error:
+            raise UpstreamMergeError(
+                f"revision preflight transition 不存在或不可读取：{raw_path}"
+            ) from error
+        if path in seen_paths:
+            raise UpstreamMergeError(f"revision preflight transition 不得重复：{path}")
+        seen_paths.add(path)
+        validated_transitions.append(validate_source_transition(plan.repository_root, path))
+
+    source_revision = source.get("revision", latest_revision(plan, "source_candidate"))
+    return {
+        "result": "ready",
+        "source_revision": source_revision,
+        "source_commit": source["source_commit"],
+        "surface_revision": surface.get("revision", source_revision),
+        "impact_revision": impact.get("revision", source_revision),
+        "transition_count": len(validated_transitions),
+        "transitions": validated_transitions,
+    }
+
+
 def _expand_gate_value(
     value: str,
     *,
@@ -3505,6 +3559,11 @@ def _run_verification_gates_in_worktree(
         VERIFICATION_RECEIPT_SCHEMA,
         {
             "attempt_id": attempt,
+            **(
+                {"baseline_acceptance": plan.baseline_acceptance}
+                if plan.baseline_acceptance is not None
+                else {}
+            ),
             "source_candidate": stage_binding(plan, "source_candidate"),
             "impact_receipt": stage_binding(plan, "impact_receipt"),
             "required_categories": list(REQUIRED_GATE_CATEGORIES),
@@ -3735,6 +3794,7 @@ def load_verification_receipt(
         "identity_sha256",
     }
     optional_fields = {
+        "baseline_acceptance",
         "client_receipts",
         "executed_gate_count",
         "reused_gate_count",
@@ -3786,6 +3846,9 @@ def load_verification_receipt(
         raise UpstreamMergeError("VerificationReceipt SourceCandidate 绑定漂移")
     if document.get("impact_receipt") != stage_binding(plan, "impact_receipt"):
         raise UpstreamMergeError("VerificationReceipt ChangeDecisionReceipt 绑定漂移")
+    if plan.baseline_acceptance is not None:
+        if document.get("baseline_acceptance") != plan.baseline_acceptance:
+            raise UpstreamMergeError("VerificationReceipt 基线验收收据绑定漂移")
     if document.get("required_categories") != list(REQUIRED_GATE_CATEGORIES):
         raise UpstreamMergeError("VerificationReceipt 固定门禁类别漂移")
     gates = document.get("gates")

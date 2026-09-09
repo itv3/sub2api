@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .canonical import bind_identity, canonical_bytes, expect_object, load_json, write_json_once
+from .baseline import seal_baseline_acceptance, validate_baseline_acceptance
 from .contracts import create_plan, load_plan
 from .errors import UpstreamMergeError
 from .workflow import (
@@ -17,6 +18,7 @@ from .workflow import (
     generate_change_decision_suggestion,
     generate_impact_matrix,
     replay_upstream_merge,
+    preflight_revisions,
     run_verification_gates,
     run_preflight,
     scan_surfaces,
@@ -74,6 +76,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=_absolute,
         help="可选的非权威预检报告路径；不会覆盖既有文件",
     )
+
+    baseline = commands.add_parser(
+        "baseline-seal",
+        help="将基线功能/证据检查草稿绑定到当前干净提交并封存",
+    )
+    _add_repository(baseline)
+    baseline.add_argument("--input", required=True, type=_absolute)
+    baseline.add_argument("--output", required=True, type=_absolute)
+
+    baseline_validate = commands.add_parser(
+        "baseline-validate",
+        help="只读校验基线验收收据及其当前提交绑定",
+    )
+    _add_repository(baseline_validate)
+    baseline_validate.add_argument("--receipt", required=True, type=_absolute)
 
     transition = commands.add_parser(
         "source-transition",
@@ -145,6 +162,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_plan(impact_seal)
     impact_seal.add_argument("--decision", required=True, type=_absolute)
 
+    revision_preflight = commands.add_parser(
+        "revision-preflight",
+        help="只读复核最新 U-2/U-3 收据及可选 source-transition 链",
+    )
+    _add_plan(revision_preflight)
+    revision_preflight.add_argument(
+        "--transition",
+        action="append",
+        type=_absolute,
+        help="要复核的 source-transition 链尾；可重复指定",
+    )
+
     gates = commands.add_parser("gates-run", help="U-4 执行全部固定门禁并生成 attempt 收据")
     _add_plan(gates)
     gates.add_argument("--attempt-id", required=True)
@@ -205,6 +234,30 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             "report": str(arguments.output) if arguments.output else None,
             "blockers": report["blockers"],
         }
+    if command == "baseline-seal":
+        receipt = seal_baseline_acceptance(
+            arguments.repository,
+            arguments.input,
+            arguments.output,
+        )
+        return {
+            "result": receipt["result"],
+            "receipt": str(arguments.output),
+            "commit": receipt["repository"]["commit"],
+            "tree": receipt["repository"]["tree"],
+            "known_drift_count": len(receipt["evidence"]["known_drift"]),
+            "identity_sha256": receipt["identity_sha256"],
+        }
+    if command == "baseline-validate":
+        receipt = validate_baseline_acceptance(arguments.repository, arguments.receipt)
+        return {
+            "result": receipt["result"],
+            "receipt": str(arguments.receipt),
+            "commit": receipt["repository"]["commit"],
+            "tree": receipt["repository"]["tree"],
+            "known_drift_count": len(receipt["evidence"]["known_drift"]),
+            "identity_sha256": receipt["identity_sha256"],
+        }
     if command == "source-transition":
         return generate_source_transition(
             arguments.repository,
@@ -259,6 +312,8 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
         }
     if command == "impact-seal":
         return seal_change_decision(plan, arguments.decision)
+    if command == "revision-preflight":
+        return preflight_revisions(plan, arguments.transition)
     if command == "gates-run":
         return run_verification_gates(
             plan,

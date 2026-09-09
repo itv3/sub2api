@@ -186,6 +186,10 @@
             "codex": {"$ref": "#/$defs/client"}
           }
         },
+        "baseline_acceptance": {
+          "$ref": "#/$defs/binding",
+          "description": "新计划必须绑定当前 fork HEAD/tree 的基线验收收据；旧计划可缺省以保持只读回放兼容"
+        },
         "baselines": {
           "type": "object",
           "additionalProperties": false,

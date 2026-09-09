@@ -14,6 +14,7 @@ from tools.official_client_control.contracts import (
 )
 from tools.official_client_control.errors import ControlError
 
+from .baseline import validate_baseline_acceptance
 from .canonical import (
     TAG_RE,
     VERSION_RE,
@@ -56,7 +57,8 @@ from .gitops import (
 )
 
 
-REQUEST_SCHEMA = "official-egress-upstream-merge-request/v1"
+LEGACY_REQUEST_SCHEMA = "official-egress-upstream-merge-request/v1"
+REQUEST_SCHEMA = "official-egress-upstream-merge-request/v2"
 PLAN_SCHEMA = "official-egress-upstream-merge-plan/v2"
 PLAN_PURPOSE = "upstream_merge"
 CLIENT_KEYS = ("claude", "codex")
@@ -200,6 +202,13 @@ class LoadedPlan:
     @property
     def plan_binding(self) -> dict[str, Any]:
         return file_binding(self.path)
+
+    @property
+    def baseline_acceptance(self) -> dict[str, Any] | None:
+        """新计划的基线验收绑定；历史旧计划可能没有该字段。"""
+
+        value = self.document.get("baseline_acceptance")
+        return value if isinstance(value, dict) else None
 
 
 def _safe_absolute_path(value: Any, label: str) -> Path:
@@ -400,7 +409,8 @@ def load_request(path: Path) -> dict[str, Any]:
         },
         "UpstreamMergeRequest",
     )
-    if request.get("schema_version") != REQUEST_SCHEMA:
+    request_schema = request.get("schema_version")
+    if request_schema not in {LEGACY_REQUEST_SCHEMA, REQUEST_SCHEMA}:
         raise UpstreamMergeError("UpstreamMergeRequest schema_version 非法")
     expect_safe_id(request.get("plan_id"), "UpstreamMergeRequest.plan_id")
     upstream = expect_object(request.get("upstream"), "UpstreamMergeRequest.upstream")
@@ -429,16 +439,15 @@ def load_request(path: Path) -> dict[str, Any]:
     if clients["codex"]["persona"] == clients["claude"]["persona"]:
         raise UpstreamMergeError("Codex 与 Claude Persona 不得共用身份")
     baselines = expect_object(request.get("baselines"), "baselines")
-    expect_exact_fields(
-        baselines,
-        {
-            "production_ingress_inventory",
-            "egress_disposition_inventory",
-            "runtime_state_path",
-            "recovery_point_path",
-        },
-        "baselines",
-    )
+    baseline_fields = {
+        "production_ingress_inventory",
+        "egress_disposition_inventory",
+        "runtime_state_path",
+        "recovery_point_path",
+    }
+    if request_schema == REQUEST_SCHEMA:
+        baseline_fields.add("baseline_acceptance_path")
+    expect_exact_fields(baselines, baseline_fields, "baselines")
     for kind_field, kind in (
         ("production_ingress_inventory", "ingress"),
         ("egress_disposition_inventory", "egress"),
@@ -458,6 +467,13 @@ def load_request(path: Path) -> dict[str, Any]:
     for field in ("runtime_state_path", "recovery_point_path"):
         value_path = _safe_absolute_path(baselines.get(field), f"baselines.{field}")
         load_json(value_path, f"baselines.{field}")
+    if request_schema == REQUEST_SCHEMA:
+        baseline_path = _safe_absolute_path(
+            baselines.get("baseline_acceptance_path"),
+            "baselines.baseline_acceptance_path",
+        )
+        if baseline_path.is_symlink() or not baseline_path.is_file():
+            raise UpstreamMergeError("baselines.baseline_acceptance_path 不是可信普通文件")
     protected = request.get("protected_repository_paths")
     if not isinstance(protected, list) or not protected:
         raise UpstreamMergeError("protected_repository_paths 必须是非空数组")
@@ -508,6 +524,36 @@ def _output_layout(upstream_tag: str) -> dict[str, Any]:
         "impact_revisions_root": "u3/impact-revisions",
         "candidate_inventories_revisions_root": "u2/inventory-revisions",
     }
+
+
+def _validate_baseline_binding(
+    root: Path,
+    binding: dict[str, Any],
+    fork_head: str,
+    fork_tree: str,
+    *,
+    require_current: bool,
+) -> None:
+    """校验基线收据，并确保它就是计划冻结的 fork HEAD/tree。
+
+    ``require_current`` 只在 U-0 创建计划时使用。计划进入后续阶段后，受维护
+    分支可能已经快进；历史计划仍应能够只读回放，因此不能把“当前 HEAD”误当
+    成基线身份。
+    """
+
+    path = Path(binding["path"])
+    receipt = validate_baseline_acceptance(
+        root,
+        path,
+        require_current=require_current,
+    )
+    repository = expect_object(receipt.get("repository"), "BaselineAcceptance.repository")
+    if repository.get("commit") != fork_head or repository.get("tree") != fork_tree:
+        raise UpstreamMergeError(
+            "BaselineAcceptance 未绑定计划 fork HEAD/tree："
+            f"expected={fork_head}/{fork_tree} "
+            f"actual={repository.get('commit')}/{repository.get('tree')}"
+        )
 
 
 def _validate_outputs(value: Any, upstream_tag: str) -> dict[str, Any]:
@@ -570,6 +616,11 @@ def create_plan(request_path: Path, repository_root: Path) -> LoadedPlan:
 
     root = assert_git_repository(repository_root)
     request = load_request(request_path)
+    if request.get("schema_version") != REQUEST_SCHEMA:
+        raise UpstreamMergeError(
+            "新建正式 Plan 必须使用 request/v2，并提供基线验收收据；"
+            "旧 request/v1 只能迁移后使用"
+        )
     assert_clean(root, "U-0 主仓库")
     managed_ref = request["repository"]["managed_ref"]
     if current_branch_ref(root) != managed_ref:
@@ -598,6 +649,17 @@ def create_plan(request_path: Path, repository_root: Path) -> LoadedPlan:
     worktree = _safe_absolute_path(request["workspace"]["worktree"], "workspace.worktree")
     evidence_requested = _safe_absolute_path(
         request["workspace"]["evidence_root"], "workspace.evidence_root"
+    )
+    baseline_acceptance_path = _safe_absolute_path(
+        request["baselines"]["baseline_acceptance_path"],
+        "baselines.baseline_acceptance_path",
+    )
+    _validate_baseline_binding(
+        root,
+        file_binding(baseline_acceptance_path),
+        fork_head,
+        commit_tree(root, fork_head),
+        require_current=True,
     )
     if worktree.exists():
         raise UpstreamMergeError(f"隔离 worktree 目标必须不存在：{worktree}")
@@ -665,6 +727,7 @@ def create_plan(request_path: Path, repository_root: Path) -> LoadedPlan:
         },
         "official_clients": clients,
         "baselines": baselines,
+        "baseline_acceptance": file_binding(baseline_acceptance_path),
         "discovery_baseline": {
             "route_snapshot": artifact_binding(evidence_root, route_path),
             "source_to_sink_snapshot": artifact_binding(evidence_root, egress_path),
@@ -690,26 +753,32 @@ def load_plan(
 
     root = assert_git_repository(repository_root)
     plan = expect_object(load_json(path, "UpstreamMergePlan"), "UpstreamMergePlan")
-    expect_exact_fields(
-        plan,
-        {
-            "schema_version",
-            "plan_id",
-            "purpose",
-            "upstream",
-            "repository",
-            "workspace",
-            "official_clients",
-            "baselines",
-            "discovery_baseline",
-            "tool_bundle",
-            "environment",
-            "gates",
-            "outputs",
-            "identity_sha256",
-        },
-        "UpstreamMergePlan",
-    )
+    required_plan_fields = {
+        "schema_version",
+        "plan_id",
+        "purpose",
+        "upstream",
+        "repository",
+        "workspace",
+        "official_clients",
+        "baselines",
+        "discovery_baseline",
+        "tool_bundle",
+        "environment",
+        "gates",
+        "outputs",
+        "identity_sha256",
+    }
+    optional_plan_fields = {"baseline_acceptance"}
+    actual_plan_fields = set(plan)
+    if actual_plan_fields - (required_plan_fields | optional_plan_fields) or (
+        required_plan_fields - actual_plan_fields
+    ):
+        raise UpstreamMergeError(
+            "UpstreamMergePlan 字段不闭合："
+            f"缺失={sorted(required_plan_fields - actual_plan_fields)}，"
+            f"多余={sorted(actual_plan_fields - (required_plan_fields | optional_plan_fields))}"
+        )
     if plan.get("schema_version") != PLAN_SCHEMA or plan.get("purpose") != PLAN_PURPOSE:
         raise UpstreamMergeError("只接受完整 upstream_merge UpstreamMergePlan v2")
     expect_safe_id(plan.get("plan_id"), "UpstreamMergePlan.plan_id")
@@ -834,6 +903,17 @@ def load_plan(
         raise UpstreamMergeError("U-0 发现基线未绑定 fork HEAD/tree")
 
     validate_tool_bundle(root, plan.get("tool_bundle"))
+    if "baseline_acceptance" in plan:
+        baseline_binding = validate_file_binding(
+            plan.get("baseline_acceptance"), "baseline_acceptance"
+        )
+        _validate_baseline_binding(
+            root,
+            baseline_binding,
+            fork_head,
+            fork_tree,
+            require_current=False,
+        )
     environment_binding = validate_artifact_binding(
         evidence_root, plan.get("environment"), "environment"
     )
