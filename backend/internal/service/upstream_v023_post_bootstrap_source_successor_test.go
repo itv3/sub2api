@@ -91,11 +91,11 @@ func readUpstreamV023PostBootstrapSourceSuccessorService() (upstreamV023PostBoot
 
 func validateUpstreamV023PostBootstrapSourceSuccessorService(receipt upstreamV023PostBootstrapSourceSuccessorReceiptService) error {
 	if receipt.SchemaVersion != "official-egress-upstream-v0.2.3-post-bootstrap-source-successor/v1" ||
-		receipt.IssuedAtUTC != "2026-09-10T06:00:00Z" ||
+		receipt.IssuedAtUTC != "2026-09-10T06:20:00Z" ||
 		receipt.BaseCommit != "25f279bd34775f6817ee9c3eec56ad546e263976" ||
-		receipt.CurrentCommit != "58f095bfc1373fbab18e85e6820a787007e53bf9" ||
+		receipt.CurrentCommit != "f0233cc3e5b27f295b12009f5018c6f450faf8ce" ||
 		receipt.Scope != "upstream-v0.2.3-post-bootstrap-source-successor" ||
-		receipt.Result != "passed_local_evidence_successor" || len(receipt.Transitions) != 9 ||
+		receipt.Result != "passed_local_evidence_successor" || len(receipt.Transitions) != 15 ||
 		!slices.Equal(receipt.Verification, []string{
 			"go test ./cmd/egressscan -count=1",
 			"go test ./internal/officialegress/... -count=1",
@@ -200,20 +200,6 @@ func auditedSourceSuccessorReachesService(path, priorDigest, currentDigest strin
 func auditedSourceSuccessorNextService(path, from string) []string {
 	var next []string
 	if receipt, err := loadUpstreamV023PostBootstrapSourceSuccessorService(); err == nil {
-		for _, transition := range receipt.Transitions {
-			if transition.Path == path && slices.Contains(transition.PredecessorSHA256s, from) {
-				next = append(next, transition.ToSHA256)
-			}
-		}
-	}
-	if receipt, err := loadUpstreamMergeFrameworkV3SuccessorService(); err == nil {
-		for _, transition := range receipt.Transitions {
-			if transition.Path == path && slices.Contains(transition.PredecessorSHA256s, from) {
-				next = append(next, transition.ToSHA256)
-			}
-		}
-	}
-	if receipt, err := loadUpstreamMergeFrameworkV4SuccessorService(); err == nil {
 		for _, transition := range receipt.Transitions {
 			if transition.Path == path && slices.Contains(transition.PredecessorSHA256s, from) {
 				next = append(next, transition.ToSHA256)

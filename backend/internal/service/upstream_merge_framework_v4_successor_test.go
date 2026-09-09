@@ -173,7 +173,7 @@ func validateUpstreamMergeFrameworkV4SuccessorService(receipt upstreamMergeFrame
 		}
 		current, readErr := os.ReadFile(filepath.Join("../../..", filepath.FromSlash(transition.Path)))
 		if readErr != nil || (upstreamMergeFrameworkV3ServiceDigest(current) != transition.ToSHA256 &&
-			!upstreamV023PostBootstrapSourceSuccessorSupersedesService(
+			!auditedSourceSuccessorReachesService(
 				transition.Path, transition.ToSHA256, upstreamMergeFrameworkV3ServiceDigest(current),
 			)) {
 			return errors.New("上游合并框架 v0.2.3 successor 当前摘要不一致：" + transition.Path)

@@ -173,7 +173,7 @@ func validateUpstreamMergeFrameworkV3SuccessorService(
 				transition.Path, transition.ToSHA256, currentDigest,
 			) && !upstreamV023SourceTransitionDirectSupersedesService(
 			transition.Path, transition.ToSHA256, currentDigest,
-		) && !upstreamV023PostBootstrapSourceSuccessorSupersedesService(
+		) && !auditedSourceSuccessorReachesService(
 			transition.Path, transition.ToSHA256, currentDigest,
 		)) {
 			return errors.New("上游合并框架 v3 successor 当前摘要不一致：" + transition.Path)

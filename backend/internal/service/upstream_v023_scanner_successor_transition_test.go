@@ -156,7 +156,7 @@ func validateUpstreamV023ScannerSuccessorTransitionService(receipt upstreamV023S
 		if readErr != nil || (upstreamMergeFrameworkServiceDigest(current) != transition.ToSHA256 &&
 			!upstreamMergeFrameworkV3SuccessorSupersedesService(
 				transition.Path, transition.ToSHA256, upstreamMergeFrameworkServiceDigest(current),
-			) && !upstreamV023PostBootstrapSourceSuccessorSupersedesService(
+			) && !auditedSourceSuccessorReachesService(
 			transition.Path, transition.ToSHA256, upstreamMergeFrameworkServiceDigest(current),
 		)) {
 			return errors.New("上游 v0.2.3 scanner successor transition 当前摘要不一致：" + transition.Path)
