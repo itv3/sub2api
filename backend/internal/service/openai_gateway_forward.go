@@ -475,8 +475,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && !compatMessagesBridge && !officialOpenAIHTTPEnabled && !nativeDeepSeekResponses {
-		markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
+	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeDeepSeekResponses && !isInboundOpenAIOfficialClient(c) {
+		// 官方 Codex 入站的正文是已冻结的客户端契约；缺少 instructions
+		// 代表客户端明确没有提供它，不能由网关凭空补入，否则 Lite 定型会
+		// 插入额外 developer item 并改变工具续接的原始顺序。第三方 OAuth
+		// 兼容入口仍保留默认 Codex 指令，以满足其上游协议要求。
+		// 合成提示词必须跟随最终发往上游的模型；账号模型映射可能把
+		// 公有模型名转换为另一套 Codex base prompt。
+		synthesizedInstructions := defaultCodexSynthInstructions(upstreamModel)
+		markPatchSet("instructions", synthesizedInstructions)
+		markGeneratedOfficialOpenAIHTTPInstructions(officialEgressBodyContract, synthesizedInstructions)
 	}
 	if billingModel != requestedModel {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", requestedModel, billingModel, account.Name, isCodexCLI)
@@ -586,15 +594,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
-		}
-		if officialOpenAIHTTPEnabled && !compatMessagesBridge && isInstructionsEmpty(decoded) {
-			// 模型映射已在 ensureReqBody 前应用到 requestView；这里用最终
-			// 上游模型生成专属 Codex prompt，并登记为兼容层生成语义，交给
-			// Official Egress Finalizer 按 Lite/非 Lite 画像投影。
-			generatedInstructions := defaultCodexSynthInstructions(upstreamModel)
-			decoded["instructions"] = generatedInstructions
-			markGeneratedOfficialOpenAIHTTPInstructions(officialEgressBodyContract, generatedInstructions)
-			markDecodedModified()
 		}
 		// Responses OAuth 与 Chat 兼容入口保持一致：纯文本 system 可以无损提升后删除，
 		// JSON object 模式仍需在 input 中保留 JSON 指令供上游兼容校验。

@@ -105,7 +105,7 @@ func TestDefaultModelIDsForAnthropicExcludeAntigravityGemini(t *testing.T) {
 	require.NotContains(t, anthropicIDs, "gemini-2.5-flash")
 
 	antigravityIDs := defaultModelIDsForPlatform(service.PlatformAntigravity)
-	require.Contains(t, antigravityIDs, "gemini-2.5-flash")
+	require.Contains(t, antigravityIDs, "gemini-3-flash-agent")
 }
 
 // Scenario: non-OpenAI groups return a Codex manifest instead of a standard model list.
@@ -227,7 +227,8 @@ func TestGatewayCodexModels_CompositeUsesCompleteEffectiveModelList(t *testing.T
 	var got codexModelsResponseForTest
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	want := service.FilterCodexModelIDsForGroup(openai.DefaultModelIDs(), nil)
-	require.ElementsMatch(t, append(want, "grok-4.6"), codexModelSlugsForTest(got.Models))
+	want = append(want, "grok-4.6")
+	require.ElementsMatch(t, want, codexModelSlugsForTest(got.Models))
 }
 
 func TestGatewayModels_UnmappedOpenAIAccountsSupplementMappedModels(t *testing.T) {
@@ -585,7 +586,7 @@ func TestGatewayModels_GeminiGroupFiltersMappedModelsByPlatform(t *testing.T) {
 	require.Equal(t, []string{"gemini-2.5-flash"}, modelIDsForTest(got.Data))
 }
 
-// Scenario: a Composite group with only Anthropic accounts must not inherit Antigravity Gemini defaults.
+// Scenario: a Composite Codex catalog must not fall back across the OpenAI protocol boundary.
 func TestGatewayCodexModels_CompositeAnthropicDoesNotAdvertiseAntigravityDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -609,11 +610,11 @@ func TestGatewayCodexModels_CompositeAnthropicDoesNotAdvertiseAntigravityDefault
 	var got codexModelsResponseForTest
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	slugs := codexModelSlugsForTest(got.Models)
-	require.Contains(t, slugs, "claude-opus-4-6")
+	require.Empty(t, slugs)
 	require.NotContains(t, slugs, "gemini-2.5-flash")
 }
 
-// Scenario: Antigravity retains its own Claude and Gemini defaults inside Composite groups.
+// Scenario: Antigravity is not an OpenAI-protocol source for Composite /v1/models.
 func TestGatewayModels_CompositeAntigravityAdvertisesAntigravityDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -637,8 +638,7 @@ func TestGatewayModels_CompositeAntigravityAdvertisesAntigravityDefaults(t *test
 	var got gatewayModelsResponseForTest
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	ids := modelIDsForTest(got.Data)
-	require.Contains(t, ids, "claude-opus-4-6")
-	require.Contains(t, ids, "gemini-2.5-flash")
+	require.Empty(t, ids)
 }
 
 func TestGatewayModels_CustomModelsListDisabledKeepsOriginalModels(t *testing.T) {
@@ -948,7 +948,7 @@ func TestGatewayModels_CompositeDoesNotFallbackAcrossProtocols(t *testing.T) {
 		Group: &service.Group{
 			ID:       groupID,
 			Platform: service.PlatformComposite,
-			ModelsListConfig: service.GroupModelsListConfig{
+			ModelAllowlist: service.GroupModelAllowlist{
 				Enabled: true,
 				Models:  []string{"claude-only"},
 			},

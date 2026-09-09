@@ -811,33 +811,6 @@ func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	return false
 }
 
-// buildOpenAIWSReplayInputSequenceFromItems 基于已解析的当前 turn input 构建
-// replay 序列。返回序列的正文与 previousFullInput/currentItems 共享所有权
-// （见 combineOpenAIWSReplayItems 上方的所有权不变式），头数组可能直接转移自
-// currentItems。
-func buildOpenAIWSReplayInputSequenceFromItems(
-	previousFullInput []json.RawMessage,
-	previousFullInputExists bool,
-	currentItems []json.RawMessage,
-	currentExists bool,
-	hasPreviousResponseID bool,
-) ([]json.RawMessage, bool) {
-	if !hasPreviousResponseID || !previousFullInputExists {
-		return currentItems, currentExists
-	}
-	previousFullInput = sanitizeOpenAIWSHistoricalReplayToolCalls(previousFullInput, currentItems)
-	if !currentExists || len(currentItems) == 0 {
-		return previousFullInput, true
-	}
-	if openAIWSRawItemsHasPrefix(currentItems, previousFullInput) {
-		return currentItems, true
-	}
-	merged := make([]json.RawMessage, 0, len(previousFullInput)+len(currentItems))
-	merged = append(merged, previousFullInput...)
-	merged = append(merged, currentItems...)
-	return merged, true
-}
-
 func buildOpenAIWSReplayInputSequence(
 	previousFullInput []json.RawMessage,
 	previousFullInputExists bool,

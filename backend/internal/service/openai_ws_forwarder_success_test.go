@@ -397,7 +397,9 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersPreservesCodexIdentity(t *test
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
-	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
+	// 该用例验证网关选择 WSv2 后的工具 ID 清洗；官方 Codex HTTP 入站
+	// 会按协议契约固定走 HTTP fallback，因此这里使用普通兼容客户端身份。
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
 	c.Request.Header.Set("X-Codex-Window-ID", "window-ws")
 	c.Request.Header.Set("X-Codex-Installation-ID", "installation-ws")
 	c.Request.Header.Set("session-id", "session-ws")
@@ -834,7 +836,9 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthSanitizesInvalidNativeToolItemID
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
+	// 官方 Codex HTTP 入站固定使用 HTTP fallback；本用例验证普通兼容客户端
+	// 选择 WSv2 后的工具 ID 清洗，因此使用非官方客户端身份。
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
 	groupID := int64(5662)
 	c.Set("api_key", &APIKey{GroupID: &groupID})
 
@@ -873,11 +877,15 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthSanitizesInvalidNativeToolItemID
 		Status:      StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
-		Credentials: map[string]any{"access_token": "test-oauth-token"},
+		Credentials: map[string]any{"access_token": "test-oauth-token", "chatgpt_account_id": "chatgpt-test-account-5662"},
 		Extra: map[string]any{
 			"responses_websockets_v2_enabled": true,
 		},
 	}
+	svc.openaiModelCapabilities.replaceFromManifest(
+		account.ID,
+		[]byte(`{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`),
+	)
 
 	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"instructions":"Continue the task.","input":[{"type":"custom_tool_call","id":"fc_hotfix_probe","call_id":"fc_hotfix","name":"exec","input":"pwd","status":"completed"},{"type":"custom_tool_call_output","call_id":"fc_hotfix","output":"done"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)

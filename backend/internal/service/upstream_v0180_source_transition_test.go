@@ -88,6 +88,9 @@ func upstreamV0180SourceTransitionSupersedesService(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
 		return true
 	}

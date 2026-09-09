@@ -38,6 +38,7 @@ func (s *GatewayService) GetCompositeProtocolModelSources(ctx context.Context, g
 
 	modelSets := make(map[string]map[string]struct{})
 	forceDefaultPlatforms := make(map[string]struct{})
+	protocolAccounts := make(map[string][]Account)
 	for i := range accounts {
 		account := &accounts[i]
 		if !accountSupportsCompositeModelListProtocol(account, protocol) {
@@ -51,6 +52,7 @@ func (s *GatewayService) GetCompositeProtocolModelSources(ctx context.Context, g
 		if _, ok := modelSets[platform]; !ok {
 			modelSets[platform] = make(map[string]struct{})
 		}
+		protocolAccounts[platform] = append(protocolAccounts[platform], *account)
 
 		// OpenAI 自动透传不受 model_mapping 白名单约束；与现有
 		// GetAvailableModels 行为一致，存在透传账号时由调用方回退默认模型。
@@ -76,6 +78,12 @@ func (s *GatewayService) GetCompositeProtocolModelSources(ctx context.Context, g
 		models := make([]string, 0, len(modelSet))
 		for model := range modelSet {
 			models = append(models, model)
+		}
+		if platform == PlatformOpenAI {
+			// 与普通 OpenAI 模型目录保持一致：同一 Composite 组中只要有
+			// 未配置映射的 OpenAI 账号，就不能因另一账号的部分映射而
+			// 隐藏默认模型。
+			models = supplementUnmappedOpenAIModels(protocolAccounts[platform], models)
 		}
 		sort.Strings(models)
 		sources[platform] = models

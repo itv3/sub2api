@@ -165,7 +165,13 @@ func validateUpstreamMergeFrameworkV3Successor(
 		current, readErr := os.ReadFile(filepath.Join(
 			"../../..", filepath.FromSlash(transition.Path),
 		))
-		if readErr != nil || upstreamMergeFrameworkV3Digest(current) != transition.ToSHA256 {
+		currentDigest := upstreamMergeFrameworkV3Digest(current)
+		if readErr != nil || (currentDigest != transition.ToSHA256 &&
+			!upstreamMergeFrameworkV4SuccessorSupersedes(
+				transition.Path, transition.ToSHA256, currentDigest,
+			) && !upstreamV023SourceTransitionDirectSupersedes(
+			transition.Path, transition.ToSHA256, currentDigest,
+		)) {
 			return errors.New("上游合并框架 v3 successor 当前摘要不一致：" + transition.Path)
 		}
 		paths = append(paths, transition.Path)
@@ -193,9 +199,15 @@ func upstreamMergeFrameworkV3SuccessorSupersedes(
 		return false
 	}
 	for _, transition := range receipt.Transitions {
-		if transition.Path == path && transition.ToSHA256 == currentDigest &&
-			slices.Contains(transition.PredecessorSHA256s, priorDigest) {
-			return true
+		if transition.Path == path && slices.Contains(transition.PredecessorSHA256s, priorDigest) {
+			if transition.ToSHA256 == currentDigest ||
+				upstreamMergeFrameworkV4SuccessorSupersedes(
+					path, transition.ToSHA256, currentDigest,
+				) || upstreamV023SourceTransitionDirectSupersedes(
+				path, transition.ToSHA256, currentDigest,
+			) {
+				return true
+			}
 		}
 	}
 	return false

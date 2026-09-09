@@ -725,6 +725,7 @@ func TestOpenAIOfficialEgressWSBusinessGuardAcceptsCompatibilityItemMetadataClea
 	candidate, changed, err := normalizeOpenAIResponsesWebSocketCompatibilityBody(
 		original,
 		&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		false,
 	)
 	require.NoError(t, err)
 	require.True(t, changed)
@@ -818,6 +819,7 @@ func TestOpenAIOfficialEgressWSBusinessGuardRejectsOrphanToolOutputCleanup(t *te
 	candidate, changed, err := normalizeOpenAIResponsesWebSocketCompatibilityBody(
 		original,
 		&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		false,
 	)
 	require.NoError(t, err)
 	require.True(t, changed)

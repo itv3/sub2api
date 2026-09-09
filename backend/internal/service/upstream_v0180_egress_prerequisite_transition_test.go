@@ -159,6 +159,9 @@ func upstreamV0180EgressPrerequisiteTransitionSupersedesService(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	if codex01491TerminalStateSupersedesService(
 		path, priorDigest, currentDigest,
 	) {

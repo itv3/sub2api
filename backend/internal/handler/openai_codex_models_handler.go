@@ -33,7 +33,10 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 
-	ifNoneMatch := c.GetHeader("If-None-Match")
+	// 客户端 ETag 必须在完成分组本地过滤、映射和元数据补全后再比较。
+	// 不能把它传入按账号共享的上游缓存，否则同一账号在白名单切换后会
+	// 提前得到 304，导致客户端继续使用旧的未过滤目录。
+	clientETag := c.GetHeader("If-None-Match")
 	// 固定账号分支：开启后只用选定账号拉取 manifest，不经过调度器；
 	// 全部不可用/全部失败时按 FallbackToScheduler 决定回退调度器或返回错误。
 	if apiKey.Group.Platform == service.PlatformOpenAI &&
@@ -59,14 +62,14 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		} else {
 			// 让 ops 错误日志携带实际拉取成功的首个固定账号。
 			setOpsSelectedAccount(c, pinnedAccount.ID, pinnedAccount.Platform)
-			if err := h.gatewayService.MergeGroupConfiguredCodexModels(c.Request.Context(), apiKey.Group, pinnedManifest, ifNoneMatch); err != nil {
+			if err := h.gatewayService.MergeGroupConfiguredCodexModels(c.Request.Context(), apiKey.Group, pinnedManifest, ""); err != nil {
 				h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
 				return
 			}
 			if c.Request.Context().Err() != nil {
 				return
 			}
-			writeOpenAIModelsResponse(c, pinnedManifest)
+			writeCodexModelsResponseForClient(c, pinnedManifest, clientETag)
 			return
 		}
 	}
@@ -75,7 +78,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		configuredManifest, configured, err := h.gatewayService.BuildGroupConfiguredCodexModelsManifest(
 			c.Request.Context(),
 			apiKey.Group,
-			ifNoneMatch,
+			"",
 		)
 		if err != nil {
 			if c.Request.Context().Err() != nil {
@@ -85,7 +88,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			return
 		}
 		if configured {
-			writeOpenAIModelsResponse(c, configuredManifest)
+			writeCodexModelsResponseForClient(c, configuredManifest, clientETag)
 			return
 		}
 	}
@@ -114,7 +117,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		// 让 ops 错误日志携带实际选中的上游账号，便于定位失效账号（#4544）。
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"), c)
+		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), "", c)
 		if err != nil {
 			if c.Request.Context().Err() != nil {
 				return
@@ -136,7 +139,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to apply model mappings")
 			return
 		}
-		if err := h.gatewayService.MergeGroupConfiguredCodexModels(c.Request.Context(), apiKey.Group, manifest, ifNoneMatch); err != nil {
+		if err := h.gatewayService.MergeGroupConfiguredCodexModels(c.Request.Context(), apiKey.Group, manifest, ""); err != nil {
 			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
 			return
 		}
@@ -144,7 +147,28 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			return
 		}
 
-		writeOpenAIModelsResponse(c, manifest)
+		writeCodexModelsResponseForClient(c, manifest, clientETag)
 		return
 	}
+}
+
+// writeCodexModelsResponseForClient 在所有本地目录变换完成后计算并比较 ETag。
+// ETag 绑定最终响应体，而不是共享上游缓存体或未过滤的上游响应。
+func writeCodexModelsResponseForClient(c *gin.Context, manifest *service.OpenAIModelsResponse, clientETag string) {
+	if manifest == nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if len(manifest.Body) > 0 {
+		manifest.ETag = service.CodexModelsManifestETag(manifest.Body)
+	}
+	if service.CodexModelsManifestETagMatches(clientETag, manifest.ETag) {
+		if manifest.ETag != "" {
+			c.Header("ETag", manifest.ETag)
+		}
+		c.Status(http.StatusNotModified)
+		c.Writer.WriteHeaderNow()
+		return
+	}
+	writeOpenAIModelsResponse(c, manifest)
 }

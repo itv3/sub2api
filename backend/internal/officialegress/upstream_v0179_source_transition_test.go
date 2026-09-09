@@ -138,6 +138,9 @@ func upstreamV0179SourceTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
 	if upstreamV0180SourceTransitionSupersedes(path, priorDigest, currentDigest) {
 		return true
 	}

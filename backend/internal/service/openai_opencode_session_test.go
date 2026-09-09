@@ -126,7 +126,7 @@ func TestOpenCodeSessionForwardedByResponsesBuildersAfterAccountOverride(t *test
 		{
 			name: "normal responses",
 			build: func(c *gin.Context) (*http.Request, error) {
-				return svc.buildUpstreamRequest(context.Background(), c, account, body, "token", false, "", false)
+				return svc.buildUpstreamRequest(context.Background(), c, account, body, "token", openAIUpstreamRequestPlan{})
 			},
 		},
 		{
@@ -155,7 +155,7 @@ func TestOpenCodeSessionMissingCallerValueKeepsExistingOverrideBehavior(t *testi
 
 	req, err := svc.buildUpstreamRequest(
 		context.Background(), c, account,
-		[]byte(`{"model":"gpt-5","input":"hello"}`), "token", false, "", false,
+		[]byte(`{"model":"gpt-5","input":"hello"}`), "token", openAIUpstreamRequestPlan{},
 	)
 	require.NoError(t, err)
 	require.Equal(t, "fixed-account-value", getHeaderRaw(req.Header, "x-opencode-session"))
@@ -215,7 +215,7 @@ func TestOpenCodeSessionIsNotForwardedToOtherUpstreams(t *testing.T) {
 				Credentials: map[string]any{"base_url": baseURL},
 			}
 			c := newOpenCodeSessionTestContext(t, "private-conversation")
-			req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", false, "", false)
+			req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", openAIUpstreamRequestPlan{})
 			require.NoError(t, err)
 			require.Empty(t, req.Header.Get(openCodeSessionHeader))
 		})

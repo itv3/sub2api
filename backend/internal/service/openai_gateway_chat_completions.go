@@ -60,6 +60,21 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	// 官方 OAuth Chat Completions 兼容入口在公开业务边界登记 Sink；递归
+	// 重试会复用同一 context，避免重复创建 attempt。
+	if account != nil && account.IsOpenAIOAuth() {
+		if officialEgressEnabled, _, profileErr := resolveOfficialEgressAccountProfile(account); profileErr != nil {
+			return nil, profileErr
+		} else if officialEgressEnabled {
+			if identity, ok := officialegress.AttemptIdentityFromContext(ctx); !ok || identity.SinkID != officialEgressSinkResponsesChatCompletions {
+				boundCtx, bindErr := bindOfficialEgressSink(ctx, officialEgressSinkResponsesChatCompletions)
+				if bindErr != nil {
+					return nil, fmt.Errorf("bind Chat Completions compatibility official egress sink: %w", bindErr)
+				}
+				ctx = boundCtx
+			}
+		}
+	}
 	return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
 }
 
@@ -364,9 +379,11 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 
 	// 5. Get access token
 	if officialEgressEnabled && account.IsOpenAIOAuth() {
-		ctx, err = bindOfficialEgressSink(ctx, officialEgressSinkResponsesChatCompletions)
-		if err != nil {
-			return nil, fmt.Errorf("bind Chat Completions compatibility official egress sink: %w", err)
+		if identity, ok := officialegress.AttemptIdentityFromContext(ctx); !ok || identity.SinkID != officialEgressSinkResponsesChatCompletions {
+			ctx, err = bindOfficialEgressSink(ctx, officialEgressSinkResponsesChatCompletions)
+			if err != nil {
+				return nil, fmt.Errorf("bind Chat Completions compatibility official egress sink: %w", err)
+			}
 		}
 	}
 	token, _, err := s.GetAccessToken(ctx, account)

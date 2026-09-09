@@ -189,6 +189,8 @@ func assertClaudeFWGCountTokensTransitionTarget(
 		transition.Path, transition.ToSHA256, got,
 	) && !claudeFWGDesktopTitleTransitionSupersedes(
 		transition.Path, transition.ToSHA256, got,
+	) && !upstreamV023SourceTransitionSupersedes(
+		transition.Path, transition.ToSHA256, got,
 	) {
 		t.Fatalf(
 			"Claude FW-G count_tokens transition 漂移：path=%s got=%s want=%s",

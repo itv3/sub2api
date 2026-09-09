@@ -177,6 +177,9 @@ func upstreamV0180EgressPrerequisiteTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamV0180EgressPrerequisiteTransition()
 	if err != nil {
 		return false

@@ -97,7 +97,7 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 // 大小上限与 OAuth 路径的单图下载一致，且前 512 字节须嗅探为 png/jpeg/webp/gif。
 func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, account *Account, rawURL string) (string, error) {
 	if strings.HasPrefix(strings.ToLower(rawURL), "data:") {
-		if encoded := normalizeOpenAIImageBase64(rawURL); encoded != "" {
+		if encoded := decodeImageDataURLBase64(rawURL); encoded != "" {
 			return encoded, nil
 		}
 		return "", errors.New("data url payload is not valid base64")
@@ -131,12 +131,12 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, ac
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("download image: unexpected status %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, openAIImageMaxDownloadBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, openAIImagesDownloadLimitBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("read image body: %w", err)
 	}
-	if int64(len(data)) > openAIImageMaxDownloadBytes {
-		return "", fmt.Errorf("downloaded image exceeds %d bytes", openAIImageMaxDownloadBytes)
+	if int64(len(data)) > openAIImagesDownloadLimitBytes {
+		return "", fmt.Errorf("downloaded image exceeds %d bytes", openAIImagesDownloadLimitBytes)
 	}
 	if len(data) == 0 {
 		return "", errors.New("download image: empty body")

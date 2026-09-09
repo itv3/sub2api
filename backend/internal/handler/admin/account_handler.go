@@ -2862,20 +2862,21 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// OpenAI 账号优先使用按账号探测到的上游模型目录；探测失败时再回落到
+	// 本地映射目录，保持管理端在上游暂时不可用时仍可展示模型。
+	if account.IsOpenAI() && h.accountTestService != nil {
+		if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
+			response.Success(c, models)
+			return
+		}
+	}
+
 	response.Success(c, h.availableModelsForAccount(account))
 }
 
 func (h *AccountHandler) availableModelsForAccount(account *service.Account) any {
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
-		// Prefer the shared, account-keyed upstream catalog. If discovery fails,
-		// retain the legacy local catalog below so the test dialog remains usable.
-		if h.accountTestService != nil {
-			if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
-				response.Success(c, models)
-				return
-			}
-		}
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			return openai.DefaultModels

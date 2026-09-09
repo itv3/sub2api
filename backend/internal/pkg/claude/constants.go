@@ -83,7 +83,7 @@ const DefaultCacheControlTTL = "5m"
 // DefaultHeaders["User-Agent"] 的版本严格一致。Plus 的 OAuth/API Key 官方画像
 // 不读取或修改该值，而是由私有 Official Client Profile Registry 按认证、端点和
 // 传输场景解析。
-const CLICurrentVersion = "2.1.220"
+const CLICurrentVersion = "2.1.258"
 
 // FullClaudeCodeMimicryBetas 返回最"像"真实 Claude Code CLI 的完整 beta 列表，
 // 用于 OAuth 账号伪装成 Claude Code 时使用。

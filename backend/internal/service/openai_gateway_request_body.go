@@ -76,8 +76,8 @@ func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
 	return baseURL == "" || isOfficialOpenAIModelsBaseURL(baseURL)
 }
 
-// Codex 0.149.0 needs a single advertised effort to directly select a visible
-// non-reasoning model. Treat that catalog-only "none" value as omission for
+// 较旧 Codex 客户端需要单一 advertised effort 才能直接选择可见的
+// non-reasoning model。Treat that catalog-only "none" value as omission for
 // compatible upstreams, while preserving official OpenAI request semantics.
 func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body []byte) ([]byte, error) {
 	if len(body) == 0 || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {

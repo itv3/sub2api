@@ -427,32 +427,6 @@ func openAIResponsesLiteAlreadyNormalized(index *officialJSONRawIndex) bool {
 	return true
 }
 
-// openAIResponsesLiteHasToolsInIndex 与 openAIResponsesLiteHasTools 在索引上逐条对应。
-func openAIResponsesLiteHasToolsInIndex(index *officialJSONRawIndex, tools int32) bool {
-	if tools >= 0 && index.nodes[tools].kind == officialJSONRawKindArray && len(index.nodes[tools].items) > 0 {
-		return true
-	}
-	input := index.memberNode(index.root, "input")
-	if input < 0 || index.nodes[input].kind != officialJSONRawKindArray {
-		return false
-	}
-	for _, item := range index.nodes[input].items {
-		if index.nodes[item].kind != officialJSONRawKindObject {
-			continue
-		}
-		typeNode := index.memberNode(item, "type")
-		if typeNode < 0 || index.nodes[typeNode].kind != officialJSONRawKindString ||
-			strings.TrimSpace(index.decodeString(typeNode)) != "additional_tools" {
-			continue
-		}
-		itemTools := index.memberNode(item, "tools")
-		if itemTools >= 0 && index.nodes[itemTools].kind == officialJSONRawKindArray && len(index.nodes[itemTools].items) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {

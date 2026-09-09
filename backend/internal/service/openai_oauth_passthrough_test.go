@@ -1103,7 +1103,9 @@ func TestOpenAIGatewayService_Forward_MissingInstructionsUsesMappedModelTemplate
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0")
+	// 该用例验证第三方 OAuth 兼容入口在缺少 instructions 时按最终映射模型补齐模板；
+	// 官方 Codex 入站必须保持原始正文，不应在网关侧合成 instructions。
+	c.Request.Header.Set("User-Agent", "third-party-responses/1.0")
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,

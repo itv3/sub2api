@@ -34,7 +34,7 @@ const (
 	openAIImagesGenerationsURL = "https://api.openai.com/v1/images/generations"
 	openAIImagesEditsURL       = "https://api.openai.com/v1/images/edits"
 
-	openAIImageMaxDownloadBytes            = 20 << 20 // 单张图片下载上限 20MB
+	openAIImagesDownloadLimitBytes         = 20 << 20 // 单张图片下载上限 20MB
 	openAIImageMaxUploadPartSize           = 20 << 20 // 20MB per multipart upload part
 	openAIImagesResponsesMainModel         = "gpt-5.4-mini"
 	openAIImagesVerbatimPromptInstructions = "When invoking the image_generation tool, use the user's image prompt verbatim. Do not rewrite, expand, summarize, embellish, translate, normalize punctuation, or add or remove visual details or constraints. Preserve the original language, wording, capitalization, quotes, and punctuation exactly."
@@ -1264,9 +1264,9 @@ func newOpenAIImageStatusError(resp *req.Response, fallback string, errorBodyRea
 	}
 }
 
-// normalizeOpenAIImageBase64 提取并校验图片 base64 载荷，兼容 data URL 与
+// decodeImageDataURLBase64 提取并校验图片 base64 载荷，兼容 data URL 与
 // 不带填充的标准载荷。返回值为空表示输入不是有效 base64。
-func normalizeOpenAIImageBase64(raw string) string {
+func decodeImageDataURLBase64(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""

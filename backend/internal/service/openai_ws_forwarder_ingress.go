@@ -2277,9 +2277,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID
-		// sendAndRelay 返回后出站正文不再修改，直接转移所有权，避免为完整 input
-		// 再保留一份等大的正文副本。
-		lastTurnPayload = outboundPayload
 		lastTurnReplayState = currentTurnReplayState
 		if result.wsReplayInputExists {
 			var appendErr error

@@ -201,7 +201,7 @@ func (s *AccountTestService) ProxyKeeperAnthropicAccount(ctx context.Context, ac
 			return nil, err
 		}
 		copyProxyRequestHeaders(req.Header, in.Header)
-		setAnthropicAPIKeyAuthHeader(req.Header, account, apiKey)
+		setAnthropicAPIKeyAuthHeader(req.Header, account, apiKey, baseURL)
 		if req.Header.Get("content-type") == "" {
 			req.Header.Set("content-type", "application/json")
 		}

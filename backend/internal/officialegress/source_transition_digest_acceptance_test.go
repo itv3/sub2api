@@ -10,5 +10,6 @@ func codex0151CurrentSourceDigestAccepted(path, expectedDigest, currentDigest st
 		) ||
 		codex0151WorktreeSuccessorEdge(path, expectedDigest, currentDigest) ||
 		historicalSourceDriftSupersedes(path, expectedDigest, currentDigest) ||
-		upstreamV023ScannerSuccessorTransitionSupersedes(path, expectedDigest, currentDigest)
+		upstreamV023ScannerSuccessorTransitionSupersedes(path, expectedDigest, currentDigest) ||
+		upstreamV023SourceTransitionSupersedes(path, expectedDigest, currentDigest)
 }

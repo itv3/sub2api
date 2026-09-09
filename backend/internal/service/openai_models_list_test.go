@@ -59,7 +59,7 @@ func TestFetchOpenAIModelsListUsesStandardRequestAndIsolatesCodexCache(t *testin
 
 func TestFetchOpenAIModelsListOAuthSharesManifestCache(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"special-oauth-model"},{"slug":"gpt-image-1"}]}`)
-	s := &OpenAIGatewayService{}
+	s := newCodexModelsLocalTestService()
 	account := newCodexModelsTestAccount()
 	response, err := s.FetchOpenAIModelsList(context.Background(), account)
 	require.NoError(t, err)
@@ -234,7 +234,10 @@ func TestFetchOpenAIModelsListEmptyAndMalformedResponses(t *testing.T) {
 func TestPinnedOpenAIModelsListMixedAccountsShareColdCacheAcrossGroups(t *testing.T) {
 	_, oauthCalls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"shared-model"},{"slug":"oauth-special"}]}`)
 	var apiCalls atomic.Int32
-	s := newCodexModelsAPIKeyTestService(&codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	s := newCodexModelsAPIKeyTestService(&codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+		if accountID == 1 {
+			return http.DefaultClient.Do(req)
+		}
 		apiCalls.Add(1)
 		return ordinaryModelsUpstreamResponse(`{"data":[{"id":"shared-model","owned_by":"api-provider"},{"id":"api-special"}]}`), nil
 	}})
@@ -296,7 +299,8 @@ func TestFetchOpenAIModelsListResolvesShadowOAuthCredentials(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"parent-model"}]}`)
 	parent := newCodexModelsTestAccount()
 	shadow := &Account{ID: 9, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ParentAccountID: &parent.ID}
-	s := &OpenAIGatewayService{accountRepo: newStubCredRepo(parent)}
+	s := newCodexModelsLocalTestService()
+	s.accountRepo = newStubCredRepo(parent)
 	response, err := s.FetchOpenAIModelsList(context.Background(), shadow)
 	require.NoError(t, err)
 	require.Contains(t, string(response.Body), `"id":"parent-model"`)

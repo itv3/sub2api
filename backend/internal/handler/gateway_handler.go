@@ -1267,19 +1267,13 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 		platform = group.Platform
 	}
 	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(ctx, groupID)
-		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
+		availableModels := h.compositeAvailableModels(ctx, groupID, service.CompositeModelListProtocolOpenAI)
 		if group.ModelAllowlistEnabled() {
-			source := availableModels
-			if len(source) == 0 {
-				source = fallbackModels
-			}
-			return group.ModelAllowlist.FilterForListing(source)
+			return group.ModelAllowlist.FilterForListing(availableModels)
 		}
-		if len(availableModels) > 0 {
-			return availableModels
-		}
-		return fallbackModels
+		// Composite Codex 清单属于 OpenAI 协议；没有对应协议账号时返回空目录，
+		// 不能回退到包含 Anthropic/Gemini/Antigravity 的全协议默认目录。
+		return availableModels
 	}
 
 	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)

@@ -48,7 +48,9 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 
 	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
 	if forcePlatform == service.PlatformAntigravity {
-		c.JSON(http.StatusOK, antigravity.OfficialGeminiModelsList())
+		response := antigravity.OfficialGeminiModelsList()
+		response.Models = filterAntigravityGeminiModelsByAllowlist(response.Models, apiKey)
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
@@ -58,7 +60,9 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		hasAntigravity, _ := h.geminiCompatService.HasAntigravityAccounts(c.Request.Context(), apiKey.GroupID)
 		if hasAntigravity {
 			// 普通 Gemini 入口在此场景下实际承载 Antigravity 能力，需保持官方 8 模型口径一致。
-			c.JSON(http.StatusOK, antigravity.OfficialGeminiModelsList())
+			response := antigravity.OfficialGeminiModelsList()
+			response.Models = filterAntigravityGeminiModelsByAllowlist(response.Models, apiKey)
+			c.JSON(http.StatusOK, response)
 			return
 		}
 		markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -72,10 +76,45 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 	if shouldFallbackGeminiModels(res) {
-		c.JSON(http.StatusOK, gemini.FallbackModelsList())
+		response := gemini.FallbackModelsList()
+		response.Models = filterGeminiModelsByAllowlist(response.Models, apiKey)
+		c.JSON(http.StatusOK, response)
 		return
 	}
+	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
+		if filtered, dropped, ok := filterUpstreamGeminiModelsBody(res.Body, apiKey.Group.ModelAllowlist); ok && dropped {
+			res.Body = filtered
+		}
+	}
 	writeUpstreamResponse(c, res)
+}
+
+// filterGeminiModelsByAllowlist 过滤 Gemini 原生静态目录，同时保留模型元数据。
+func filterGeminiModelsByAllowlist(models []gemini.Model, apiKey *service.APIKey) []gemini.Model {
+	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
+		return models
+	}
+	filtered := make([]gemini.Model, 0, len(models))
+	for _, model := range models {
+		if apiKey.Group.ModelAllowlist.Allows(model.Name) {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
+}
+
+// filterAntigravityGeminiModelsByAllowlist 过滤 Antigravity 的 Gemini 目录。
+func filterAntigravityGeminiModelsByAllowlist(models []antigravity.GeminiModel, apiKey *service.APIKey) []antigravity.GeminiModel {
+	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
+		return models
+	}
+	filtered := make([]antigravity.GeminiModel, 0, len(models))
+	for _, model := range models {
+		if apiKey.Group.ModelAllowlist.Allows(model.Name) {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
 }
 
 // GeminiV1BetaGetModel proxies:

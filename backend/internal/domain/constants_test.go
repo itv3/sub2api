@@ -50,16 +50,16 @@ func TestAntigravityCompatibilityModelMapping_KeepsHistoricalAliases(t *testing.
 	}
 }
 
-func TestDefaultAntigravityModelMapping_PreservesExplicitSonnet45AndMigratesLegacyAliases(t *testing.T) {
+func TestAntigravityCompatibilityModelMapping_MigratesLegacySonnet45Aliases(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"claude-sonnet-4-5":          "claude-sonnet-4-5",
+		"claude-sonnet-4-5":          "claude-sonnet-4-6",
 		"claude-sonnet-4-5-thinking": "claude-sonnet-4-6",
 		"claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
 	}
 	for model, want := range cases {
-		if got := DefaultAntigravityModelMapping[model]; got != want {
+		if got := AntigravityCompatibilityModelMapping[model]; got != want {
 			t.Fatalf("expected model %q to map to %q, got %q", model, want, got)
 		}
 	}

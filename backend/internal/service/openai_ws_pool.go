@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	openAIWSUpstreamConnMaxAge     = 60 * time.Minute
-	openAIWSConnRetireMargin       = 5 * time.Minute
-	openAIWSConnMaxAge             = openAIWSUpstreamConnMaxAge - openAIWSConnRetireMargin
+	openAIWSUpstreamConnMaxAge  = 60 * time.Minute
+	openAIWSConnRetireMargin    = 5 * time.Minute
+	openAIWSConnMaxAge          = openAIWSUpstreamConnMaxAge - openAIWSConnRetireMargin
 	openAIWSConnHealthCheckIdle = 90 * time.Second
 	// coder/websocket cannot consume pong frames without a reader. Recycle
 	// unsupported idle sockets before the upstream keepalive window expires.

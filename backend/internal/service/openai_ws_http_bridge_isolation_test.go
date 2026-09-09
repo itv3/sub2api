@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -66,8 +67,21 @@ func (u *httpBridgeIsolationUpstream) Do(req *http.Request, _ string, _ int64, _
 		return nil, err
 	}
 	_ = req.Body.Close()
-	input := gjson.GetBytes(body, "input")
+	decodedBody := body
+	if strings.EqualFold(strings.TrimSpace(req.Header.Get("Content-Encoding")), "zstd") {
+		decoder, decodeErr := zstd.NewReader(nil)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("create zstd decoder: %w", decodeErr)
+		}
+		decodedBody, decodeErr = decoder.DecodeAll(body, nil)
+		decoder.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode zstd bridge body: %w", decodeErr)
+		}
+	}
+	input := gjson.GetBytes(decodedBody, "input")
 	var texts []string
+	continuation := false
 	if input.Type == gjson.String {
 		texts = append(texts, input.String())
 	} else {
@@ -81,6 +95,7 @@ func (u *httpBridgeIsolationUpstream) Do(req *http.Request, _ string, _ int64, _
 				continue
 			}
 			if item.Get("type").String() == "function_call_output" {
+				continuation = true
 				texts = append(texts, item.Get("output").String())
 				continue
 			}
@@ -105,7 +120,7 @@ func (u *httpBridgeIsolationUpstream) Do(req *http.Request, _ string, _ int64, _
 
 	id := texts[0]
 	turn := 1
-	if input.IsArray() {
+	if continuation {
 		turn = 2
 	}
 	responseID := fmt.Sprintf("resp_%s_%d", id, turn)
@@ -133,6 +148,7 @@ func (u *httpBridgeIsolationUpstream) DoWithTLS(req *http.Request, proxyURL stri
 
 func TestOpenAIWSHTTPBridgeSessionIsolationAcrossSameSessionHash(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	configureObserveGuardForLocalHTTPTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cfg := &config.Config{}
@@ -147,13 +163,18 @@ func TestOpenAIWSHTTPBridgeSessionIsolationAcrossSameSessionHash(t *testing.T) {
 	stateStore := NewOpenAIWSStateStore(nil)
 	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), openaiWSStateStore: stateStore}
 	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-		Credentials: map[string]any{"access_token": "test-token"},
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "account-ws-bridge"},
 		Extra:       map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModeHTTPBridge},
 		Concurrency: 2, Status: StatusActive, Schedulable: true}
+	svc.openaiModelCapabilities.replaceFromManifest(
+		account.ID,
+		[]byte(`{"models":[{"slug":"gpt-5","use_responses_lite":false}]}`),
+	)
 	groupID := int64(7)
 	newContext := func(r *http.Request) *gin.Context {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = r.Clone(ctx)
+		c.Request.URL.Path = "/v1/responses"
 		c.Request.Header.Set("session-id", "shared-session")
 		c.Set("api_key", &APIKey{ID: 11, GroupID: &groupID})
 		return c

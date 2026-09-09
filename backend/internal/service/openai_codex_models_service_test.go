@@ -1774,8 +1774,12 @@ func TestFetchCodexModelsManifestReusesInvocationWithinIngressOnly(t *testing.T)
 			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
 		}, nil
 	}}
-	service := &OpenAIGatewayService{httpUpstream: upstream}
 	account := newCodexModelsTestAccount()
+	// 该用例只验证入站上下文的 invocation 生命周期。OAuth manifest 账号级
+	// 缓存由独立测试覆盖；每次使用冷 service，避免缓存命中跳过实际出站调用。
+	newService := func() *OpenAIGatewayService {
+		return &OpenAIGatewayService{httpUpstream: upstream}
+	}
 
 	newIngress := func() *gin.Context {
 		recorder := httptest.NewRecorder()
@@ -1784,12 +1788,15 @@ func TestFetchCodexModelsManifestReusesInvocationWithinIngressOnly(t *testing.T)
 		return c
 	}
 	firstIngress := newIngress()
+	service := newService()
 	_, err := service.FetchCodexModelsManifest(firstIngress.Request.Context(), account, "", "", firstIngress)
 	require.NoError(t, err)
+	service = newService()
 	_, err = service.FetchCodexModelsManifest(firstIngress.Request.Context(), account, "", "", firstIngress)
 	require.NoError(t, err)
 
 	secondIngress := newIngress()
+	service = newService()
 	_, err = service.FetchCodexModelsManifest(secondIngress.Request.Context(), account, "", "", secondIngress)
 	require.NoError(t, err)
 
@@ -3768,12 +3775,11 @@ func TestFetchCodexModelsManifestOAuthSharedAcrossGroupsWithIndependentFiltering
 	chatgptCodexModelsURL = server.URL
 	t.Cleanup(func() { chatgptCodexModelsURL = original })
 
-	s := &OpenAIGatewayService{
-		accountRepo: codexModelsVisibilityAccountRepo{
-			byGroup: map[int64][]Account{
-				91: {},
-				92: {},
-			},
+	s := newCodexModelsLocalTestService()
+	s.accountRepo = codexModelsVisibilityAccountRepo{
+		byGroup: map[int64][]Account{
+			91: {},
+			92: {},
 		},
 	}
 	account := newCodexModelsTestAccount()

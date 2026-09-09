@@ -154,6 +154,9 @@ func upstreamMergeFrameworkTransitionSupersedes(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedes(path, priorDigest, currentDigest) {
+		return true
+	}
 	if codex0151CurrentSourceDigestAccepted(path, priorDigest, currentDigest) {
 		return true
 	}

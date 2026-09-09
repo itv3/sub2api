@@ -29,13 +29,17 @@ func TestChangeset3RuntimeSinksEnterExecutorWithoutLegacyFinalizers(t *testing.T
 		{officialegress.SinkCodexFilesRegister, "official_egress_codex_files.go", "executeJSON", "newOfficialCodexHTTPInvocation"},
 		{officialegress.SinkCodexImagesOAuthTest, "account_test_service.go", "testOpenAIImageOAuth", "newOfficialCodexHTTPInvocation"},
 		{officialegress.SinkCodexImagesResponses, "openai_images_responses.go", "forwardOpenAIImagesOAuth", "newOfficialCodexHTTPInvocation"},
-		{officialegress.SinkCodexModelsList, "openai_codex_models_service.go", "fetchCodexModelsManifestUpstream", "newOfficialCodexHTTPInvocation"},
+		// v0.2.3 将 manifest 业务编排与实际 HTTP 发送拆开；Executor
+		// 入口位于 fetchOpenAIModelsUpstream 的官方画像分支。
+		{officialegress.SinkCodexModelsList, "openai_codex_models_service.go", "fetchOpenAIModelsUpstream", "newOfficialCodexHTTPInvocation"},
 		{officialegress.SinkCodexOAuthRefresh, "openai_oauth_service.go", "refreshTokenWithClientID", "executeOAuthRefresh"},
 		{officialegress.SinkCodexQuotaWHAM, "openai_quota_service.go", "doCodexQuotaRequest", "newOfficialCodexHTTPInvocation"},
 		{officialegress.SinkCodexRealtimeCalls, "openai_live.go", "createUpstreamLiveCall", "newOfficialCodexHTTPInvocation"},
 		{officialegress.SinkCodexRealtimeSideband, "openai_live.go", "dialLiveSideband", "newOfficialCodexWebSocketInvocation"},
 		{officialegress.SinkCodexResponsesAnthropicCompat, "openai_gateway_messages.go", "ForwardAsAnthropic", "officialCodexResponseForwardPlan"},
-		{officialegress.SinkCodexResponsesChatCompletions, "openai_gateway_chat_completions.go", "ForwardAsChatCompletions", "officialCodexResponseForwardPlan"},
+		// Chat Completions 入口负责绑定 Sink，实际 Responses 兼容发送在
+		// forwardAsChatCompletions 内完成；契约锁定实际 Executor 入口。
+		{officialegress.SinkCodexResponsesChatCompletions, "openai_gateway_chat_completions.go", "forwardAsChatCompletions", "officialCodexResponseForwardPlan"},
 		{officialegress.SinkCodexResponsesForward, "openai_gateway_forward.go", "Forward", "officialCodexResponseForwardPlanForHolder"},
 		{officialegress.SinkCodexResponsesPassthrough, "openai_gateway_passthrough.go", "forwardOpenAIPassthrough", "officialCodexResponseForwardPlan"},
 		{officialegress.SinkCodexResponsesWS, "openai_ws_forwarder_v2.go", "forwardOpenAIWSV2", "officialCodexResponseForwardPlanForHolder"},

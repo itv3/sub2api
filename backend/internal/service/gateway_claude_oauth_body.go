@@ -392,8 +392,7 @@ func (s *GatewayService) applyClaudeSetupTokenThirdPartyCompatibilityToBody(
 	}
 	if !officialEgressOwnsProfile {
 
-
-	systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
+		systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
 		if systemPromptInjectionEnabled {
 			systemPromptBlocks = claudeOAuthSystemPromptBlocksForModel(model, systemPromptBlocks)
 			body = rewriteSystemForNonClaudeCodeWithPromptBlocks(

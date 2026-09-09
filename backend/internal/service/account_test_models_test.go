@@ -10,7 +10,7 @@ import (
 
 func TestFetchOpenAIAccountModelsOAuthPopulatesPickerFields(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"new-oauth-model"},{"slug":"gpt-6-astra"}]}`)
-	gateway := &OpenAIGatewayService{}
+	gateway := newCodexModelsLocalTestService()
 	svc := &AccountTestService{openaiGatewayService: gateway}
 	account := newCodexModelsTestAccount()
 	ctx := context.Background()

@@ -218,6 +218,9 @@ func upstreamMergeEgressSnapshotTransitionSupersedesService(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	receipt, err := loadUpstreamMergeEgressSnapshotServiceReceipt()
 	if err != nil {
 		return false
@@ -248,6 +251,9 @@ func upstreamV0179SourceTransitionSupersedesService(
 	priorDigest string,
 	currentDigest string,
 ) bool {
+	if upstreamV023SourceTransitionSupersedesService(path, priorDigest, currentDigest) {
+		return true
+	}
 	if codex0151CurrentSourceDigestAcceptedService(path, priorDigest, currentDigest) {
 		return true
 	}

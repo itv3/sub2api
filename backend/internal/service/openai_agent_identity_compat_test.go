@@ -473,16 +473,18 @@ func TestOpenAIAgentIdentityCompatRoutesRecoverInvalidTaskOnce(t *testing.T) {
 }
 
 func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t *testing.T) {
+	configureObserveGuardForLocalHTTPTest(t)
 	gin.SetMode(gin.TestMode)
 	key, privateKey := newTestAgentIdentityKey(t)
 	account := &Account{
 		ID: 52, Name: "agent-identity", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 		Status: StatusActive, Schedulable: true, Concurrency: 1,
 		Credentials: map[string]any{
-			"auth_mode":         OpenAIAuthModeAgentIdentity,
-			"agent_runtime_id":  key.runtimeID,
-			"agent_private_key": privateKey,
-			"task_id":           "task-cache-old",
+			"auth_mode":          OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":   key.runtimeID,
+			"agent_private_key":  privateKey,
+			"task_id":            "task-cache-old",
+			"chatgpt_account_id": "account-agent-cache",
 		},
 		Extra: map[string]any{"openai_responses_supported": true},
 	}
@@ -500,6 +502,10 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 	}
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{invalidTask(), invalidTask()}}
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: repo, httpUpstream: upstream}
+	svc.openaiModelCapabilities.replaceFromManifest(
+		account.ID,
+		[]byte(`{"models":[{"slug":"gpt-5.4","use_responses_lite":false}]}`),
+	)
 	body := []byte(`{"model":"gpt-5.4","stream":false,"messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -513,8 +519,13 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 	secondKey := gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").String()
 	require.NotEmpty(t, firstKey)
 	require.Equal(t, firstKey, secondKey)
-	require.Equal(t, generateSessionUUID(isolateOpenAIUpstreamSessionID(99, codexAccountIdentitySource(c, account), firstKey)), upstream.requests[0].Header.Get("session_id"))
-	require.Equal(t, upstream.requests[0].Header.Get("session_id"), upstream.requests[1].Header.Get("session_id"))
+	firstSessionID := upstream.requests[0].Header.Get("session-id")
+	secondSessionID := upstream.requests[1].Header.Get("session-id")
+	require.NotEmpty(t, firstSessionID)
+	parsedSessionID, parseErr := uuid.Parse(firstSessionID)
+	require.NoError(t, parseErr)
+	require.Equal(t, uuid.Version(7), parsedSessionID.Version())
+	require.Equal(t, firstSessionID, secondSessionID)
 }
 
 func decodeAgentAssertionTask(t *testing.T, header string) string {

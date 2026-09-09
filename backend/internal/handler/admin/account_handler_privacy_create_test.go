@@ -97,7 +97,7 @@ func TestAccountHandlerCreateUsesSinglePrivacyEnsureAndPersistsCooldown(t *testi
 
 	// 使用生产构造器创建真实 adminServiceImpl，避免只验证 Handler stub 而产生假绿。
 	adminService := service.NewAdminService(
-		nil, groupRepo, accountRepo, nil, nil, nil, nil, nil, nil,
+		nil, nil, groupRepo, accountRepo, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, privacyFactory, nil, nil, nil, nil, nil,
 	)
 	handler := NewAccountHandler(
