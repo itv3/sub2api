@@ -437,47 +437,38 @@ P0、attempt 和部署前后均须核对容器 IP、默认路由、公网出口�
 
 ## 5.2 合并 Sub2API 上游更新
 
-上游更新与官方客户端换版必须分开。七个阶段的目的都保留，但把“反复修一行源码就重做整套流程”改为
-同一 Plan 的追加式 revision，并把可确定的重复执行交给工具。上游合并不得改变客户端目标版本，也不得
-冒充生产部署；需要上线时继续 §5.6。
+上游更新与官方客户端换版必须分开：七个阶段的目的都保留，反复修一行源码不再重做整套流程，而是在
+同一 Plan 追加 revision，并把可确定的重复执行交给工具。上游合并不得改变客户端目标版本，也不得冒充
+生产部署；需要上线时继续 §5.6。三条总则：
 
-v0.2.3 合并的复盘（§5.2.5）表明，决定墙钟的不是七阶段本身，而是三件事：合并期间修改流程与工具、
-多套冻结摘要台账在合并后连锁失效、U-4 失败后没有合法出口。因此在七阶段之外固定三条总则：
-
-1. 合并期间不得修改 §5.2.4 第 3 条定义的工具闭集，也不得新增或修改流程规则。流程与工具的修复属于
-   合并前准备，必须在 `plan-create` 之前提交到主仓库并重新封存基线。
-2. 冻结摘要台账的 successor 只在最终 revision 由工具一次性生成（§5.2.4 第 2 条）。中间 revision 禁止
+1. 合并期间不得修改 §5.2.4 第 3 条定义的工具闭集，也不得新增或修改流程规则；流程与工具的修复在
+   `plan-create` 之前提交到主仓库并重新封存基线。
+2. 冻结摘要台账的 successor 只在最终 revision 由工具一次性生成（§5.2.4 第 2 条），中间 revision 禁止
    生成，也禁止逐套人工登记。
-3. U-4 未通过时只能进入 §5.2.3 定义的冻结台账修复模式或停线。禁止在候选分支上脱离工具提交，禁止
-   手动 `git merge --ff-only` 到受维护分支。
+3. U-4 未通过时只能进入冻结台账修复模式（§5.2.3）或停线；禁止在候选分支上脱离工具提交，禁止手动
+   `git merge --ff-only` 到受维护分支。
 
 ### 5.2.1 升级前基线验收（权威）
 
-基线验收的作用是回答“升级前这棵树的功能事实和证据事实分别是什么”，不是给升级前代码重新贴上
-“绝对没有任何问题”的标签。它必须在主仓库干净工作树上执行，收据写入仓库之外的私有 evidence
-目录，并绑定当前 `HEAD`、tree 和 tool bundle 摘要。
+基线验收回答“升级前这棵树的功能事实和证据事实分别是什么”。它在主仓库干净工作树上执行，收据写入
+仓库之外的私有 evidence 目录，绑定当前 `HEAD`、tree 和 tool bundle 摘要。时机固定在上一次发版之后、
+下一次合并之前的空闲期：
 
-基线验收的时机固定为“上一次发版之后、下一次合并之前”的空闲期，而不是合并当天：
+- 每次发版后 24 小时内在干净 `HEAD` 上执行 `baseline-seal` 并归档；合并当天只执行 `baseline-validate`。
+- 基线暴露的历史证据漂移、扫描器分类缺口和工具缺陷，一律在 `plan-create` 之前修复并提交到主仓库，
+  然后重新封存基线；这些修复不得在候选分支上完成。
+- 合并当天 `baseline-validate` 失败时先回到上一条，不得带着失败的基线创建 Plan。
 
-- 每次发版后 24 小时内在干净 `HEAD` 上执行 `baseline-seal` 并归档；合并当天只执行 `baseline-validate`，
-  确认收据仍与当前 `HEAD`、tree 和 tool bundle 一致。
-- 基线验收暴露的历史证据漂移、扫描器分类缺口和工具缺陷，一律在 `plan-create` 之前修复并提交到主仓库，
-  然后重新封存基线。这些修复不计入合并预算，也不得在候选分支上完成。
-- 合并当天 `baseline-validate` 失败时先回到上一条；不得带着失败的基线创建 Plan。
-
-基线检查必须拆成两组：
+基线检查拆成两组：
 
 | 组别 | 内容 | 失败处理 |
 |---|---|---|
 | 功能门禁 | `go build`、`go vet`、lint、普通业务测试、官方 egress 关键回归 | 任一失败都阻断；禁止登记为 known drift |
 | 证据门禁 | frozen/transition/receipt 摘要、历史台账和可复算性检查 | 只有明确属于历史收据的摘要漂移，且有前后摘要、来源收据和原因，才可登记为 known drift |
 
-`known_drift` 只表示“该条历史证据不能按当前摘要直接复算”，不表示功能通过，也不表示候选可以
-忽略同名失败。后续差异比较使用以下闭集规则：
-
-1. 候选功能失败始终是阻断项；不能因为基线也失败就降级。
-2. 候选证据失败只有在其唯一 `failure_id` 已被基线 `known_drift` 明确覆盖时，才记为继承漂移。
-3. 既不在基线 known drift 中、也不属于功能门禁的失败，按候选新增失败处理，必须先归因和修复。
+`known_drift` 只表示“该条历史证据不能按当前摘要直接复算”，不表示功能通过。后续差异比较使用以下
+闭集规则：候选功能失败始终阻断；候选证据失败只有在其唯一 `failure_id` 已被基线 `known_drift` 明确
+覆盖时才记为继承漂移；其余失败按候选新增失败处理，必须先归因和修复。
 
 先准备只读的基线输入草稿（不得手改收据），再执行：
 
@@ -492,26 +483,21 @@ python3 -m tools.upstream_merge baseline-validate \
   --receipt <BaselineAcceptance 收据绝对路径>
 ```
 
-`baseline-seal` 是不可覆盖写入；工作树、提交、tree 或 tool bundle 发生变化时必须重新封存新的收据，
-不能修改旧 JSON。新建正式请求必须使用 `official-egress-upstream-merge-request/v2`，在
-`baselines.baseline_acceptance_path` 指向该收据；`plan-create` 会再次确认收据与计划 fork HEAD/tree
-完全一致。旧 request/v1 不得创建新的正式 Plan；历史旧 Plan 继续按既有兼容规则读取，迁移到 v2 后才
-享受基线绑定和 revision 预检门禁。
+`baseline-seal` 不可覆盖写入；工作树、提交、tree 或 tool bundle 变化时必须重新封存。正式请求必须使用
+`official-egress-upstream-merge-request/v2`，在 `baselines.baseline_acceptance_path` 指向该收据；
+`plan-create` 会再次确认收据与计划 fork HEAD/tree 完全一致。
 
 ### 5.2.2 计划外预检（非权威）
 
-正式 `plan-create` 前先运行一次离线预检，把明显冲突、扫描器不识别、编译错误、目标包测试失败以及
-过期模板挡在 U-0 之外。推荐顺序是“基线验证 → 输入准备 → 预检 → U-0”。
+正式 `plan-create` 前先运行一次离线预检。推荐顺序是“基线验证 → 输入准备 → 预检 → U-0”。输入准备
+清单：
 
-预检前的输入准备按以下清单执行；每一条都曾在 v0.2.3 造成一次工具报错重试或一次 Plan 作废：
-
-- request 从当前 release catalog 生成 Active/Rollback 路径和目标版本，不复制上一轮请求；生成后立即
-  做 JSON 解析和 schema 校验，再进入耗时预检。
+- request 从 `tools/upstream_merge/request_template_v2.json` 渲染占位符生成，Active/Rollback 路径与目标
+  版本从当前 release catalog 解析，不复制上一轮请求；生成后立即做 JSON 解析和 schema 校验。
 - 计划目录只创建 `inputs/` 与 `evidence/`，权限 0700；worktree 目录由 `plan-create` 自行创建。
-- 门禁模板必须是执行组模式（12 类逻辑门禁映射到 5 个物理执行组，见 §5.2.3），不得沿用
-  `receipt_replay` 类型的客户端门禁。
-- 门禁命令显式绑定本地只读源码根（如 `CODEX_0_149_1_SOURCE_ROOT`），不依赖被 `.gitignore` 排除的
-  路径在候选 worktree 中存在。
+- 门禁必须是执行组模式（12 类逻辑门禁映射到 5 个物理执行组），不得沿用 `receipt_replay` 类型。
+- 门禁命令显式绑定本地只读源码根（如 `CODEX_0_149_1_SOURCE_ROOT`），不依赖被 `.gitignore` 排除的路径
+  在候选 worktree 中存在。
 
 ```text
 python3 -m tools.upstream_merge preflight \
@@ -521,96 +507,84 @@ python3 -m tools.upstream_merge preflight \
 ```
 
 预检只在临时 detached worktree 中试合并，依次执行 `egressscan -mode snapshot`、`go build ./...`、
-`go vet ./...` 和官方 egress 目标包测试；不写入主仓库、不 fetch、不 push、不产生权威阶段制品。
-报告中的 `non_authoritative` 必须为 `true`。预检报告必须包含以下五项；任何一项被跳过或失败都标为
-阻断，不能把“未执行”解释为通过。因冲突而 blocked 时，其余四项仍必须输出：
+`go vet ./...` 和官方 egress 目标包测试；不写入主仓库、不 fetch、不 push、不产生权威阶段制品，报告中
+`non_authoritative` 必须为 `true`。报告的 `report` 对象固定包含五项，任何一项被跳过或失败都标为阻断；
+因冲突而 blocked 时其余四项仍必须输出：
 
-| 项 | 内容 | 用途 |
-|---|---|---|
-| 冲突闭集 | 试合并的冲突文件数与路径、变化文件总数 | 写入 Plan，作为 §5.2.5 预算选档依据 |
-| 模板有效性 | request 的 schema 版本、Active/Rollback 路径是否仍在当前 release catalog、门禁是否为执行组模式 | 拦住过期模板，避免到 U-4 才发现门禁无法绑定 revision |
-| 闭集受扰清单 | 上游对 §5.2.4 第 3 条闭集文件的改动 | 提前决定处置，避免到 `merge-seal` 才阻断 |
-| 冻结覆盖 | 上游改动命中的冻结台账及路径数 | 估算最终 revision 的 successor 规模 |
-| 扫描器覆盖 | `egressscan -mode snapshot` 对上游新增发送点的分类结果 | 分类缺口回到 §5.2.1 修复 |
+| 项 | 内容 |
+|---|---|
+| 冲突闭集 | 冲突文件数与路径、上游变化文件总数，写入 Plan |
+| 模板有效性 | 与标准模板比对 schema 版本、门禁定义、执行组模式、Persona，以及 Active/Rollback 在当前 release catalog 中的绑定 |
+| 闭集受扰清单 | 上游对 §5.2.4 第 3 条闭集文件的改动，U-1 前决定处置 |
+| 冻结覆盖 | 上游改动命中的冻结台账路径数及注册表要求的额外动作 |
+| 扫描器覆盖 | fork 与候选树发送点集合的差异；因冲突 blocked 时标记 deferred，由 U-2 `surface-scan` 承担 |
 
-五项由 `preflight` 自动写入报告的 `report` 对象。模板有效性以 `tools/upstream_merge/request_template_v2.json`
-为准，比对门禁定义、执行组模式、Persona 与当前 release catalog 的 Active/Rollback 绑定；冻结覆盖复用
-§5.2.4 第 2 条的抽边规则，并按注册表列出需要额外动作的命中；扫描器覆盖对比 fork 与候选树的发送点
-集合，因冲突而 blocked 时标记为 deferred，由冲突解决后的 U-2 `surface-scan` 承担。预检通过后仍必须
-重新执行 U-0，不能把预检报告当作 U-0 收据。
+预检通过后仍必须重新执行 U-0，不能把预检报告当作 U-0 收据。
 
 ### 5.2.3 七阶段及增量执行合同
 
-| 阶段 | 必要目的 | 优化后的执行合同 |
+| 阶段 | 必要目的 | 执行合同 |
 |---|---|---|
-| U-0 | 冻结目标、计划、预算和证据目录 | 先通过 §5.2.1 基线验收；`plan-create` 只创建一次权威 Plan，冻结 fork HEAD、上游 tag/commit、基线收据、工具闭集和受保护对象；预检报告的冲突文件数与变化文件数写入 Plan。 |
-| U-1 | 解决冲突并形成可重放的双父 merge commit | `merge-start`／`merge-seal` 仍在隔离 worktree 中完成；冲突台账和双父关系不可省略。上游对闭集外文件的改动按普通冲突处置；对闭集内文件的改动按预检既定决定恢复受保护版本并在冲突台账登记。已审核的冲突决策可在后继 Plan 机械重放，不重新人工审核。 |
-| U-2 | 闭合 Codex／Claude 入口、出站发送面和 Inventory | 首轮 `source-seal` 生成 revision 001；源码修复后在同一 Plan 追加 `source-candidate-002.json`、`003.json`……，旧制品只读保留，不重做 U-0/U-1。源码 revision 必须重新执行 `surface-scan`、Inventory 绑定和 `surface-seal`；只有对应发送面确实零差异时才允许 `inventory-carry-forward`。§5.2.4 第 2 条保证台账 revision 只有最后一个，因此不再为它单独设计 carry-forward。 |
-| U-3 | 按文件和调用边形成影响闭集 | `impact-generate` 与当前 SourceCandidate revision 绑定；`impact-suggest` 只对版本化组件映射中“已知、低风险、无 wire/selector/Persona/共享控制面/Key-Group-路由-计费提示”的条目给出自动建议。未知路径、未知依赖和高风险条目保持 `manual_required`，`impact-seal` 对未决项 fail-close。同 diff 的文件复用本 Plan 或前序 Plan 已封存的决定。 |
-| U-4 | 证明候选树满足全部必要门禁 | 每个收据始终包含固定 12 类逻辑门禁，`skipped_gate_count` 必须为 0；12 类映射到 5 个物理执行组，同一 `execution_group` 的完全相同命令只执行一次，组成员共享同一结果。复用以 revision 为界，只有同一 revision 内的 attempt 可以 `--from-attempt` 复用。六类客户端门禁收据由工具自动生成，不再手写。`full-regression` 组通过 `backend/Makefile` 的 `test-gate` 覆盖 CI 的默认、unit 与 integration 三组测试并固定 `-count=1`，再执行其余 make 目标。 |
-| U-5 | 封存 candidate、Campaign 和回退处置 | `disposition-seal` 仍要求绑定验证收据、原业务回归和受影响 Persona 的后继动作。 |
-| U-6 | 快进受维护分支并能独立重放 | 只允许 `git merge --ff-only`，随后 `finalize`／`replay`；不推送远端、不部署生产。`finalize` 与 `replay` 收据是发版前置条件，CI 通过不能替代。U-4 未通过时禁止执行本阶段。 |
+| U-0 | 冻结目标、计划、预算和证据目录 | 先通过 §5.2.1；`plan-create` 只创建一次权威 Plan，冻结 fork HEAD、上游 tag/commit、基线收据、工具闭集和受保护对象。 |
+| U-1 | 解决冲突并形成可重放的双父 merge commit | `merge-start`／`merge-seal` 在隔离 worktree 中完成；冲突台账和双父关系不可省略。 |
+| U-2 | 闭合 Codex／Claude 入口、出站发送面和 Inventory | 首轮 `source-seal` 生成 revision 001，源码修复后在同一 Plan 追加 revision，旧制品只读保留。 |
+| U-3 | 按文件和调用边形成影响闭集 | `impact-generate` 与当前 revision 绑定；`impact-suggest` 只对已知低风险条目给出建议，`impact-seal` 对未决项 fail-close。 |
+| U-4 | 证明候选树满足全部必要门禁 | 每个收据固定 12 类逻辑门禁、5 个物理执行组，`skipped_gate_count` 为 0。 |
+| U-5 | 封存 candidate、Campaign 和回退处置 | `disposition-seal` 绑定验证收据、原业务回归和受影响 Persona 的后继动作。 |
+| U-6 | 快进受维护分支并能独立重放 | 只允许 `git merge --ff-only`，随后 `finalize`／`replay`；不推送远端、不部署生产。 |
 
-每个 U-2/U-3 revision 在进入 U-4 前都必须执行一次只读收据预检：
+补充约束：
+
+- U-1：上游对闭集外文件的改动按普通冲突处置；对闭集内文件的改动按预检既定决定恢复受保护版本并在
+  冲突台账登记。已审核的冲突决策可在后继 Plan 机械重放。
+- U-2：源码 revision 必须重新执行 `surface-scan`、Inventory 绑定和 `surface-seal`，只有发送面零差异时才
+  允许 `inventory-carry-forward`；台账 revision 只有最后一个（§5.2.4 第 2 条）。
+- U-3：同 diff 的文件复用本 Plan 或前序 Plan 已封存的决定。
+- U-4：同一 `execution_group` 的相同命令只执行一次；复用以 revision 为界，源码一变全部执行组重跑，因为
+  冻结测试与业务测试都读取候选树；六类客户端门禁收据由工具生成；`full-regression` 组通过
+  `backend/Makefile` 的 `test-gate` 覆盖 CI 的默认、unit 与 integration 三组测试并固定 `-count=1`。
+- U-6：`finalize` 与 `replay` 收据是发版前置条件，CI 通过不能替代；U-4 未通过时禁止执行。
+
+每个 U-2/U-3 revision 进入 U-4 前先做只读复核，再执行门禁；失败后保留原 attempt，默认只重跑上一轮
+失败的执行组：
 
 ```text
 python3 -m tools.upstream_merge revision-preflight \
   --repository <仓库绝对路径> \
   --plan <计划绝对路径> \
   [--transition <source-transition 链尾绝对路径>]...
-```
 
-该命令复核最新 SourceCandidate、SurfaceReceipt、ImpactMatrix、ChangeDecisionReceipt 是否绑定同一
-revision，确认候选 worktree clean，并递归复算传入的 source-transition 前序链。它不生成、不覆盖任何
-制品；失败应在 U-4 之前修正。
-
-U-4 的“完整 12 类”是逻辑覆盖，不等于每次都重新消耗 12 次物理执行。首次执行：
-
-```text
 python3 -m tools.upstream_merge gates-run \
   --plan <计划绝对路径> \
-  --attempt-id attempt-001
+  --attempt-id <attempt-id> \
+  [--from-attempt <上一 attempt>] [--only <门禁 id 或 category，逗号分隔>]
 ```
 
-某轮失败后保留原 attempt，默认只重跑上一轮失败的门禁组，其余通过项以绑定的旧收据复用：
-
-```text
-python3 -m tools.upstream_merge gates-run \
-  --plan <计划绝对路径> \
-  --attempt-id attempt-002 \
-  --from-attempt attempt-001
-```
-
-也可以用 `--only <门禁 id 或 category，逗号分隔>` 缩小执行集合，但必须覆盖上一 attempt 的全部失败项；
-同一 `execution_group` 会自动扩展为完整组，不能只重跑组内一个逻辑门禁。复用以 revision 为界：源码
-一变，全部执行组都必须重新执行，因为冻结测试与业务测试都读取候选树本身。每个新 attempt
-仍生成完整 12 类结果，`skipped_gate_count` 固定为 0，并记录 `executed_gate_count`、`reused_gate_count`、
-执行组数量和六份 `official-egress-upstream-client-gate-receipt/v2` 自动收据。
+`--only` 必须覆盖上一 attempt 的全部失败项，且会自动扩展为完整执行组。每个新 attempt 仍生成完整
+12 类结果，并记录 `executed_gate_count`、`reused_gate_count`、执行组数量和六份
+`official-egress-upstream-client-gate-receipt/v2` 自动收据。
 
 #### U-4 出口与冻结台账修复模式
 
-U-4 失败分为两类：功能失败（编译、业务测试、lint、前端）与冻结摘要失败（各 transition/successor 冻结
-测试、受管工具树摘要、`check-egress-spec-ci` 中的摘要门禁）。功能失败按源码 revision 修复。冻结摘要失败
-不得逐套人工登记。当一个 attempt 的失败项全部属于冻结摘要类，且所有功能门禁已通过时，进入冻结台账
-修复模式：
+U-4 失败分两类：功能失败（编译、业务测试、lint、前端）按源码 revision 修复；冻结摘要失败（transition/
+successor 冻结测试、受管工具树摘要、`check-egress-spec-ci` 中的摘要门禁）不得逐套人工登记。当一个
+attempt 的失败项全部属于冻结摘要类且功能门禁已通过时，进入冻结台账修复模式：
 
 1. 在当前候选提交上执行 `freeze-successor-generate`（§5.2.4 第 2 条），一次性生成全部冻结台账的
-   successor，并连同 `source-transition` 链尾作为一个台账 revision 追加；
+   successor，连同 `source-transition` 链尾作为一个台账 revision 追加；
 2. 对该 revision 执行 `revision-preflight` 与 `gates-run --from-attempt`；
-3. 若仍有冻结摘要失败，说明冻结台账注册表缺项，停线并把缺项回流到注册表，不得再手工登记。
+3. 仍有冻结摘要失败即注册表缺项，停线并把缺项回流到注册表。
 
-任何情况下都不得在 U-4 未通过时手动 fast-forward、推送远端或以 CI 结果代替收据。连续两个 attempt 出现
-相同功能失败，或 Plan 作废超过一次，必须停线复盘，并把原因回流到本节。
+任何情况下都不得在 U-4 未通过时手动 fast-forward、推送远端或以 CI 结果代替收据。连续两个 attempt
+出现相同功能失败，或 Plan 作废超过一次，必须停线复盘并把原因回流到本节。
 
 ### 5.2.4 revision、工具闭集和长期台账
 
-1. U-2/U-3 的 revision 文件只能追加，编号从 001 连续递增；`predecessor` 必须绑定上一轮文件。禁止
-   覆盖旧 JSON、用软链接冒充制品或跳号。Inventory revision 同样按 Persona/kind 连续追加。
-2. 冻结摘要台账的 successor 与 `source-transition` 只在最终 revision 生成一次。最终 revision 指全部
-   源码修复、lint 与前端检查都已通过、候选树不再变化之后的那个 revision。中间 revision 禁止生成任何
-   transition 或 successor 收据。`source-transition` 收据及其绑定的 successor 收据不得进入它们所描述的
-   源码树；工具在生成时把这两类文件排除在 `current_tree` 复算之外，消除自引用导致的“移出、重算、加回”
-   循环；`source-transition` 在生成时会拒绝把绑定本区间的收据记进节点。生成入口：
+1. U-2/U-3 的 revision 文件只能追加，编号从 001 连续递增，`predecessor` 绑定上一轮文件；禁止覆盖旧
+   JSON、用软链接冒充制品或跳号。Inventory revision 同样按 Persona/kind 连续追加。
+2. 冻结摘要台账的 successor 与 `source-transition` 只在最终 revision 生成一次：全部源码修复、lint 与前端
+   检查通过、候选树不再变化之后。收据不进入它描述的提交，也不引用本区间内变化的收据，
+   `source-transition` 会拒绝把绑定本区间的收据记进节点，以此消除“移出、重算、加回”的自引用循环。
 
    ```text
    python3 -m tools.upstream_merge freeze-successor-generate \
@@ -619,18 +593,19 @@ U-4 失败分为两类：功能失败（编译、业务测试、lint、前端）
      [--after <源码最终提交 SHA>] \
      --tag <上游 tag 或批次标识> \
      --output <仓库>/docs/egress/maintenance/upstream-<tag>-freeze-successor.json \
+     [--extra-worktree-path <与收据同提交落地的门禁文件>]... \
      [--reason <统一原因>] [--dry-run]
    ```
 
-   它按与 Go 门禁完全相同的规则从 `docs/egress/maintenance/*.json` 抽取已登记的摘要边，对区间内命中冻结
-   覆盖的路径生成“已登记摘要 → 当前摘要”的精确边；省略 `--after` 时以当前工作树为后继状态。前序摘要
-   不在任何收据中即链断裂，工具 fail-close，不得凭空补边。收据引用的来源收据不得在本区间内变化，输出
-   收据也不得出现在它描述的提交里。`docs/egress/maintenance/freeze-registry.json` 只登记通用图之外仍需
-   额外动作的台账（Codex CLI 0.151 worktree successor 的 Python 显式列表、ARM64 受管工具摘要常量、
-   scanner-algorithm-successor 单跳文件、Campaign fact map），命中时写入 `required_manual_actions`，其中
-   Campaign fact map 固定 `manual_required`，须老板确认。修改注册表不属于工具闭集变化，但必须重新
-   `identity-seal`。`source-transition` 节点的 Go 冻结测试仍按上游版本各写一份（两包），这是每次合并的
-   已知固定成本，可从上一版本的测试复制并只改常量。
+   它按与 Go 门禁相同的规则从 `docs/egress/maintenance/*.json` 抽取已登记的摘要边，对区间内命中冻结
+   覆盖的路径生成“已登记摘要 → 当前摘要”的边；前序摘要未登记即链断裂，fail-close。收据的自摘要采用
+   Python 工作区门禁的算法，改到 Codex CLI 0.151 worktree successor 覆盖的路径时用 `--after` 指向源码
+   提交、用 `--extra-worktree-path` 追加引用该收据的门禁文件，再把收据加进门禁的显式列表与之同提交。
+   `docs/egress/maintenance/freeze-registry.json` 只登记通用图之外仍需额外动作的台账（worktree successor
+   显式列表、ARM64 受管工具摘要常量、scanner-algorithm-successor 单跳文件、Campaign fact map），命中时
+   写入 `required_manual_actions`；Campaign fact map 固定 `manual_required`，须老板确认。修改注册表不属于
+   工具闭集变化，但必须重新 `identity-seal`。`source-transition` 节点的 Go 冻结测试仍按上游版本各写
+   一份（两包），可从上一版本复制并只改常量。
 
    ```text
    python3 -m tools.upstream_merge source-transition \
@@ -645,75 +620,26 @@ U-4 失败分为两类：功能失败（编译、业务测试、lint、前端）
      --transition <节点绝对路径>
    ```
 
-   `path`、`old_path`、状态以及两端 blob 摘要由 Git 复算；删除和重命名必须保留前后路径。历史节点不
-   改写，修复只追加 successor。
+   `path`、`old_path`、状态以及两端 blob 摘要由 Git 复算；删除和重命名保留前后路径；历史节点不改写，
+   修复只追加 successor。
 3. 受管 tool bundle 包含：`tools/upstream_merge/`（含标准 request 模板）、三个 schema、
-   `tools/check_ledger_completeness.py`、`Makefile` 以及 `backend/cmd/egressscan/` 的 Go 源码。上游几乎每个
-   版本都会改 Makefile，扫描器也需要为上游新增发送点补分类，这两类变化不靠拆分闭集来回避，而是靠
-   §5.2.2 预检的“闭集受扰清单”提前决定处置、靠 §5.2.1 把分类缺口修在 `plan-create` 之前。闭集任一
-   字节变化都会改变合并事实含义：进行中的 Plan 必须停线并新建 Plan，不能在旧 Plan 上“修工具后继续”。合并期间发现工具缺陷时的唯一路径是：
-   停线、在主仓库修复并提交、重新 `baseline-seal` 与 `preflight`、新建 Plan；禁止在候选分支上修改工具后
-   继续。推荐入口为 `make upstream-preflight`、`make upstream-baseline-seal`、
-   `make upstream-revision-preflight`、`make upstream-source-transition` 和 `make test-upstream-merge-tools`。
-4. 按上游 tag 逐个合并，不跨越 minor 版本；即使两个 tag 间隔不足两周也分别合并。预检报告的冲突文件数
-   与变化文件数写入 Plan，作为 §5.2.5 预算选档的依据。废弃 Plan 的 worktree/evidence 只在完成留档和
-   审计确认后清理，不得用清理动作替代收据。
+   `tools/check_ledger_completeness.py`、`Makefile` 以及 `backend/cmd/egressscan/` 的 Go 源码。上游改
+   Makefile 与扫描器补分类这两类常见变化不靠拆分闭集回避，而是靠 §5.2.2 的闭集受扰清单提前处置、靠
+   §5.2.1 把分类缺口修在 `plan-create` 之前。闭集任一字节变化都会改变合并事实含义：进行中的 Plan 必须
+   停线并新建 Plan；合并期间发现工具缺陷的唯一路径是停线、在主仓库修复并提交、重新 `baseline-seal`
+   与 `preflight`、新建 Plan。
+4. 按上游 tag 逐个合并，不跨越 minor 版本，即使两个 tag 间隔不足两周也分别合并。有效工作时间的参考
+   值：普通 tag 更新约 3.5～4.5 小时，跨 minor 或 60 个以上冲突文件约 8～9 小时，涉及官方 wire、Persona
+   或共享控制面再加 2～4 小时；冲突人工解决与契约适配随上游规模线性增长，只能靠逐 tag 合并摊薄。
+   预检报告的冲突文件数与变化文件数写入 Plan。废弃 Plan 的 worktree/evidence 只在完成留档和审计确认后
+   清理，不得用清理动作替代收据。
 5. 每个 `tools.upstream_merge` 子命令自动追加一行到 `timing-ledger.jsonl`：命令、参数、起止时间、
-   耗时、结果与错误。默认落点是 Plan 目录（`--plan` 所在目录），其次是输出或收据所在目录；推断路径落在
-   Git 工作树内时不写并提示，用 `--timing-ledger` 指定 Plan 目录即可。账本写入失败时成功的命令也按
-   系统错误返回。账本无缺口是发版前置条件之一；不得在合并结束后补写。
-6. 工具落地状态（2026-09-10）。已落地项以工具行为为准，被流程替代的项不再计划实现：
-
-   | 规则 | 状态 | 承担者 |
-   |---|---|---|
-   | §5.2.2 预检五项报告 | 已落地 | `preflight` 的 `report` 对象 |
-   | §5.2.2 标准 request 模板 | 已落地 | `tools/upstream_merge/request_template_v2.json` |
-   | §5.2.3 冻结台账修复模式 | 已落地 | `freeze-successor-generate` |
-   | §5.2.3 full-regression 与 CI 对齐 | 已落地 | `backend/Makefile` 的 `test-gate` |
-   | §5.2.4 第 2 条 successor 一次生成与自引用排除 | 已落地 | `freeze-successor-generate`、`source-transition` 的区间校验 |
-   | §5.2.4 第 5 条时间账本 | 已落地 | 各子命令自动追加 `timing-ledger.jsonl` |
-   | 冻结台账注册表 | 已落地 | `docs/egress/maintenance/freeze-registry.json` |
-   | 台账 revision carry-forward | 以流程替代 | 台账 revision 只有最后一个，收益归零 |
-   | U-4 按输入摘要跨 revision 复用 | 以流程替代 | 冻结测试读取候选树，输入摘要无法排除 Go 组 |
-   | Makefile 闭集拆分、扫描器分类规则 JSON 化 | 以流程替代 | §5.2.2 闭集受扰清单与 §5.2.1 前置修复 |
-
-### 5.2.5 时间预算与预期收益
-
-外部工程师对 v0.1.180 的实测为总计约 5 小时 27 分，其中最终成功轮约 68 分钟，约 52% 时间耗在废弃
-Plan。
-
-v0.2.3（跨 minor，64 个冲突文件、749 个变化文件）的实测为墙钟 37 小时 18 分，扣除空档后有效工作约
-25 小时：
-
-| 构成 | 有效工作 | 说明 |
-|---|---:|---|
-| 七阶段主干 | 约 7 小时 | 冲突人工解决 2 小时 47 分、真实契约适配约 3 小时，其余为工具主干与有效门禁执行 |
-| 合并期间修改流程与工具 | 约 6 小时 | 扫描器分类、基线验收工具、55 项历史漂移都在合并途中修复，作废 2 个 Plan |
-| 冻结摘要台账连锁 | 约 6 小时 | 14 个 revision 中 8 个为纯台账加删，作废 1 个 Plan |
-| U-4 未通过后脱离工具收尾 | 约 5 小时 | 8 次裸提交、手动 fast-forward、CI 失败两次，无 U-5/U-6 收据 |
-| 其他 | 约 1 小时 | 模板过期与目录约定造成的重试、Plan 作废归因 |
-
-共创建 5 个正式 Plan，作废 4 个；15 个 U-4 attempt 只复用 2 次。本次被触发的冻结台账共九套：
-`source-transition` 与其 Go 冻结测试、framework successor、Codex CLI 0.151 worktree successor、
-candidate test fact map 与 trace、ARM64 受管工具树摘要、bootstrap inventory lock 与 scanner algorithm
-successor、scanner successor transition、`check-egress-spec-ci` 中的各 workspace transition 脚本，以及
-合并后新增的五份 successor。它们构成 §5.2.4 第 6 条注册表的初始清单。
-
-按 §5.2.1～§5.2.4 执行后的预算如下。数值为有效工作时间，不含等待与休息；前提是工具改动已在合并前
-完成并稳定，且没有历史漂移欠账：
-
-| 情形 | 预计有效工作 | 主要假设 |
-|---|---:|---|
-| 基线封存与验证 | 10～30 分钟 | 在发版后空闲期完成，不计入合并预算 |
-| 普通 tag 更新（10～20 个冲突文件） | 3.5～4.5 小时 | 冲突人工解决与契约适配合计 1～2 小时；工具主干、U-4 三轮、台账一次性生成、U-5/U-6 与 CI 约 2.5 小时 |
-| 跨 minor 或 60 个以上冲突文件 | 8～9 小时 | 冲突与适配合计 5～6 小时，其余同上；应优先拆分为多次 tag 合并 |
-| 涉及官方 wire、Persona 或共享控制面 | 在上两档基础上加 2～4 小时 | 人工审查不可省略 |
-
-不可压缩项：冲突人工解决与契约适配随上游规模线性增长，只能靠按 tag 逐个合并摊薄；U-4 每轮约 10 分钟、
-CI 每轮约 13 分钟是硬成本。
-
-这个预算是容量规划，不是通过条件。流程与工具修复的时间不计入本表，必须在合并前完成。任一高风险分类、
-未知发送点、工具闭集漂移、Plan 作废超过一次或预算超时，都必须 fail-close 并报告最后合法 checkpoint。
+   耗时、结果与错误。默认落点是 Plan 目录，其次是输出或收据所在目录；推断路径落在 Git 工作树内时
+   不写并提示，用 `--timing-ledger` 指定 Plan 目录即可；账本写入失败时成功的命令也按系统错误返回。
+   账本无缺口是发版前置条件之一，不得在合并结束后补写。
+6. 以下三项曾列入工具计划，现以流程替代，不再实现：台账 revision 的 carry-forward（台账 revision 只有
+   最后一个）、U-4 按输入摘要跨 revision 复用（冻结测试读取候选树，输入摘要无法排除 Go 组）、Makefile
+   闭集拆分与扫描器分类规则 JSON 化（由闭集受扰清单与前置修复承接）。
 
 ## 5.3 官方客户端升级
 
