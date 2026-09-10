@@ -1,0 +1,32 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-release-prep-source-successor/v1",
+  "issued_at_utc": "2026-09-10T00:25:00Z",
+  "base_commit": "badc8c51a495b303313b76ac4e182eaf553e264a",
+  "current_commit": "1df896d96a0fa2ccd9d3fa515bb0bf7913a3857a",
+  "scope": "upstream-v0.2.3-release-prep-source-successor",
+  "transitions": [
+    {
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "predecessor_sha256s": [
+        "f6ec5b0e3c38f42c9b73f92a4fabf5d32153d32d9d24a382b4145aeb76140204"
+      ],
+      "to_sha256": "ee1388507da898390ebe475e2941d960cbf71c6948ef3263dd455483070d7218",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-post-bootstrap-source-successor.json"
+      ],
+      "reason": "修正 Python 门禁沿已封存 successor 图承接当前工作区；历史快照保持只读。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "deployment_performed": false
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "d52cce054fd43d8921574499088cc35f8b7a9344b04ddfb4436af9cb311c07c1"
+}
