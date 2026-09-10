@@ -74,12 +74,6 @@
           "pattern": "^upstream-[A-Za-z0-9][A-Za-z0-9._-]{0,191}-freeze-successor$"
         },
         "mode": {
-          "extra_worktree_paths": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "enum": [
             "commit",
             "worktree"
@@ -246,6 +240,7 @@
         }
       }
     },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "gitObject": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
     "binding": {

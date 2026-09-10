@@ -1,0 +1,49 @@
+{
+  "base_commit": "202dd6b2c9c97f0d8b1ecdc613c177e9c3e7140f",
+  "changed_path_count": 1,
+  "current_commit": null,
+  "deleted_frozen_paths": [],
+  "extra_worktree_paths": [],
+  "frozen_edge_count": 2663,
+  "frozen_path_count": 1259,
+  "identity_sha256": "1be34fa04ce238c7b36a2d050d612c9de79c262ff9829122b3423fc896c82215",
+  "issued_at_utc": "2026-09-10T11:52:00Z",
+  "mode": "worktree",
+  "required_manual_actions": [],
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-schema-repair-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge_artifacts.schema.json",
+      "predecessor_sha256s": [
+        "1de4005376fc35b8ef9985aade5b7598b298b4d8d734ee164a71530bd0277bb9"
+      ],
+      "reason": "修复 artifacts schema：补回被 freezeSuccessor 段重写吞掉的 sha256 公共定义并移除误插进 transitions.items 的 extra_worktree_paths；只登记 schema 自身的追加式后继摘要 path=tools/upstream_merge_artifacts.schema.json",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-capability-pin-freeze-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json",
+        "docs/egress/maintenance/upstream-tooling-batch4-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "3622f629067095da22570aaa29613e699875de220652817d51487a33cd74dcc5"
+    }
+  ],
+  "unregistered_path_count": 0,
+  "unregistered_paths": [],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci"
+  ]
+}
