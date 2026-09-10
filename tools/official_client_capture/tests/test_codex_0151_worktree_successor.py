@@ -32,6 +32,11 @@ RECONNECT_REPAIR_GATE_SUCCESSOR = (
 TOOL_IDENTITY_SYNC_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json"
 )
+# 2026-09-10：模型能力在请求内钉住（openai_gateway_forward.go / openai_model_capabilities.go）
+# 及随之同步的受管工具身份三件套，由 freeze-successor-generate 以 commit 模式生成。
+CAPABILITY_PIN_FREEZE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-capability-pin-freeze-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -107,6 +112,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         RECONNECT_REPAIR_TRANSITION,
         RECONNECT_REPAIR_GATE_SUCCESSOR,
         TOOL_IDENTITY_SYNC_SUCCESSOR,
+        CAPABILITY_PIN_FREEZE_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)

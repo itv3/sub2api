@@ -1,0 +1,260 @@
+{
+  "base_commit": "ba030b5e114c3b3e1a27871a7f28bcbc4e92b0fd",
+  "changed_path_count": 11,
+  "current_commit": "7e003cfb49278a08777832994daf896cfca1ee5e",
+  "deleted_frozen_paths": [],
+  "extra_worktree_paths": [
+    "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py"
+  ],
+  "frozen_edge_count": 2649,
+  "frozen_path_count": 1259,
+  "identity_sha256": "c2d02b822cd9163062b00cd0760a10f7c1757027a5d7888443768bb297597161",
+  "issued_at_utc": "2026-09-10T11:46:00Z",
+  "mode": "commit",
+  "required_manual_actions": [
+    {
+      "action_kind": "script_constant",
+      "file": "tools/arm64_supervised_deploy.py",
+      "instruction": "用 tools/arm64_supervised_deploy.py 的 tool_digest() 与 file_sha256() 重算 DEFAULT_TOOL_DIGEST、DEFAULT_SUPERVISOR_DIGEST、DEFAULT_ASSERTION_PREPARER_DIGEST 并更新常量；脚本自身随之变化，须在同一收据或后续收据中登记其后继摘要。",
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "rule_id": "arm64-managed-tool-digests",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_arm64_supervised_deploy"
+      ]
+    },
+    {
+      "action_kind": "script_constant",
+      "file": "tools/arm64_supervised_deploy.py",
+      "instruction": "用 tools/arm64_supervised_deploy.py 的 tool_digest() 与 file_sha256() 重算 DEFAULT_TOOL_DIGEST、DEFAULT_SUPERVISOR_DIGEST、DEFAULT_ASSERTION_PREPARER_DIGEST 并更新常量；脚本自身随之变化，须在同一收据或后续收据中登记其后继摘要。",
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "rule_id": "arm64-managed-tool-digests",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_arm64_supervised_deploy"
+      ]
+    },
+    {
+      "action_kind": "manual_required",
+      "file": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "instruction": "工具不得自动登记；这些路径变化会改变 Campaign 工具身份，须老板确认后按官方客户端升级流程处理 fact map 与 trace 的快照。",
+      "path": "backend/internal/service/openai_gateway_forward.go",
+      "rule_id": "codex-0151-campaign-fact-map",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_candidate_test_trace"
+      ]
+    },
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "backend/internal/service/openai_gateway_forward.go",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    },
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "backend/internal/service/openai_model_capabilities.go",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    },
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "tools/arm64_supervised_deploy.py",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    },
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    },
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    },
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    }
+  ],
+  "result": "manual_actions_required",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-capability-pin-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "backend/internal/service/openai_gateway_forward.go",
+      "predecessor_sha256s": [
+        "37fba1a8f551dcd83cd1641dfaa3369986f6a570e8d9f6752e99cfafbeca93ac"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=backend/internal/service/openai_gateway_forward.go",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/openai-replay-oom-repair-source-transition.json",
+        "docs/egress/maintenance/openai-ws-reconnect-repair-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.179-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.1.180-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "8baab9fe6785599eb3a89677bd8d401c2901566adf98fce5f99b994d909a515b"
+    },
+    {
+      "old_path": "",
+      "path": "backend/internal/service/openai_model_capabilities.go",
+      "predecessor_sha256s": [
+        "0c5be270f67f2a848089752d7b955174d6a4d358fc269e84af0ad6656890a881"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=backend/internal/service/openai_model_capabilities.go",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "37284914f0d76c509cb45123f1d615341d73dd19383a7dc600e32a0252434acb"
+    },
+    {
+      "old_path": "",
+      "path": "tools/arm64_supervised_deploy.py",
+      "predecessor_sha256s": [
+        "965426e7ba2a4a08478fd3267286d0d1279518df47ec08b513239eb34eb2b40d"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=tools/arm64_supervised_deploy.py",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "cc050145152f1b530be34766e49dfb7f8aa848e8919796c5d1d2351fbc6af42d"
+    },
+    {
+      "old_path": "",
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "predecessor_sha256s": [
+        "94fec2c8e63c04a09e4970f26d742ee2b0a257a49a056f33e7045dd447713f1f"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "3bf63d404fea6edb7339e966bd7ca48439e6497b43fe959f98244952377d4529"
+    },
+    {
+      "old_path": "",
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "predecessor_sha256s": [
+        "a0bf120ac719195d978cd3041e8939fb66da9e046bea55f8ecfc977bf05bd2ea"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=tools/official_client_capture/candidate_test_trace.py",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-test-trace-preflight-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+        "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "28bf67800e2d1d9b5806b6f189c1db2819c3918672c2e3e37348a46bb58cddc6"
+    },
+    {
+      "old_path": "",
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "predecessor_sha256s": [
+        "4e4add98786ffe1eb454afde394c0863de4dd28cca6a8b09266d978ba3554a11"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-reconnect-repair-gate-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-release-prep-source-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "f3c040ff0291e77234e9a90d4dca42d431641e6a144c4a2c2d2e5b37e4c8eb41"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/__main__.py",
+      "predecessor_sha256s": [
+        "3ac40478b56c2fdb7937824e3fed430e69f3b29d9a0d1a51d452b9af22432745"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=tools/upstream_merge/__main__.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json",
+        "docs/egress/maintenance/upstream-tooling-batch2-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "a26c554f061eff4e63ba81376d6c3de5fb2b1ca08d84bdbaa11707a9fc9aafaf"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge_artifacts.schema.json",
+      "predecessor_sha256s": [
+        "602195c4090b2bbdc3beae32f00f6799ba6add4ceb42d885d4d1b67fa9ad440d"
+      ],
+      "reason": "修复 OpenAI OAuth 官方出站在同一请求内模型能力判定撕裂：ensure 之后一次查表并钉在 ctx；同步受管工具身份三件套；freeze 工具兼容 Python 门禁的 identity 与追加工作树边；只登记这些文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 选择或生产配置 path=tools/upstream_merge_artifacts.schema.json",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json",
+        "docs/egress/maintenance/upstream-tooling-batch4-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "1de4005376fc35b8ef9985aade5b7598b298b4d8d734ee164a71530bd0277bb9"
+    }
+  ],
+  "unregistered_path_count": 3,
+  "unregistered_paths": [
+    "backend/internal/service/openai_model_capabilities_pin_test.go",
+    "tools/upstream_merge/freeze.py",
+    "tools/upstream_merge/tests/test_freeze.py"
+  ],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci",
+    "python3 -m unittest tools.official_client_capture.tests.test_arm64_supervised_deploy",
+    "python3 -m unittest tools.official_client_capture.tests.test_candidate_test_trace",
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+  ]
+}
