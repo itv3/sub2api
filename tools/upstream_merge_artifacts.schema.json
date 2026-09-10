@@ -19,9 +19,220 @@
     {"$ref": "#/$defs/sourceTransition"},
     {"$ref": "#/$defs/candidateDisposition"},
     {"$ref": "#/$defs/branchApply"},
-    {"$ref": "#/$defs/upstreamReceipt"}
+    {"$ref": "#/$defs/upstreamReceipt"},
+    {"$ref": "#/$defs/freezeSuccessor"}
   ],
   "$defs": {
+    "freezeSuccessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "issued_at_utc",
+        "base_commit",
+        "current_commit",
+        "scope",
+        "mode",
+        "frozen_path_count",
+        "frozen_edge_count",
+        "changed_path_count",
+        "transitions",
+        "unregistered_path_count",
+        "unregistered_paths",
+        "deleted_frozen_paths",
+        "required_manual_actions",
+        "verification",
+        "safety",
+        "result",
+        "identity_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "official-egress-upstream-freeze-successor/v1"
+        },
+        "issued_at_utc": {
+          "type": "string"
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "current_commit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "^upstream-[A-Za-z0-9][A-Za-z0-9._-]{0,191}-freeze-successor$"
+        },
+        "mode": {
+          "enum": [
+            "commit",
+            "worktree"
+          ]
+        },
+        "frozen_path_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frozen_edge_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_path_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "old_path",
+              "status",
+              "predecessor_sha256s",
+              "to_sha256",
+              "source_receipts",
+              "reason"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "old_path": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "A",
+                  "M",
+                  "T",
+                  "R",
+                  "C"
+                ]
+              },
+              "predecessor_sha256s": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "to_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "source_receipts": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "unregistered_path_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unregistered_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deleted_frozen_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_manual_actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "rule_id",
+              "path",
+              "action_kind",
+              "instruction",
+              "verification"
+            ],
+            "properties": {
+              "rule_id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "action_kind": {
+                "enum": [
+                  "python_receipt_list",
+                  "script_constant",
+                  "single_hop_file",
+                  "manual_required"
+                ]
+              },
+              "file": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "instruction": {
+                "type": "string"
+              },
+              "verification": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "verification": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "safety": {
+          "type": "object"
+        },
+        "result": {
+          "enum": [
+            "passed_local_evidence_successor",
+            "manual_actions_required"
+          ]
+        },
+        "identity_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "gitObject": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},

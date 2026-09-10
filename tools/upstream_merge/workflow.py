@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -1133,6 +1134,53 @@ def _validate_transition_git_node(
         _validate_transition_git_node(repository_root, prior_path, prior_document, seen)
 
 
+def _assert_no_interval_bound_receipts(
+    repository_root: Path,
+    before: str,
+    after: str,
+    entries: list[dict[str, Any]],
+) -> None:
+    """拒绝把绑定本区间的收据记进 transition。
+
+    successor／transition 收据若在它们描述的提交区间内被提交，就会出现
+    “收据摘要进入 transition，transition 摘要又被收据绑定”的循环。规则固定为：
+    先封存源码提交，再单独提交收据；这里只在生成阶段拦截，历史节点保持只读。
+    """
+
+    for item in entries:
+        relative = item["path"]
+        if item["status"] == "D" or not relative.startswith("docs/egress/maintenance/"):
+            continue
+        if not relative.endswith(".json"):
+            continue
+        content = subprocess.run(
+            ["git", "cat-file", "blob", f"{after}:{relative}"],
+            cwd=repository_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if content.returncode != 0:
+            continue
+        try:
+            document = json.loads(content.stdout.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(document, dict):
+            continue
+        for key in ("base_commit", "current_commit"):
+            bound = document.get(key)
+            if not isinstance(bound, str) or not re.fullmatch(r"[0-9a-f]{40}", bound) or bound == before:
+                continue
+            inside = run_git(repository_root, "merge-base", "--is-ancestor", before, bound, check=False)
+            reaches_after = run_git(repository_root, "merge-base", "--is-ancestor", bound, after, check=False)
+            if inside.returncode == 0 and reaches_after.returncode == 0:
+                raise UpstreamMergeError(
+                    "SourceTransition 区间内包含绑定本区间的收据，存在自引用循环："
+                    f"{relative}（{key}={bound[:12]}）；请先封存源码提交，再单独提交收据"
+                )
+
+
 def generate_source_transition(
     repository_root: Path,
     before_commit: str,
@@ -1193,6 +1241,7 @@ def generate_source_transition(
     entries.sort(key=lambda item: item["path"])
     if not entries:
         raise UpstreamMergeError("source-transition before/after 没有文件变化")
+    _assert_no_interval_bound_receipts(root, before, after, entries)
     sequence = 1
     predecessor_binding: dict[str, Any] | None = None
     if predecessor_register is not None:

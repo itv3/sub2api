@@ -1,0 +1,100 @@
+{
+  "identity_sha256": "235a22b9fe39c77f99ea797901112d39d8a54e506e89873d5df0e37324e80591",
+  "issued_at_utc": "2026-09-10T08:59:00Z",
+  "policy": {
+    "chain_policy": "只承接已登记摘要到当前摘要的精确边；前序摘要不在已登记集合中即链断裂，工具 fail-close，不得凭空补边。",
+    "generic_graph": "docs/egress/maintenance/*.json 中 schema_version 含 successor、transition、ledger 或 receipt 的收据参与抽边；任何带非空 path 与 reason 的对象按 predecessor_sha256s、predecessor_sha256、from_sha256、before.sha256 到 to_sha256、current_sha256、head_sha256、after.sha256 抽取显式边；after 含 existence 的收据视为已封存快照，该路径全部已登记摘要都可承接到快照。",
+    "registry_change_policy": "本注册表位于 docs/egress/maintenance，修改它不属于工具闭集变化，但每次修改都必须重新 identity-seal。",
+    "self_binding_policy": "successor 收据不进入它所描述的提交，也不引用本区间内变化的收据；先封存源码提交，再单独提交收据。"
+  },
+  "purpose": "登记通用 successor 图之外仍需额外动作的冻结台账；未命中任何规则的冻结路径只需 freeze-successor-generate 生成的精确边即可被两包 Go 门禁承接。",
+  "rules": [
+    {
+      "action": {
+        "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+        "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+        "kind": "python_receipt_list"
+      },
+      "description": "Codex CLI 0.151 worktree successor 登记的路径由 Python 门禁沿显式列出的 successor 收据承接。",
+      "id": "codex-0151-worktree-successor",
+      "match": {
+        "receipt_paths": [
+          "docs/egress/maintenance/codex-cli-0151-worktree-successor.json"
+        ]
+      },
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    },
+    {
+      "action": {
+        "file": "tools/arm64_supervised_deploy.py",
+        "instruction": "用 tools/arm64_supervised_deploy.py 的 tool_digest() 与 file_sha256() 重算 DEFAULT_TOOL_DIGEST、DEFAULT_SUPERVISOR_DIGEST、DEFAULT_ASSERTION_PREPARER_DIGEST 并更新常量；脚本自身随之变化，须在同一收据或后续收据中登记其后继摘要。",
+        "kind": "script_constant"
+      },
+      "description": "ARM64 受监督部署脚本内置 official_client_capture 工具树、supervisor 与 assertion preparer 三个摘要常量。",
+      "id": "arm64-managed-tool-digests",
+      "match": {
+        "prefixes": [
+          "tools/official_client_capture/",
+          "tools/prepare_assertion_bundle.sh"
+        ]
+      },
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_arm64_supervised_deploy"
+      ]
+    },
+    {
+      "action": {
+        "file": "docs/egress/maintenance/scanner-algorithm-successor.json",
+        "instruction": "from_sha256 固定为 bootstrap-inventory-lock.json 的 scanner_algorithm_sha256，把 to_sha256 改写为当前非测试 Go 源码的算法摘要，source_transition 指向本次收据，reviewed_by 与 reason 写明审阅来源；同一文件只能表达一跳。",
+        "kind": "single_hop_file"
+      },
+      "description": "egressscan -mode check 只认单跳的 scanner-algorithm-successor.json 承接扫描器算法摘要。",
+      "id": "scanner-algorithm-successor",
+      "match": {
+        "exclude_suffixes": [
+          "_test.go"
+        ],
+        "prefixes": [
+          "backend/cmd/egressscan/"
+        ]
+      },
+      "verification": [
+        "cd backend && go run ./cmd/egressscan -mode self-test",
+        "make check-egress-spec-ci"
+      ]
+    },
+    {
+      "action": {
+        "file": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+        "instruction": "工具不得自动登记；这些路径变化会改变 Campaign 工具身份，须老板确认后按官方客户端升级流程处理 fact map 与 trace 的快照。",
+        "kind": "manual_required"
+      },
+      "description": "candidate_test_fact_map_0_151_0.json 与 candidate_test_trace.py 冻结的 13 个源码快照属于 Codex CLI 0.151 Campaign 工具身份。",
+      "id": "codex-0151-campaign-fact-map",
+      "match": {
+        "paths": [
+          "backend/internal/repository/http_upstream.go",
+          "backend/internal/service/official_egress_codex_0145_profile.go",
+          "backend/internal/service/official_egress_codex_engine.go",
+          "backend/internal/service/official_egress_codex_files.go",
+          "backend/internal/service/official_egress_codex_integration.go",
+          "backend/internal/service/official_egress_integration.go",
+          "backend/internal/service/official_egress_openai_http.go",
+          "backend/internal/service/official_egress_openai_ws.go",
+          "backend/internal/service/openai_alpha_search.go",
+          "backend/internal/service/openai_gateway_forward.go",
+          "backend/internal/service/openai_live.go",
+          "backend/internal/service/openai_ws_client.go",
+          "backend/internal/service/openai_ws_forwarder_payload.go"
+        ]
+      },
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_candidate_test_trace"
+      ]
+    }
+  ],
+  "schema_version": "official-egress-freeze-registry/v1",
+  "scope": "freeze-registry"
+}

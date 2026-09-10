@@ -1,0 +1,73 @@
+{
+  "base_commit": "e2493eac00a7067029e612f595d6fe834c1cfde3",
+  "changed_path_count": 3,
+  "current_commit": null,
+  "deleted_frozen_paths": [],
+  "frozen_edge_count": 2641,
+  "frozen_path_count": 1259,
+  "identity_sha256": "48c7078cc810081fbdcc5a51acdb37799d83e3fc1ea9abc29fe221370215cea1",
+  "issued_at_utc": "2026-09-10T09:03:00Z",
+  "mode": "worktree",
+  "required_manual_actions": [],
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-tooling-batch1-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/__main__.py",
+      "predecessor_sha256s": [
+        "e1053bbb9d57de60575c9d64723ee936bbb00dfaac814e9c19e56090980e7a59"
+      ],
+      "reason": "第一批上游合并工具改动：新增冻结台账注册表与 freeze-successor-generate 子命令，并为 source-transition 增加自引用校验；只登记工具闭集文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=tools/upstream_merge/__main__.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "a2b174888d34286db03494adb90b33ffc188539b9fa5b2539a09b7b6c2cf247d"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/workflow.py",
+      "predecessor_sha256s": [
+        "e4a891b951459488333d8cc69dff8305b9bc2461a7abec769578fc4418e48c6c"
+      ],
+      "reason": "第一批上游合并工具改动：新增冻结台账注册表与 freeze-successor-generate 子命令，并为 source-transition 增加自引用校验；只登记工具闭集文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=tools/upstream_merge/workflow.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "f14ac0bec02c64c511e14ca78edb5df4c2c52cf38f8097675f4166c1b9b95ae9"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge_artifacts.schema.json",
+      "predecessor_sha256s": [
+        "631439862d9eba61eed4a133b70bc261a394bd8e5435964d0c3f169576dde486"
+      ],
+      "reason": "第一批上游合并工具改动：新增冻结台账注册表与 freeze-successor-generate 子命令，并为 source-transition 增加自引用校验；只登记工具闭集文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=tools/upstream_merge_artifacts.schema.json",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "c2d2acdc83b6c816d269a677fe746f26e9a68342ba538f65ac12868c583c6ba8"
+    }
+  ],
+  "unregistered_path_count": 0,
+  "unregistered_paths": [],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci"
+  ]
+}

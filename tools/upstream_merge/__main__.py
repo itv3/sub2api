@@ -11,6 +11,7 @@ from .canonical import bind_identity, canonical_bytes, expect_object, load_json,
 from .baseline import seal_baseline_acceptance, validate_baseline_acceptance
 from .contracts import create_plan, load_plan
 from .errors import UpstreamMergeError
+from .freeze import generate_freeze_successor
 from .workflow import (
     apply_candidate_to_managed_branch,
     carry_forward_inventory,
@@ -109,6 +110,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repository(transition_validate)
     transition_validate.add_argument("--transition", required=True, type=_absolute)
+
+    freeze = commands.add_parser(
+        "freeze-successor-generate",
+        help="在最终 revision 一次性生成全部冻结台账的 successor 收据",
+    )
+    _add_repository(freeze)
+    freeze.add_argument("--before", required=True, help="源码变化前的提交完整 SHA-1")
+    freeze.add_argument(
+        "--after",
+        help="源码最终提交完整 SHA-1；省略时以当前工作树为后继状态",
+    )
+    freeze.add_argument("--tag", required=True, help="上游 tag 或批次标识，用于 scope 与文件命名")
+    freeze.add_argument(
+        "--output",
+        type=_absolute,
+        help="收据绝对路径，仓库内只能写入 docs/egress/maintenance/；--dry-run 时可省略",
+    )
+    freeze.add_argument("--reason", help="统一原因；每条 transition 会追加 path")
+    freeze.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只输出冻结命中、未登记路径与特殊待办，不落盘",
+    )
 
     validate = commands.add_parser("plan-validate", help="只读复算完整计划")
     _add_plan(validate)
@@ -269,6 +293,16 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
         )
     if command == "source-transition-validate":
         return validate_source_transition(arguments.repository, arguments.transition)
+    if command == "freeze-successor-generate":
+        return generate_freeze_successor(
+            arguments.repository,
+            arguments.before,
+            arguments.after,
+            arguments.output,
+            tag=arguments.tag,
+            reason=arguments.reason,
+            dry_run=arguments.dry_run,
+        )
     if command == "identity-seal":
         draft = expect_object(load_json(arguments.input, "identity draft"), "identity draft")
         if "identity_sha256" in draft:
