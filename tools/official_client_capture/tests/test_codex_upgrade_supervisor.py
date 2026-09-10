@@ -587,8 +587,13 @@ class SupervisorTests(unittest.TestCase):
             report = _audit_command(Path(payload["run_dir"]))
             self.assertFalse(report["audit_incomplete"])
             self.assertGreaterEqual(report["classification_counts"].get("failed", 0), 1)
+            # 命令运行期间账本按 heartbeat state=running 写出 active 桶属于合法分类；
+            # 子进程启动慢于一个账本间隔（CI runner 常见）就会出现，不能据此判失败。
+            # 这里只排除 audit-incomplete / stopped / planning 等不该出现的分类。
             self.assertTrue(
-                set(report["classification_counts"]).issubset({"failed", "waiting"})
+                set(report["classification_counts"]).issubset(
+                    {"failed", "waiting", "active"}
+                )
             )
 
     def test_campaign_parent_covers_planning_waiting_and_stop(self) -> None:
