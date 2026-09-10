@@ -145,8 +145,14 @@ func (r passthroughErrReadCloser) Close() error {
 
 // codexModelsRecorderManifest 供测试替身应答模型清单请求。字段取值与实抓 fixture
 // 一致，保证 Lite 判定与生产同源。
+//
+// 清单必须覆盖测试里出现的全部 gpt-5.6 系列 slug：三条都是 visibility=list，账号
+// 清单会整体接管，未列出的 slug 会被判为“已知不支持 Lite”。此前缺少 gpt-5.6-terra，
+// ensureOpenAIModelCapability 按内置能力表判 terra 已知后只做异步刷新，刷新一旦抢在
+// 能力解析之前完成，terra 就从 Lite 翻成非 Lite，造成 lite 头随机缺失的不稳定测试。
 const codexModelsRecorderManifest = `{"models":[` +
 	`{"slug":"gpt-5.6-luna","visibility":"list","use_responses_lite":true,"supports_parallel_tool_calls":true},` +
+	`{"slug":"gpt-5.6-terra","visibility":"list","use_responses_lite":true,"supports_parallel_tool_calls":true},` +
 	`{"slug":"gpt-5.5","visibility":"list","use_responses_lite":false,"supports_parallel_tool_calls":true},` +
 	`{"slug":"gpt-5.4","visibility":"list","use_responses_lite":false,"supports_parallel_tool_calls":true}` +
 	`]}`

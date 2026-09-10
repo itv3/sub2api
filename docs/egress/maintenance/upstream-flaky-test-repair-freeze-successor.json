@@ -1,0 +1,46 @@
+{
+  "base_commit": "5aa8fbb7886e79d81517a505c6d3069c00be4d9f",
+  "changed_path_count": 2,
+  "current_commit": null,
+  "deleted_frozen_paths": [],
+  "frozen_edge_count": 2648,
+  "frozen_path_count": 1259,
+  "identity_sha256": "ecc3f574737809b1ebd2d35514a19f0924509ed8da0ec8eb068984bc4c115771",
+  "issued_at_utc": "2026-09-10T10:08:00Z",
+  "mode": "worktree",
+  "required_manual_actions": [],
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-flaky-test-repair-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "backend/internal/service/openai_oauth_passthrough_test.go",
+      "predecessor_sha256s": [
+        "2eccd7311e21c699f1c2cd35a558583f29eb2f59ee258194ead10b613ff92abe"
+      ],
+      "reason": "修复两个 CI 不稳定测试：替身模型清单补 gpt-5.6-terra 消除与异步刷新的赛跑；只登记测试文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=backend/internal/service/openai_oauth_passthrough_test.go",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "5eefc8c83c6e0a4197afb092408223438d17648d54b57ac9f2c1de0245604b14"
+    }
+  ],
+  "unregistered_path_count": 1,
+  "unregistered_paths": [
+    "tools/official_client_capture/tests/test_codex_upgrade_supervisor.py"
+  ],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci"
+  ]
+}

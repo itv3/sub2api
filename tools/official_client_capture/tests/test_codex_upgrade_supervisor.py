@@ -24,6 +24,11 @@ from tools.official_client_capture.codex_upgrade_supervisor import (
 )
 
 
+# worker 丢失／会话挂断必须在心跳失联判定（DEFAULT_HEARTBEAT_SECONDS × 1.25 = 6.25 秒）之前被检测到。
+# 2 秒既能证明走的是即时检测路径，又给 CI runner 的进程调度留出余量；0.5 秒曾在 CI 上以 2.6 毫秒之差误判。
+IMMEDIATE_DETECTION_SECONDS = 2.0
+
+
 class SupervisorTests(unittest.TestCase):
     def _campaign_command(self, *arguments: str) -> dict[str, object]:
         """通过真实 CLI 进程验证常驻 Campaign 接口。"""
@@ -893,7 +898,9 @@ class SupervisorTests(unittest.TestCase):
             os.kill(process.pid, signal.SIGKILL)
             process.communicate(timeout=2)
             state = self._wait_campaign_state(run_dir, {"failed"})
-            self.assertLess(time.monotonic() - started, 0.5)
+            # 断言的是“立即检测到 worker 丢失”，即远快于心跳失联判定（heartbeat_seconds × 1.25）；
+            # 阈值取 2 秒，既保留量级差异，又不被 CI runner 的调度抖动误判。
+            self.assertLess(time.monotonic() - started, IMMEDIATE_DETECTION_SECONDS)
             self.assertEqual(state["state"], "failed")
             archive = run_dir / "campaign-actions" / f"{activity['action_id']}.json"
             receipt = json.loads(archive.read_text(encoding="utf-8"))
@@ -919,7 +926,7 @@ class SupervisorTests(unittest.TestCase):
             os.kill(process.pid, signal.SIGHUP)
             process.communicate(timeout=2)
             state = self._wait_campaign_state(run_dir, {"failed"})
-            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertLess(time.monotonic() - started, IMMEDIATE_DETECTION_SECONDS)
             self.assertEqual(state["state"], "failed")
 
     def test_campaign_dispatch_timeout_is_failed_without_audit_gap(self) -> None:
