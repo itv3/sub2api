@@ -1549,6 +1549,24 @@ def _load_conflict_input(
     return result
 
 
+def _infer_conflict_resolution(
+    worktree: Path,
+    conflict_stages: list[dict[str, Any]],
+    relative: str,
+) -> str:
+    """按 index 对象事实推断处置类型；整文件取某一侧才是 fork/upstream，其余为 manual。"""
+
+    resolved_state = _index_path_state(worktree, relative)
+    for stage, name in ((2, "fork"), (3, "upstream")):
+        try:
+            staged = _conflict_stage_state(worktree, conflict_stages, relative, stage)
+        except UpstreamMergeError:
+            continue
+        if resolved_state == staged:
+            return name
+    return "manual"
+
+
 def _index_path_state(worktree: Path, relative: str) -> dict[str, Any]:
     completed = run_git(worktree, "ls-files", "-s", "--", relative, check=False)
     rows = [line for line in completed.stdout.splitlines() if line]
@@ -1651,8 +1669,10 @@ def seal_merge(plan: LoadedPlan, conflict_input: Path | None) -> dict[str, Any]:
                 expected_stage,
             )
             if resolved_state != expected_state:
+                actual = _infer_conflict_resolution(worktree, start["conflict_stages"], relative)
                 raise UpstreamMergeError(
-                    f"{relative} 声明使用 {resolution} 处置，但实际 index 对象不一致"
+                    f"{relative} 声明使用 {resolution} 处置，但实际 index 对象不一致；"
+                    f"按当前 index 应为 {actual}"
                 )
         resolutions.append({**decisions[relative], "resolved_state": resolved_state})
     conflict_document = _stage_document(
@@ -2160,8 +2180,21 @@ def carry_forward_inventory(plan: LoadedPlan, client: str, kind: str) -> dict[st
         if kind == "egress" and item["surface"] == "egress" and client in item["clients"]:
             blocking.append(item["delta_id"])
     if blocking:
+        source_revision = latest_revision(plan, "source_candidate")
+        try:
+            if source_revision > 1:
+                target = next_inventory_path(plan, client, kind, revision=source_revision)
+            else:
+                target = resolve_within(
+                    plan.evidence_root,
+                    plan.document["outputs"]["candidate_inventories"][client][kind],
+                    f"outputs.candidate_inventories.{client}.{kind}",
+                )
+            hint = f"；本轮应写入 {target}"
+        except UpstreamMergeError:
+            hint = ""
         raise UpstreamMergeError(
-            f"{client}/{kind} 发现分母有变化，必须由专用流程重新生成 Inventory：{blocking}"
+            f"{client}/{kind} 发现分母有变化，必须由专用流程重新生成 Inventory：{blocking}{hint}"
         )
     field = "production_ingress_inventory" if kind == "ingress" else "egress_disposition_inventory"
     baseline = plan.document["baselines"][field][client]
@@ -2485,6 +2518,15 @@ def _suggest_categories(relative: str, risk_hints: list[str]) -> list[str]:
         categories.add("key_group_routing_billing")
     if lower.startswith(("frontend/", "deploy/", ".github/")):
         categories.add("repository_support")
+    # wire/selector 提示必须被 Persona、协议适配或共享控制面之一承接（见 ChangeDecision 校验）。
+    # 建议端若不产生，草稿在自身校验下天然不合规；按路径归属给出与校验同域的默认承接。
+    if any(item in risk_hints for item in ("wire", "selector")) and not (
+        categories & {"claude_persona", "codex_persona", "protocol_adapter", "shared_control"}
+    ):
+        if lower.startswith(("backend/internal/handler/", "backend/internal/service/", "backend/internal/server/")):
+            categories.add("protocol_adapter")
+        else:
+            categories.add("shared_control")
     if not categories:
         categories.add("out_of_scope_product")
     return sorted(categories)
@@ -2996,7 +3038,9 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
     if "auto_accepted_count" in decision:
         value = decision["auto_accepted_count"]
         if isinstance(value, bool) or not isinstance(value, int) or value != auto_count:
-            raise UpstreamMergeError("ChangeDecision.auto_accepted_count 不一致")
+            raise UpstreamMergeError(
+            f"ChangeDecision.auto_accepted_count 不一致：应为 {auto_accepted_count}"
+        )
     if "manual_required_count" in decision:
         value = decision["manual_required_count"]
         if (
@@ -3004,7 +3048,9 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
             or not isinstance(value, int)
             or value != manual_required_count
         ):
-            raise UpstreamMergeError("ChangeDecision.manual_required_count 不一致")
+            raise UpstreamMergeError(
+            f"ChangeDecision.manual_required_count 不一致：应为 {manual_required_count}"
+        )
     if "unresolved_paths" in decision:
         unresolved_paths = decision["unresolved_paths"]
         if not isinstance(unresolved_paths, list) or unresolved_paths != sorted(set(unresolved_paths)):
@@ -3021,7 +3067,9 @@ def seal_change_decision(plan: LoadedPlan, decision_path: Path) -> dict[str, Any
             "ready_for_review" if manual_required_count else "ready_to_seal"
         )
         if decision["result"] != expected_draft_result:
-            raise UpstreamMergeError("ChangeDecision.result 与决策计数不一致")
+            raise UpstreamMergeError(
+            f"ChangeDecision.result 与决策计数不一致：应为 {expected_draft_result}"
+        )
     receipt = _stage_document(
         plan,
         CHANGE_DECISION_RECEIPT_SCHEMA,

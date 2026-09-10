@@ -53,6 +53,8 @@ from tools.upstream_merge.workflow import (
     _auto_classification,
     _apply_client_impact,
     _component_ownership,
+    _infer_conflict_resolution,
+    _suggest_categories,
     _gate_groups,
     _load_surface_delta,
     _recompute_merge_start,
@@ -872,6 +874,76 @@ class UpstreamMergeWorkflowTests(unittest.TestCase):
 
         visit(schema)
         self.assertEqual(missing, set())
+
+
+
+class SuggestionSelfConsistencyTests(unittest.TestCase):
+    """建议端产出必须能通过校验端的同一组要求。"""
+
+    CARRIERS = {"claude_persona", "codex_persona", "protocol_adapter", "shared_control"}
+
+    def test_wire_selector_hints_always_get_a_carrier(self) -> None:
+        # ChangeDecision 校验要求 wire/selector 提示被四类之一承接；
+        # 建议端若不产生，工具生成的草稿在自身校验下天然不合规。
+        paths = [
+            "backend/ent/client.go",
+            "backend/ent/proxy/where.go",
+            "backend/go.mod",
+            "frontend/src/api/admin/accounts.ts",
+            "deploy/docker-compose.yml",
+            "backend/internal/handler/gateway_handler.go",
+            "backend/internal/service/account.go",
+            "backend/internal/server/routes/admin.go",
+            "docs/egress/maintenance/example.json",
+        ]
+        for path in paths:
+            for hint in ("wire", "selector"):
+                with self.subTest(path=path, hint=hint):
+                    categories = set(_suggest_categories(path, [hint]))
+                    self.assertTrue(
+                        categories & self.CARRIERS,
+                        f"{path} 带 {hint} 提示却没有承接类别：{sorted(categories)}",
+                    )
+
+    def test_key_group_hints_keep_their_carrier(self) -> None:
+        for hint in ("account", "billing", "group", "key", "quota_usage", "route"):
+            with self.subTest(hint=hint):
+                self.assertIn(
+                    "key_group_routing_billing",
+                    _suggest_categories("backend/internal/repository/proxy_repo.go", [hint]),
+                )
+
+    def test_no_hint_keeps_previous_classification(self) -> None:
+        # 无 wire/selector 提示时不得凭空引入承接类别。
+        self.assertEqual(
+            _suggest_categories("README_CN.md", []),
+            ["out_of_scope_product"],
+        )
+
+
+class ConflictResolutionInferenceTests(unittest.TestCase):
+    """merge-seal 已能从 index 事实推断处置类型，拒绝时必须说出来。"""
+
+    def test_infers_fork_upstream_and_manual(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = SyntheticRepository(Path(directory), conflict=True)
+            start = start_merge(repo.plan)
+            worktree = repo.worktree
+            stages = start["conflict_stages"]
+            path = "conflict.txt"
+
+            # 冲突一旦 add 就没有 stage 2/3 可 checkout，直接按两侧内容写入 index。
+            for content, expected in (
+                ("fork\n", "fork"),
+                ("upstream\n", "upstream"),
+                ("hand merged\n", "manual"),
+            ):
+                with self.subTest(expected=expected):
+                    (worktree / path).write_text(content, encoding="utf-8")
+                    run(worktree, "git", "add", "--", path)
+                    self.assertEqual(
+                        _infer_conflict_resolution(worktree, stages, path), expected
+                    )
 
 
 if __name__ == "__main__":
