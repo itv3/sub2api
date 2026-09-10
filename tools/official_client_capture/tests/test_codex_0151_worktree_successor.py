@@ -47,6 +47,10 @@ VERSION_SYNC_0233_FREEZE_SUCCESSOR = (
 UPSTREAM_V024_FREEZE_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-v0.2.4-freeze-successor.json"
 )
+# 2026-09-11：发版 VERSION 同步（0.2.4-1）与 §5.2 精简改写的后继摘要。
+DOC_TRIM_20260911_FREEZE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-doc-trim-20260911-freeze-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -125,6 +129,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         CAPABILITY_PIN_FREEZE_SUCCESSOR,
         VERSION_SYNC_0233_FREEZE_SUCCESSOR,
         UPSTREAM_V024_FREEZE_SUCCESSOR,
+        DOC_TRIM_20260911_FREEZE_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
