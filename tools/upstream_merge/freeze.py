@@ -22,13 +22,13 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .canonical import (
     SAFE_ID_RE,
-    bind_identity,
     expect_git_object,
     expect_object,
     load_json,
@@ -61,6 +61,26 @@ REGISTRY_ACTION_KINDS = {
     "single_hop_file",
     "manual_required",
 }
+
+
+def gate_compatible_identity(document: dict[str, Any]) -> str:
+    """按 Python 工作区门禁的算法计算自摘要：紧凑、键排序、无尾换行。
+
+    Go 侧通用 successor 图不校验 identity；Python 门禁
+    ``test_codex_0151_worktree_successor.py`` 会校验，且用的是无尾换行形态。
+    freeze successor 必须能被两侧同时接受，因此统一采用门禁形态。
+    """
+
+    unsigned = {key: value for key, value in document.items() if key != "identity_sha256"}
+    return sha256_bytes(
+        json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def bind_gate_compatible_identity(document: dict[str, Any]) -> dict[str, Any]:
+    result = dict(document)
+    result["identity_sha256"] = gate_compatible_identity(result)
+    return result
 
 
 @dataclass(frozen=True)
@@ -336,10 +356,20 @@ def plan_freeze_successor(
     repository_root: Path,
     before_commit: str,
     after_commit: str | None = None,
+    *,
+    extra_worktree_paths: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """计算 before..after（或 before..工作树）中命中冻结覆盖的路径及其精确边。"""
+    """计算 before..after（或 before..工作树）中命中冻结覆盖的路径及其精确边。
+
+    ``extra_worktree_paths`` 只在 commit 模式使用：把工作树中已定稿、但要与收据同一
+    提交落地的文件（典型是引用本收据的 Python 门禁文件）以“before 提交摘要 → 当前
+    工作树摘要”追加进来，避免为它再开一份收据。
+    """
 
     root = assert_git_repository(repository_root)
+    extras = [safe_relative_path(item, "extra worktree path") for item in extra_worktree_paths]
+    if extras and after_commit is None:
+        raise UpstreamMergeError("--extra-worktree-path 只能与 --after 一起使用")
     before = expect_git_object(before_commit, "freeze before commit")
     if git_output(root, "cat-file", "-t", before) != "commit":
         raise UpstreamMergeError("freeze before 必须是 commit")
@@ -354,6 +384,12 @@ def plan_freeze_successor(
         if ancestry.returncode != 0:
             raise UpstreamMergeError("freeze after commit 必须是 before 的后继")
         changes = _diff_name_status(root, before, after)
+        committed = {change["path"] for change in changes}
+        for extra in extras:
+            if extra in committed:
+                raise UpstreamMergeError(f"追加的工作树路径已在 before..after 中变化，不得重复登记：{extra}")
+            changes.append({"status": "M", "path": extra, "old_path": ""})
+        changes.sort(key=lambda item: item["path"])
     else:
         changes = _diff_name_status(root, before)
     edges, known, receipts_by_path = load_frozen_edges(root)
@@ -394,7 +430,10 @@ def plan_freeze_successor(
             deleted_frozen.append(path)
             continue
         before_digest = _blob_digest_at(root, before, old_path)
-        after_digest = _blob_digest_at(root, after, path) if after is not None else _worktree_digest(root, path)
+        if after is not None and path not in extras:
+            after_digest = _blob_digest_at(root, after, path)
+        else:
+            after_digest = _worktree_digest(root, path)
         if after_digest is None:
             raise UpstreamMergeError(f"无法读取冻结路径的当前内容：{path}")
         if before_digest is None or before_digest not in known.get(old_path, set()):
@@ -426,6 +465,7 @@ def plan_freeze_successor(
         "mode": "commit" if after is not None else "worktree",
         "before_commit": before,
         "after_commit": after,
+        "extra_worktree_paths": extras,
         "frozen_path_count": len(known),
         "frozen_edge_count": len(edges),
         "changed_path_count": len(changes),
@@ -481,13 +521,14 @@ def generate_freeze_successor(
     tag: str,
     reason: str | None = None,
     dry_run: bool = False,
+    extra_worktree_paths: Sequence[str] = (),
 ) -> dict[str, Any]:
     """在最终 revision 一次性生成全部冻结台账的 successor 收据。"""
 
     root = assert_git_repository(repository_root)
     if not isinstance(tag, str) or not SAFE_ID_RE.match(tag):
         raise UpstreamMergeError("freeze tag 必须是安全标识")
-    plan = plan_freeze_successor(root, before_commit, after_commit)
+    plan = plan_freeze_successor(root, before_commit, after_commit, extra_worktree_paths=extra_worktree_paths)
     output_relative: str | None = None
     if output_path is not None:
         if not output_path.is_absolute():
@@ -534,7 +575,7 @@ def generate_freeze_successor(
         result = "manual_actions_required"
     else:
         result = "passed_local_evidence_successor"
-    document = bind_identity(
+    document = bind_gate_compatible_identity(
         {
             "schema_version": FREEZE_SUCCESSOR_SCHEMA,
             "issued_at_utc": time.strftime("%Y-%m-%dT%H:%M:00Z", time.gmtime()),
@@ -542,6 +583,7 @@ def generate_freeze_successor(
             "current_commit": plan["after_commit"],
             "scope": f"upstream-{tag}-freeze-successor",
             "mode": plan["mode"],
+            "extra_worktree_paths": plan["extra_worktree_paths"],
             "frozen_path_count": plan["frozen_path_count"],
             "frozen_edge_count": plan["frozen_edge_count"],
             "changed_path_count": plan["changed_path_count"],

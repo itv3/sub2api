@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -15,6 +16,7 @@ from tools.upstream_merge.freeze import (
     FREEZE_REGISTRY_SCHEMA,
     FREEZE_SUCCESSOR_SCHEMA,
     MAINTENANCE_ROOT,
+    gate_compatible_identity,
     generate_freeze_successor,
     load_freeze_registry,
     load_frozen_edges,
@@ -329,7 +331,15 @@ class FreezeSuccessorTest(unittest.TestCase):
         self.assertEqual(document["schema_version"], FREEZE_SUCCESSOR_SCHEMA)
         self.assertEqual(document["scope"], "upstream-t2-freeze-successor")
         self.assertIsNone(document["current_commit"])
-        validate_identity(document, "freeze successor")
+        # 自摘要采用 Python 工作区门禁的算法：紧凑、键排序、无尾换行。
+        unsigned = {key: value for key, value in document.items() if key != "identity_sha256"}
+        gate_style = hashlib.sha256(
+            json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(document["identity_sha256"], gate_style)
+        self.assertEqual(gate_compatible_identity(document), gate_style)
+        with self.assertRaises(UpstreamMergeError):
+            validate_identity(document, "带尾换行的 canonical 算法不应匹配")
         transition = document["transitions"][0]
         self.assertEqual(transition["path"], "backend/b.go")
         self.assertEqual(transition["to_sha256"], digest("package b // changed\n"))
@@ -358,6 +368,29 @@ class FreezeSuccessorTest(unittest.TestCase):
         receipt.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         with self.assertRaisesRegex(UpstreamMergeError, "自引用"):
             generate_freeze_successor(self.root, self.base, None, self.maintenance / "out.json", tag="t4")
+
+    def test_extra_worktree_path_is_appended_in_commit_mode(self) -> None:
+        (self.root / "backend/a.go").write_text("package a // changed\n", encoding="utf-8")
+        after = self._commit("source change")
+        # 门禁文件在工作树中定稿但尚未提交：以 before 提交摘要 → 工作树摘要追加。
+        (self.root / "tools/e.py").write_text("print('gate references receipt')\n", encoding="utf-8")
+        plan = plan_freeze_successor(self.root, self.base, after, extra_worktree_paths=["tools/e.py"])
+        self.assertEqual([hit["path"] for hit in plan["frozen_hits"]], ["backend/a.go", "tools/e.py"])
+        extra = plan["frozen_hits"][1]
+        self.assertEqual(extra["predecessor_sha256s"], [digest(self.sources["tools/e.py"])])
+        self.assertEqual(extra["to_sha256"], digest("print('gate references receipt')\n"))
+        output = self.maintenance / "upstream-t8-freeze-successor.json"
+        summary = generate_freeze_successor(
+            self.root, self.base, after, output, tag="t8", extra_worktree_paths=["tools/e.py"]
+        )
+        document = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(document["current_commit"], after)
+        self.assertEqual(document["extra_worktree_paths"], ["tools/e.py"])
+        self.assertEqual(summary["transition_count"], 2)
+        with self.assertRaisesRegex(UpstreamMergeError, "只能与 --after"):
+            plan_freeze_successor(self.root, self.base, None, extra_worktree_paths=["tools/e.py"])
+        with self.assertRaisesRegex(UpstreamMergeError, "不得重复登记"):
+            plan_freeze_successor(self.root, self.base, after, extra_worktree_paths=["backend/a.go"])
 
     def test_output_inside_after_commit_is_rejected(self) -> None:
         (self.root / "backend/a.go").write_text("package a // changed\n", encoding="utf-8")

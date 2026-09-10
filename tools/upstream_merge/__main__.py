@@ -140,6 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     freeze.add_argument("--reason", help="统一原因；每条 transition 会追加 path")
     freeze.add_argument(
+        "--extra-worktree-path",
+        action="append",
+        default=[],
+        help="commit 模式下追加工作树中已定稿的文件（如引用本收据的门禁文件），登记 before 提交摘要到当前摘要的边；可重复",
+    )
+    freeze.add_argument(
         "--dry-run",
         action="store_true",
         help="只输出冻结命中、未登记路径与特殊待办，不落盘",
@@ -410,6 +416,7 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             tag=arguments.tag,
             reason=arguments.reason,
             dry_run=arguments.dry_run,
+            extra_worktree_paths=arguments.extra_worktree_path,
         )
     if command == "identity-seal":
         draft = expect_object(load_json(arguments.input, "identity draft"), "identity draft")
