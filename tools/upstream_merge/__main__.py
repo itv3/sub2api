@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -32,6 +35,14 @@ from .workflow import (
     validate_source_transition,
     start_merge,
 )
+
+
+TIMING_LEDGER_SCHEMA = "official-egress-upstream-timing-ledger/v1"
+TIMING_LEDGER_NAME = "timing-ledger.jsonl"
+# 账本落点按此顺序推断：显式 --timing-ledger，其次 Plan 目录（plan.json 所在目录即
+# evidence root），再次各类输出／收据／输入所在目录。--repository 故意不参与推断，
+# 避免把账本写进主仓库。
+TIMING_LEDGER_ANCHORS = ("plan", "output", "receipt", "transition", "input", "request")
 
 
 def _absolute(value: str) -> Path:
@@ -232,7 +243,104 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ATTEMPT_ID",
         help="在全新隔离 worktree 重跑全部门禁，并以指定的新 attempt 封存",
     )
+    registered: set[int] = set()
+    for subparser in commands.choices.values():
+        # 带别名的子命令在 choices 中出现多次，但只能注册一次。
+        if id(subparser) in registered:
+            continue
+        registered.add(id(subparser))
+        subparser.add_argument(
+            "--timing-ledger",
+            type=_absolute,
+            help="时间账本 jsonl 绝对路径；默认追加到 Plan 目录或输出所在目录的 timing-ledger.jsonl",
+        )
     return parser
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _inside_git_worktree(path: Path) -> bool:
+    """推断出的账本目录若在任何 Git 工作树内，就不能自动写入，以免污染仓库。"""
+
+    probe = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return probe.returncode == 0 and probe.stdout.strip() == "true"
+
+
+def timing_ledger_path(arguments: argparse.Namespace) -> tuple[Path | None, str | None]:
+    """推断本次命令的时间账本路径。
+
+    返回 (路径, 跳过原因)。显式 --timing-ledger 始终生效；推断路径位于 Git 工作树内
+    （例如把收据写进 docs/egress/maintenance）或没有任何输出锚点时返回 None。
+    """
+
+    explicit = getattr(arguments, "timing_ledger", None)
+    if isinstance(explicit, Path):
+        return explicit, None
+    for attribute in TIMING_LEDGER_ANCHORS:
+        anchor = getattr(arguments, attribute, None)
+        if isinstance(anchor, list) and anchor and isinstance(anchor[0], Path):
+            anchor = anchor[0]
+        if isinstance(anchor, Path):
+            inferred = anchor.parent / TIMING_LEDGER_NAME
+            if inferred.parent.is_dir() and _inside_git_worktree(inferred.parent):
+                return None, f"推断路径位于 Git 工作树内：{inferred}"
+            return inferred, None
+    return None, "命令没有输出锚点"
+
+
+def timing_record(
+    arguments: argparse.Namespace,
+    started: float,
+    ended: float,
+    status: str,
+    exit_code: int,
+    error: str | None,
+) -> dict[str, Any]:
+    """一条时间账本记录：命令、参数、起止时间、耗时与结果。"""
+
+    return {
+        "schema_version": TIMING_LEDGER_SCHEMA,
+        "command": arguments.command,
+        "arguments": {
+            key: _jsonable(value)
+            for key, value in sorted(vars(arguments).items())
+            if key not in {"command", "timing_ledger"} and value is not None
+        },
+        "started_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
+        "ended_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ended)),
+        "duration_seconds": round(ended - started, 3),
+        "status": status,
+        "exit_code": exit_code,
+        "error": error,
+        "cwd": str(Path.cwd()),
+    }
+
+
+def append_timing_record(path: Path, record: dict[str, Any]) -> None:
+    """以追加方式写入一行 canonical JSON；只追加，不改写既有行。"""
+
+    if not path.is_absolute():
+        raise UpstreamMergeError("时间账本路径必须是绝对路径")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise UpstreamMergeError(f"时间账本必须是普通文件：{path}")
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise UpstreamMergeError(f"时间账本父目录不存在或不可信：{parent}")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(descriptor, "ab") as handle:
+        handle.write(canonical_bytes(record))
 
 
 def _loaded(arguments: argparse.Namespace):
@@ -376,16 +484,36 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
+    arguments = parser.parse_args(argv)
+    started = time.time()
+    status, error_text, exit_code, result = "ok", None, 0, None
     try:
-        result = execute(parser.parse_args(argv))
+        result = execute(arguments)
     except UpstreamMergeError as error:
+        status, error_text, exit_code = "rejected", str(error), 2
         print(f"上游合并工具拒绝：{error}", file=sys.stderr)
-        return 2
     except OSError as error:
+        status, error_text, exit_code = "system_error", str(error), 3
         print(f"上游合并工具系统错误：{error}", file=sys.stderr)
-        return 3
-    sys.stdout.buffer.write(canonical_bytes(result))
-    return 0
+    ended = time.time()
+    ledger, skipped = timing_ledger_path(arguments)
+    if ledger is None and skipped is not None and getattr(arguments, "dry_run", False) is False:
+        if "工作树" in skipped:
+            print(f"时间账本未写入：{skipped}；请用 --timing-ledger 指定 Plan 目录", file=sys.stderr)
+    if ledger is not None:
+        try:
+            append_timing_record(
+                ledger,
+                timing_record(arguments, started, ended, status, exit_code, error_text),
+            )
+        except (OSError, UpstreamMergeError) as error:
+            # 账本是发版前置条件之一：写不进去必须可见，成功的命令也按系统错误返回。
+            print(f"时间账本写入失败：{error}", file=sys.stderr)
+            if exit_code == 0:
+                exit_code = 3
+    if exit_code == 0 and result is not None:
+        sys.stdout.buffer.write(canonical_bytes(result))
+    return exit_code
 
 
 if __name__ == "__main__":

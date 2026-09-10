@@ -1,0 +1,48 @@
+{
+  "base_commit": "3d31bfb18dd4a3d5c93053da2b9ce1fd40d96259",
+  "changed_path_count": 2,
+  "current_commit": null,
+  "deleted_frozen_paths": [],
+  "frozen_edge_count": 2644,
+  "frozen_path_count": 1259,
+  "identity_sha256": "11cebac55ae741cda532c0472c1c4112d6a838f98c0b22ddc4fc728f0181101c",
+  "issued_at_utc": "2026-09-10T09:11:00Z",
+  "mode": "worktree",
+  "required_manual_actions": [],
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-tooling-batch2-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/__main__.py",
+      "predecessor_sha256s": [
+        "a2b174888d34286db03494adb90b33ffc188539b9fa5b2539a09b7b6c2cf247d"
+      ],
+      "reason": "第二批上游合并工具改动：命令行入口自动追加时间账本，新增标准 request 模板与 backend test-gate 目标；只登记工具闭集文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=tools/upstream_merge/__main__.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "3ac40478b56c2fdb7937824e3fed430e69f3b29d9a0d1a51d452b9af22432745"
+    }
+  ],
+  "unregistered_path_count": 1,
+  "unregistered_paths": [
+    "backend/Makefile"
+  ],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci"
+  ]
+}

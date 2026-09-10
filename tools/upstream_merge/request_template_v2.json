@@ -1,0 +1,243 @@
+{
+  "schema_version": "official-egress-upstream-merge-request-template/v1",
+  "purpose": "标准 request/v2 骨架：12 类逻辑门禁映射到 5 个物理执行组，full-regression 组覆盖 CI test job 的 unit 与 integration 标签并固定 -count=1。preflight 的模板有效性检查以此为准；生成正式 request 时只替换占位符，不得改动门禁定义。",
+  "placeholders": {
+    "{plan_root}": "本次 Plan 的私有目录（仓库外），例如 ~/Developer/.sub2apiplus-upstream/<tag>-<date>-<seq>",
+    "{repository}": "fork 仓库绝对路径；门禁 argv 中的占位符由工具在执行时渲染",
+    "{upstream_tag}": "上游 tag，例如 v0.2.4",
+    "{upstream_commit}": "上游 tag 对应的完整 commit SHA-1",
+    "{plan_id}": "sub2api-<upstream_tag>-merge-<yyyymmdd>-<seq>",
+    "{claude_target_version}": "当前 Claude Persona 目标版本，来自 catalogdata/claude/release-catalog.json 的 production_active 所指 release",
+    "{claude_active_profile}": "上述 release 的 profile.path",
+    "{claude_rollback_receipt}": "selectors.production_rollback.deployment.receipt.path",
+    "{codex_target_version}": "当前 Codex 目标版本，来自 catalogdata/runtime 的 snapshot-catalog",
+    "{codex_active_profile}": "catalogdata/runtime/<snapshot.file>，即当前 Active profile",
+    "{codex_rollback_profile}": "catalogdata/runtime/<上一 snapshot.file>",
+    "{previous_evidence}": "上一次成功 Plan 的 evidence 根目录，用于四份 Inventory 基线",
+    "{baseline_acceptance}": "最近一次 baseline-seal 的收据绝对路径",
+    "{runtime_state}": "当前 HEAD 运行态文件绝对路径",
+    "{recovery_point}": "当前 HEAD 回退点文件绝对路径"
+  },
+  "refresh_rules": [
+    "Active/Rollback 路径必须从当前 release catalog 解析，不得复制上一轮 request",
+    "生成后立即做 JSON 解析与 schema 校验，再进入 preflight",
+    "门禁定义与本模板逐字一致（渲染 {repository} 后比对）；需要改动门禁时先改模板并走工具闭集流程"
+  ],
+  "request": {
+    "schema_version": "official-egress-upstream-merge-request/v2",
+    "plan_id": "{plan_id}",
+    "upstream": {
+      "remote": "upstream",
+      "url": "https://github.com/Wei-Shaw/sub2api.git",
+      "tag": "{upstream_tag}",
+      "commit": "{upstream_commit}"
+    },
+    "repository": {
+      "managed_ref": "refs/heads/main"
+    },
+    "workspace": {
+      "worktree": "{plan_root}/worktree",
+      "evidence_root": "{plan_root}/evidence"
+    },
+    "official_clients": {
+      "claude": {
+        "persona": {
+          "provider": "anthropic",
+          "official_product": "claude-code",
+          "auth_family": "oauth",
+          "upstream_route_family": "anthropic-api"
+        },
+        "target_version": "{claude_target_version}",
+        "active_path": "{repository}/backend/internal/officialegress/{claude_active_profile}",
+        "rollback_path": "{repository}/{claude_rollback_receipt}"
+      },
+      "codex": {
+        "persona": {
+          "provider": "openai",
+          "official_product": "codex-cli",
+          "auth_family": "oauth",
+          "upstream_route_family": "chatgpt-backend-api"
+        },
+        "target_version": "{codex_target_version}",
+        "active_path": "{repository}/backend/internal/officialegress/catalogdata/runtime/{codex_active_profile}",
+        "rollback_path": "{repository}/backend/internal/officialegress/catalogdata/runtime/{codex_rollback_profile}"
+      }
+    },
+    "baselines": {
+      "production_ingress_inventory": {
+        "claude": "{previous_evidence}/u2/claude-production-ingress-inventory.json",
+        "codex": "{previous_evidence}/u2/codex-production-ingress-inventory.json"
+      },
+      "egress_disposition_inventory": {
+        "claude": "{previous_evidence}/u2/claude-egress-disposition-inventory.json",
+        "codex": "{previous_evidence}/u2/codex-egress-disposition-inventory.json"
+      },
+      "runtime_state_path": "{runtime_state}",
+      "recovery_point_path": "{recovery_point}",
+      "baseline_acceptance_path": "{baseline_acceptance}"
+    },
+    "protected_repository_paths": [
+      "backend/internal/officialegress/catalogdata/claude",
+      "backend/internal/officialegress/catalogdata/runtime",
+      "backend/internal/officialegress/claude_production_release.go",
+      "backend/internal/officialegress/persona_release_catalog.go",
+      "backend/internal/service/official_client_profile_registry.go",
+      "docs/egress"
+    ],
+    "gates": [
+      {
+        "id": "01-claude-active-wire",
+        "category": "claude_active_wire",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "official-egress-wire",
+        "argv": [
+          "go",
+          "test",
+          "./internal/officialegress/...",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "02-claude-ingress-matrix",
+        "category": "claude_ingress_matrix",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "service-persona-matrix",
+        "argv": [
+          "go",
+          "test",
+          "./internal/service",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "03-claude-rollback-wire",
+        "category": "claude_rollback_wire",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "official-egress-wire",
+        "argv": [
+          "go",
+          "test",
+          "./internal/officialegress/...",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "04-codex-active-wire",
+        "category": "codex_active_wire",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "official-egress-wire",
+        "argv": [
+          "go",
+          "test",
+          "./internal/officialegress/...",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "05-codex-ingress-matrix",
+        "category": "codex_ingress_matrix",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "service-persona-matrix",
+        "argv": [
+          "go",
+          "test",
+          "./internal/service",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "06-codex-rollback-wire",
+        "category": "codex_rollback_wire",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "official-egress-wire",
+        "argv": [
+          "go",
+          "test",
+          "./internal/officialegress/...",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "07-cross-persona",
+        "category": "cross_persona",
+        "mode": "command",
+        "cwd": "backend",
+        "execution_group": "service-persona-matrix",
+        "argv": [
+          "go",
+          "test",
+          "./internal/service",
+          "-count=1"
+        ]
+      },
+      {
+        "id": "08-inventory-closure",
+        "category": "inventory_closure",
+        "mode": "command",
+        "cwd": ".",
+        "execution_group": "inventory-closure",
+        "argv": [
+          "python3",
+          "tools/check_ledger_completeness.py",
+          "--upstream-merge-plan",
+          "{plan}"
+        ]
+      },
+      {
+        "id": "09-original-business",
+        "category": "original_business",
+        "mode": "command",
+        "cwd": ".",
+        "execution_group": "full-regression",
+        "argv": [
+          "sh",
+          "-c",
+          "make -C backend test-gate && make CODEX_0_149_1_SOURCE_ROOT={repository}/local-analysis/sources/codex-cli-0.149.1 test-frontend test-capture-tools test-official-client-control check-egress-spec"
+        ]
+      },
+      {
+        "id": "10-secret-scan",
+        "category": "secret_scan",
+        "mode": "command",
+        "cwd": ".",
+        "execution_group": "secret-scan",
+        "argv": [
+          "python3",
+          "-c",
+          "import pathlib,re,subprocess,sys;root=pathlib.Path(sys.argv[1]);files=[p.decode() for p in subprocess.check_output([\"git\",\"ls-files\",\"-z\"],cwd=root).split(b\"\\0\") if p];files=[p for p in files if \"/tests/\" not in p and not p.endswith(\"_test.go\") and \".spec.\" not in p and \".test.\" not in p and not p.startswith(\"docs/\")];patterns=[re.compile(b\"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\"),re.compile(b\"AKIA[0-9A-Z]{16}\"),re.compile(b\"sk-ant-[A-Za-z0-9_-]{32,}\"),re.compile(b\"sk-proj-[A-Za-z0-9_-]{32,}\")];hits=[(p,pat.pattern.decode()) for p in files for pat in patterns if pat.search((root/p).read_bytes())];assert not hits,hits",
+          "{repository}"
+        ]
+      },
+      {
+        "id": "11-shared-full-regression",
+        "category": "shared_full_regression",
+        "mode": "command",
+        "cwd": ".",
+        "execution_group": "full-regression",
+        "argv": [
+          "sh",
+          "-c",
+          "make -C backend test-gate && make CODEX_0_149_1_SOURCE_ROOT={repository}/local-analysis/sources/codex-cli-0.149.1 test-frontend test-capture-tools test-official-client-control check-egress-spec"
+        ]
+      },
+      {
+        "id": "12-shared-static",
+        "category": "shared_static",
+        "mode": "command",
+        "cwd": ".",
+        "execution_group": "full-regression",
+        "argv": [
+          "sh",
+          "-c",
+          "make -C backend test-gate && make CODEX_0_149_1_SOURCE_ROOT={repository}/local-analysis/sources/codex-cli-0.149.1 test-frontend test-capture-tools test-official-client-control check-egress-spec"
+        ]
+      }
+    ]
+  }
+}
