@@ -1,0 +1,99 @@
+{
+  "base_commit": "a493b9bdb93eff9ccdc8f7f1da034c5a442ee283",
+  "changed_path_count": 3,
+  "current_commit": "578a9b85aedffad4b33bef284d2813ddcf738390",
+  "deleted_frozen_paths": [],
+  "extra_worktree_paths": [
+    "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py"
+  ],
+  "frozen_edge_count": 2933,
+  "frozen_path_count": 1398,
+  "identity_sha256": "05880123420c1d67f048417cc8e59202c89441167c375c58b62b02a371dd81b7",
+  "issued_at_utc": "2026-09-10T21:41:00Z",
+  "mode": "commit",
+  "required_manual_actions": [
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    }
+  ],
+  "result": "manual_actions_required",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-tool-hints-20260911-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "predecessor_sha256s": [
+        "259f965bd4fe3e422dbb8118e17fcbf67519e3f96b88c9713c796dc2a7715090"
+      ],
+      "reason": "登记 upstream_merge 工具改进对已冻结路径产生的后继摘要；只增加拒绝信息与建议分类，不放宽任何校验。 path=tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-capability-pin-freeze-successor.json",
+        "docs/egress/maintenance/upstream-doc-trim-20260911-freeze-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-reconnect-repair-gate-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-release-prep-source-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.4-freeze-successor.json",
+        "docs/egress/maintenance/version-sync-0.2.3-3-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "c137e8b934c2f690bfdda63767d9b47896da02f97674bf4ec24e77038f0baf27"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/tests/test_workflow.py",
+      "predecessor_sha256s": [
+        "83654c10693ea13eed3ec8b1132e2109fcc0abc37bb7525afb3f4475d7364c8e"
+      ],
+      "reason": "登记 upstream_merge 工具改进对已冻结路径产生的后继摘要；只增加拒绝信息与建议分类，不放宽任何校验。 path=tools/upstream_merge/tests/test_workflow.py",
+      "source_receipts": [
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-egress-snapshot-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-route-scope-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "f647db37d44f6c87291bb0a68c1d39e2d1f17dc88cf2fe0c27619d3f81f48d09"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/workflow.py",
+      "predecessor_sha256s": [
+        "8ce2893aa176afe08e49256e9f46bee0c0e6e245b1405b29ca21a3b95e5e0fa5"
+      ],
+      "reason": "登记 upstream_merge 工具改进对已冻结路径产生的后继摘要；只增加拒绝信息与建议分类，不放宽任何校验。 path=tools/upstream_merge/workflow.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json",
+        "docs/egress/maintenance/upstream-tooling-batch4-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "d8ffba59a310f392c58c7a63e92930b96d2378135b5be3bb88e1aaa3f5ce3c7e"
+    }
+  ],
+  "unregistered_path_count": 0,
+  "unregistered_paths": [],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci",
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+  ]
+}

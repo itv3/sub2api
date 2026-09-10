@@ -51,6 +51,10 @@ UPSTREAM_V024_FREEZE_SUCCESSOR = (
 DOC_TRIM_20260911_FREEZE_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-doc-trim-20260911-freeze-successor.json"
 )
+# 2026-09-11：upstream_merge 工具改进（建议端补齐承接分类、拒绝时给出已知答案）的后继摘要。
+TOOL_HINTS_20260911_FREEZE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-tool-hints-20260911-freeze-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -130,6 +134,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         VERSION_SYNC_0233_FREEZE_SUCCESSOR,
         UPSTREAM_V024_FREEZE_SUCCESSOR,
         DOC_TRIM_20260911_FREEZE_SUCCESSOR,
+        TOOL_HINTS_20260911_FREEZE_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
