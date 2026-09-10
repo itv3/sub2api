@@ -679,7 +679,7 @@
       "additionalProperties": false,
       "required": [
         "schema_version", "plan_id", "plan_identity_sha256", "request", "repository",
-        "merge_exit_code", "conflict_paths", "checks", "scanner_snapshot", "blockers",
+        "merge_exit_code", "conflict_paths", "checks", "scanner_snapshot", "report", "blockers",
         "non_authoritative", "result", "identity_sha256"
       ],
       "properties": {
@@ -692,6 +692,7 @@
         "conflict_paths": {"type": "array", "items": {"type": "string"}},
         "checks": {"type": "array", "items": {"type": "object"}},
         "scanner_snapshot": {"oneOf": [{"type": "object"}, {"type": "null"}]},
+        "report": {"type": "object", "additionalProperties": false, "required": ["conflict_closure", "template_validity", "tool_bundle_disturbance", "freeze_coverage", "scanner_coverage"], "properties": {"conflict_closure": {"type": "object"}, "template_validity": {"type": "object"}, "tool_bundle_disturbance": {"type": "object"}, "freeze_coverage": {"type": "object"}, "scanner_coverage": {"type": "object"}}},
         "blockers": {"type": "array", "items": {"type": "string"}},
         "non_authoritative": {"const": true},
         "result": {"enum": ["ready", "blocked"]},

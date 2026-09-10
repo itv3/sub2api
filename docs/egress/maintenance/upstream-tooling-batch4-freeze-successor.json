@@ -1,0 +1,61 @@
+{
+  "base_commit": "b3606f44fecd2f5d9a27b6b22796385e4953f023",
+  "changed_path_count": 2,
+  "current_commit": null,
+  "deleted_frozen_paths": [],
+  "frozen_edge_count": 2645,
+  "frozen_path_count": 1259,
+  "identity_sha256": "c5a00f7237c54e52b86c5b1aa7a85aaeb85008e4bbb33fcd5eaa30d7fb0684f1",
+  "issued_at_utc": "2026-09-10T09:21:00Z",
+  "mode": "worktree",
+  "required_manual_actions": [],
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-tooling-batch4-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge/workflow.py",
+      "predecessor_sha256s": [
+        "f14ac0bec02c64c511e14ca78edb5df4c2c52cf38f8097675f4166c1b9b95ae9"
+      ],
+      "reason": "第四批上游合并工具改动：preflight 增加冲突闭集、模板有效性、闭集受扰、冻结覆盖、扫描器覆盖五项报告；只登记工具闭集文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=tools/upstream_merge/workflow.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "8ce2893aa176afe08e49256e9f46bee0c0e6e245b1405b29ca21a3b95e5e0fa5"
+    },
+    {
+      "old_path": "",
+      "path": "tools/upstream_merge_artifacts.schema.json",
+      "predecessor_sha256s": [
+        "c2d2acdc83b6c816d269a677fe746f26e9a68342ba538f65ac12868c583c6ba8"
+      ],
+      "reason": "第四批上游合并工具改动：preflight 增加冲突闭集、模板有效性、闭集受扰、冻结覆盖、扫描器覆盖五项报告；只登记工具闭集文件自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或生产代码 path=tools/upstream_merge_artifacts.schema.json",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json",
+        "docs/egress/maintenance/upstream-tooling-batch1-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "602195c4090b2bbdc3beae32f00f6799ba6add4ceb42d885d4d1b67fa9ad440d"
+    }
+  ],
+  "unregistered_path_count": 0,
+  "unregistered_paths": [],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci"
+  ]
+}

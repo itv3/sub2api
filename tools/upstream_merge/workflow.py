@@ -54,6 +54,14 @@ from .contracts import (
     stage_binding,
 )
 from .errors import UpstreamMergeError
+from .preflight_report import (
+    conflict_closure,
+    freeze_coverage,
+    load_request_template,
+    scanner_coverage,
+    template_validity,
+    tool_bundle_disturbance,
+)
 from .gitops import (
     assert_clean,
     assert_git_repository,
@@ -684,6 +692,20 @@ def _preflight_check(
     }
 
 
+def _preflight_freeze_coverage(
+    repository_root: Path,
+    merge_base_value: str,
+    upstream_commit: str,
+    conflict_paths: list[str],
+    blockers: list[str],
+) -> dict[str, Any]:
+    try:
+        return freeze_coverage(repository_root, merge_base_value, upstream_commit, conflict_paths)
+    except UpstreamMergeError as error:
+        blockers.append("冻结覆盖检查失败：" + str(error))
+        return {"status": "failed", "reason": str(error)}
+
+
 def run_preflight(
     request_path: Path,
     repository_root: Path,
@@ -737,6 +759,23 @@ def run_preflight(
         blockers.append("上游 tag 与请求 commit 不一致")
     merge_base_value = merge_base(root, fork_head, upstream["commit"])
 
+    # §5.2.2 的五项报告：模板有效性、闭集受扰、冲突闭集、冻结覆盖、扫描器覆盖。
+    # 前四项不依赖试合并结果，因冲突而 blocked 时仍然输出。
+    report: dict[str, Any] = {}
+    try:
+        template = load_request_template(root)
+        report["template_validity"] = template_validity(root, request, template)
+    except UpstreamMergeError as error:
+        report["template_validity"] = {"status": "failed", "findings": [str(error)]}
+    if report["template_validity"]["status"] != "passed":
+        blockers.append(
+            "模板有效性检查失败：" + "；".join(report["template_validity"].get("findings", []))
+        )
+    report["tool_bundle_disturbance"] = tool_bundle_disturbance(root, merge_base_value, upstream["commit"])
+    upstream_changed_path_count = len(changed_paths(root, merge_base_value, upstream["commit"]))
+    fork_snapshot: dict[str, Any] | None = None
+    scanner_deferred_reason: str | None = None
+
     temporary_root = Path(tempfile.mkdtemp(prefix="sub2api-upstream-preflight-"))
     worktree = temporary_root / "worktree"
     scanner_snapshot: dict[str, Any] | None = None
@@ -764,11 +803,24 @@ def run_preflight(
         conflict_paths = sorted({entry["path"] for entry in unmerged_entries(worktree)})
         if conflict_paths:
             blockers.append(f"试合并存在 {len(conflict_paths)} 个冲突文件")
+            scanner_deferred_reason = "试合并存在冲突；扫描器覆盖在冲突解决后由 U-2 surface-scan 承担"
             run_git(worktree, "merge", "--abort", check=False)
         elif completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip()
             blockers.append("试合并失败且没有可审计冲突：" + detail)
+            scanner_deferred_reason = "试合并失败"
         else:
+            # fork 树快照来自主仓库自身：预检开头已确认它是干净的受维护分支 HEAD。
+            fork_output = temporary_root / "fork-source-to-sink.json"
+            try:
+                run_egress_snapshot(root, fork_output, env=offline_env)
+                fork_snapshot = expect_object(
+                    load_json(fork_output, "preflight fork snapshot"),
+                    "preflight fork snapshot",
+                )
+            except (OSError, UpstreamMergeError) as error:
+                checks.append({"id": "egressscan-fork", "status": "failed", "error": str(error)})
+                blockers.append("fork 发送面快照失败：" + str(error))
             # 临时提交只存在于 detached worktree，便于让 scanner/build 看到干净树。
             run_git(
                 worktree,
@@ -855,6 +907,19 @@ def run_preflight(
             "merge_exit_code": merge_exit_code,
             "conflict_paths": conflict_paths,
             "checks": checks,
+            "report": {
+                "conflict_closure": conflict_closure(conflict_paths, upstream_changed_path_count),
+                "template_validity": report["template_validity"],
+                "tool_bundle_disturbance": report["tool_bundle_disturbance"],
+                "freeze_coverage": _preflight_freeze_coverage(
+                    root, merge_base_value, upstream["commit"], conflict_paths, blockers
+                ),
+                "scanner_coverage": scanner_coverage(
+                    fork_snapshot,
+                    scanner_snapshot,
+                    deferred_reason=scanner_deferred_reason,
+                ),
+            },
             "scanner_snapshot": (
                 {
                     "sink_count": scanner_snapshot.get("sink_count"),
