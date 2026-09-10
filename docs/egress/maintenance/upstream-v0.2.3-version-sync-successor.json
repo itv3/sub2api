@@ -2,7 +2,7 @@
   "schema_version": "official-egress-upstream-v0.2.3-version-sync-successor/v1",
   "issued_at_utc": "2026-09-10T05:24:03Z",
   "base_commit": "5d8637582d155eb6ae0b9dcc4a79b82c62191475",
-  "current_commit": "74618d702cc57155a2d812ae0dfd9702ced0af06",
+  "current_commit": "8f759a76044bd455aaf923a47717355e3244733d",
   "scope": "upstream-v0.2.3-version-sync-successor",
   "predecessor": {
     "path": "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
@@ -19,6 +19,17 @@
         "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
       ],
       "reason": "登记上游 v0.2.3 合并完成后的版本同步：backend/cmd/server/VERSION 从 0.2.3 更新为 0.2.3-1；历史 transition 收据保持只读。"
+    },
+    {
+      "path": "backend/cmd/server/VERSION",
+      "predecessor_sha256s": [
+        "9f3a44a5989c64c410c533cf1266dad95301aa67e312e11a27195f67061b9964"
+      ],
+      "to_sha256": "91c906e37a01b0a876570523ae93b774886b7469aeabf60c3d5c10d10407508b",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记 v0.2.3-2 发版后的版本同步：backend/cmd/server/VERSION 从 0.2.3-1 更新为 0.2.3-2（github-actions bot 提交 8f759a760）；历史 transition 收据保持只读。"
     }
   ],
   "verification": [
@@ -34,5 +45,5 @@
     "deployment_performed": false
   },
   "result": "passed_local_evidence_successor",
-  "identity_sha256": "8bc12fdd44b5480cabe32c93a6ef04de8976733ad426eb71ccdf6d04548a7317"
+  "identity_sha256": "448fb71c886feac8a03c09d0d4c8fd91214c2d4a7d2a08e4386d56768f5d9adb"
 }

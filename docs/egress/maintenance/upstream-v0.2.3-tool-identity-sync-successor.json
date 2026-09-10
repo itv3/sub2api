@@ -1,0 +1,69 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-tool-identity-sync-successor/v1",
+  "issued_at_utc": "2026-09-10T07:16:52Z",
+  "base_commit": "948025746530b529c30e50ab3ce6cb81effd68ed",
+  "current_commit": "8f759a76044bd455aaf923a47717355e3244733d",
+  "scope": "upstream-v0.2.3-tool-identity-sync-successor",
+  "transitions": [
+    {
+      "path": "tools/official_client_capture/candidate_test_fact_map_0_151_0.json",
+      "predecessor_sha256s": [
+        "afe4464d775b0a9e6cc6a8e47904dc1e2302e71b6c7f790315c434dcca707cc7"
+      ],
+      "to_sha256": "94fec2c8e63c04a09e4970f26d742ee2b0a257a49a056f33e7045dd447713f1f",
+      "source_receipts": [
+        "docs/egress/maintenance/openai-ws-reconnect-repair-source-transition.json"
+      ],
+      "reason": "同步受管工具身份：候选测试事实映射中 official_egress_openai_ws.go 与 openai_gateway_forward.go 的源码快照摘要更新为 openai-ws-reconnect-repair 之后的当前源码；测试与源码的映射关系及其他快照不变。"
+    },
+    {
+      "path": "tools/official_client_capture/candidate_test_trace.py",
+      "predecessor_sha256s": [
+        "e6059dbda3d64c9bc3a88e80fa17f7d4a7561732ef79de9b379197e2b12f2f9f"
+      ],
+      "to_sha256": "a0bf120ac719195d978cd3041e8939fb66da9e046bea55f8ecfc977bf05bd2ea",
+      "source_receipts": [
+        "docs/egress/maintenance/openai-ws-reconnect-repair-source-transition.json"
+      ],
+      "reason": "FROZEN_MAPPING_SHA256 同步为更新后的事实映射摘要；trace 判据逻辑不变。"
+    },
+    {
+      "path": "tools/arm64_supervised_deploy.py",
+      "predecessor_sha256s": [
+        "7a9c8b05f3f93bb3ba921e5ab0dc88f0ff60824c69a8082f1291ae01195ce066"
+      ],
+      "to_sha256": "965426e7ba2a4a08478fd3267286d0d1279518df47ec08b513239eb34eb2b40d",
+      "source_receipts": [
+        "docs/egress/maintenance/openai-ws-reconnect-repair-source-transition.json"
+      ],
+      "reason": "DEFAULT_TOOL_DIGEST 用 tool_digest 复算为更新后的受管工具树摘要（187 项）；既有 Campaign 工具身份随之失效，需按新摘要重建。"
+    },
+    {
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "predecessor_sha256s": [
+        "7be1972902d2285eacb2a754b3d0d8d0fca9f0166aa27f2359f95644bc7b23d5"
+      ],
+      "to_sha256": "4e4add98786ffe1eb454afde394c0863de4dd28cca6a8b09266d978ba3554a11",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-reconnect-repair-gate-successor.json"
+      ],
+      "reason": "Python 工作区 successor 门禁显式读取本收据，沿已封存 successor 图承接受管工具身份同步；历史收据保持只读。"
+    }
+  ],
+  "verification": [
+    "make test-capture-tools",
+    "python3 -m unittest tools.official_client_capture.tests.test_arm64_supervised_deploy",
+    "go test -tags=unit ./internal/service ./internal/officialegress/... -count=1",
+    "EGRESS_SEAL_BASE_REF=HEAD make check-egress-spec-ci"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "deployment_performed": false,
+    "campaign_tool_identity_changed": true
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "39830292cfb04d1a9d0a0f3d752a9dff9a6a5381c3518359a7ee1e95487899fd"
+}

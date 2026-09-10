@@ -29,6 +29,9 @@ RECONNECT_REPAIR_TRANSITION = (
 RECONNECT_REPAIR_GATE_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-v0.2.3-reconnect-repair-gate-successor.json"
 )
+TOOL_IDENTITY_SYNC_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -103,6 +106,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         VERSION_SYNC_SUCCESSOR,
         RECONNECT_REPAIR_TRANSITION,
         RECONNECT_REPAIR_GATE_SUCCESSOR,
+        TOOL_IDENTITY_SYNC_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
