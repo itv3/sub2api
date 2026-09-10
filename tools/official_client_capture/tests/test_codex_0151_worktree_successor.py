@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import stat
 import subprocess
 import unittest
@@ -13,8 +14,15 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 SUCCESSOR = ROOT / "docs/egress/maintenance/codex-cli-0151-worktree-successor.json"
+POST_BOOTSTRAP_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-v0.2.3-post-bootstrap-source-successor.json"
+)
+RELEASE_PREP_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-v0.2.3-release-prep-source-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 def sha256(raw: bytes) -> str:
@@ -76,6 +84,99 @@ def base_state(commit: str, path: str) -> dict[str, Any]:
     }
 
 
+def successor_edges(path: str) -> list[tuple[str, str]]:
+    """读取已封存的 v0.2.3 后继边，不把当前工作区当作授权来源。"""
+
+    edges: list[tuple[str, str]] = []
+    for receipt_path in (POST_BOOTSTRAP_SUCCESSOR, RELEASE_PREP_SUCCESSOR):
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        _validate_successor_receipt(payload)
+        edges.extend(_successor_edges_from_payload(payload, path))
+    return edges
+
+
+def _validate_successor_receipt(payload: dict[str, Any]) -> None:
+    """校验后继收据身份与提交连续性。"""
+
+    identity = payload.get("identity_sha256")
+    unsigned = dict(payload)
+    unsigned.pop("identity_sha256", None)
+    canonical = json.dumps(
+        unsigned,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    if not isinstance(identity, str) or not SHA256_PATTERN.fullmatch(identity):
+        raise AssertionError("v0.2.3 后继收据 identity_sha256 非法")
+    if sha256(canonical) != identity:
+        raise AssertionError("v0.2.3 后继收据自摘要不一致")
+
+    base_commit = payload.get("base_commit")
+    current_commit = payload.get("current_commit")
+    if (
+        not isinstance(base_commit, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", base_commit)
+        or not isinstance(current_commit, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", current_commit)
+        or not git_is_ancestor(base_commit, current_commit)
+        or not git_is_ancestor(current_commit, git("rev-parse", "HEAD").decode().strip())
+    ):
+        raise AssertionError("v0.2.3 后继收据提交关系非法")
+
+
+def _successor_edges_from_payload(
+    payload: dict[str, Any], path: str
+) -> list[tuple[str, str]]:
+    """提取指定路径的显式 successor 摘要边。"""
+
+    edges: list[tuple[str, str]] = []
+    for transition in payload.get("transitions", []):
+        if not isinstance(transition, dict) or transition.get("path") != path:
+            continue
+        predecessors = transition.get("predecessor_sha256s")
+        successor = transition.get("to_sha256")
+        if (
+            not isinstance(predecessors, list)
+            or not isinstance(successor, str)
+            or not SHA256_PATTERN.fullmatch(successor)
+            or any(
+                not isinstance(predecessor, str)
+                or not SHA256_PATTERN.fullmatch(predecessor)
+                or predecessor == successor
+                for predecessor in predecessors
+            )
+        ):
+            raise AssertionError("v0.2.3 后继收据摘要边非法")
+        edges.extend((predecessor, successor) for predecessor in predecessors)
+    return edges
+
+
+def successor_reaches(path: str, predecessor: str, current: str) -> bool:
+    """只沿显式登记的摘要边前进，保持未登记漂移 fail-close。"""
+
+    if (
+        not SHA256_PATTERN.fullmatch(predecessor)
+        or not SHA256_PATTERN.fullmatch(current)
+        or predecessor == current
+    ):
+        return False
+    edges = successor_edges(path)
+    queue = [predecessor]
+    visited = {predecessor}
+    while queue and len(visited) <= 512:
+        node = queue.pop(0)
+        for edge_from, edge_to in edges:
+            if edge_from != node:
+                continue
+            if edge_to == current:
+                return True
+            if edge_to not in visited:
+                visited.add(edge_to)
+                queue.append(edge_to)
+    return False
+
+
 class Codex0151WorktreeSuccessorTest(unittest.TestCase):
     def test_current_worktree_successor_is_frozen(self) -> None:
         payload = json.loads(SUCCESSOR.read_text(encoding="utf-8"))
@@ -114,7 +215,14 @@ class Codex0151WorktreeSuccessorTest(unittest.TestCase):
             self.assertNotEqual(path, HISTORICAL_LEDGER)
             self.assertNotEqual(entry["before"], entry["after"])
             self.assertEqual(entry["before"], base_state(payload["base_commit"], path))
-            self.assertEqual(entry["after"], current_state(path))
+            actual = current_state(path)
+            if actual != entry["after"]:
+                self.assertEqual(actual["mode"], entry["after"]["mode"])
+                self.assertEqual(actual["file_type"], entry["after"]["file_type"])
+                self.assertTrue(
+                    successor_reaches(path, entry["after"]["sha256"], actual["sha256"]),
+                    f"当前摘要未沿已登记 successor 边承接：{path}",
+                )
 
 
 if __name__ == "__main__":
