@@ -42,6 +42,11 @@ CAPABILITY_PIN_FREEZE_SUCCESSOR = (
 VERSION_SYNC_0233_FREEZE_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/version-sync-0.2.3-3-freeze-successor.json"
 )
+# 2026-09-10：上游 v0.2.4 合并（MiniMax 接入、长流 HTTP/2 保活、客户端断开取消）
+# 对已冻结路径产生的后继摘要，由 freeze-successor-generate 以 commit 模式一次性生成。
+UPSTREAM_V024_FREEZE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-v0.2.4-freeze-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -119,6 +124,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         TOOL_IDENTITY_SYNC_SUCCESSOR,
         CAPABILITY_PIN_FREEZE_SUCCESSOR,
         VERSION_SYNC_0233_FREEZE_SUCCESSOR,
+        UPSTREAM_V024_FREEZE_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
