@@ -37,6 +37,11 @@ TOOL_IDENTITY_SYNC_SUCCESSOR = (
 CAPABILITY_PIN_FREEZE_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-capability-pin-freeze-successor.json"
 )
+# 2026-09-10：发版机器人 VERSION 同步提交（0.2.3-3）对 backend/cmd/server/VERSION
+# 产生的后继摘要，由 freeze-successor-generate 以 commit 模式生成。
+VERSION_SYNC_0233_FREEZE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/version-sync-0.2.3-3-freeze-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -113,6 +118,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         RECONNECT_REPAIR_GATE_SUCCESSOR,
         TOOL_IDENTITY_SYNC_SUCCESSOR,
         CAPABILITY_PIN_FREEZE_SUCCESSOR,
+        VERSION_SYNC_0233_FREEZE_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
