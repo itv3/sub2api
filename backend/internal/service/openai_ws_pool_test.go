@@ -46,6 +46,29 @@ func TestOpenAIWSConnPool_CleanupStaleAndTrimIdle(t *testing.T) {
 	require.NotNil(t, ap.conns["idle_new"], "newer idle should be kept")
 }
 
+func TestOpenAIWSConnPool_DialThrottleBacksOffCloudflareRejects(t *testing.T) {
+	pool := &openAIWSConnPool{}
+	accountID := int64(90210)
+
+	require.NoError(t, pool.waitForDialPermit(context.Background(), accountID))
+	first := time.Now()
+	pool.recordCloudflareEdgeReject(accountID)
+
+	pool.dialThrottleMu.Lock()
+	state := pool.dialThrottle[accountID]
+	pool.dialThrottleMu.Unlock()
+	require.True(t, state.edgeBackoffAt.After(first))
+	require.Equal(t, 1, state.edgeRejects)
+	require.True(t, state.nextAllowedAt.After(state.edgeBackoffAt.Add(-time.Millisecond)))
+
+	pool.clearCloudflareEdgeReject(accountID)
+	pool.dialThrottleMu.Lock()
+	cleared := pool.dialThrottle[accountID]
+	pool.dialThrottleMu.Unlock()
+	require.Zero(t, cleared.edgeRejects)
+	require.True(t, cleared.edgeBackoffAt.IsZero())
+}
+
 func TestOpenAIWSConnPool_NextConnIDFormat(t *testing.T) {
 	pool := newOpenAIWSConnPool(&config.Config{})
 	id1 := pool.nextConnID(42)

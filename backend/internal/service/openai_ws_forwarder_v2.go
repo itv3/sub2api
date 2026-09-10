@@ -296,8 +296,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 		s.handleOpenAIWSDialTransientFailure(ctx, account, mappedModel, err)
 		dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(err)
+		dialRespCFMitigated := openAIWSHeaderValueForLog(openAIWSDialResponseHeaders(err), "cf-mitigated")
+		dialRespBodySummary := openAIWSCloudflareResponseBodySummary(err)
 		logOpenAIWSModeInfo(
-			"acquire_fail account_id=%d account_type=%s transport=%s reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_x_request_id=%s cause=%s preferred_conn_id=%s force_new_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
+			"acquire_fail account_id=%d account_type=%s transport=%s reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_cf_mitigated=%s dial_resp_x_request_id=%s dial_resp_body_summary=%s cause=%s preferred_conn_id=%s force_new_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
 			account.ID,
 			account.Type,
 			normalizeOpenAIWSLogValue(string(decision.Transport)),
@@ -309,7 +311,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			dialRespServer,
 			dialRespVia,
 			dialRespCFRay,
+			dialRespCFMitigated,
 			dialRespReqID,
+			dialRespBodySummary,
 			truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen),
 			truncateOpenAIWSLogValue(preferredConnID, openAIWSIDValueMaxLen),
 			forceNewConn,
@@ -692,6 +696,20 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 		}
 
+		capacityShed := (eventType == "error" || eventType == "response.failed") &&
+			isOpenAIUpstreamCapacityShedEvent(message)
+		if capacityShed && !wroteDownstream {
+			lease.MarkBroken()
+			errMessage := strings.TrimSpace(gjson.GetBytes(message, "response.error.message").String())
+			if errMessage == "" {
+				errMessage = strings.TrimSpace(gjson.GetBytes(message, "error.message").String())
+			}
+			if errMessage == "" {
+				errMessage = "OpenAI servers are temporarily overloaded"
+			}
+			return nil, wrapOpenAIWSFallback("upstream_capacity_shed", errors.New(errMessage))
+		}
+
 		if eventType == "error" {
 			s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)
@@ -748,7 +766,13 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			setOpsUpstreamError(c, statusCode, errMsg, "")
 			if reqStream && !clientDisconnected {
 				flushBufferedStreamEvents("error_event")
-				emitStreamMessage(message, true)
+				clientMessage := message
+				if capacityShed {
+					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+						clientMessage = rewritten
+					}
+				}
+				emitStreamMessage(clientMessage, true)
 			}
 			if !reqStream {
 				// 非流式错误体在此已完整写出；必须标记 committed，否则 handler 的
@@ -787,7 +811,13 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				}
 			} else {
 				flushBufferedStreamEvents(eventType)
-				emitStreamMessage(message, isTerminalEvent)
+				clientMessage := message
+				if capacityShed {
+					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+						clientMessage = rewritten
+					}
+				}
+				emitStreamMessage(clientMessage, isTerminalEvent)
 			}
 		} else {
 			if responseField.Exists() && responseField.Type == gjson.JSON {

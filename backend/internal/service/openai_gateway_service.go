@@ -776,6 +776,7 @@ func classifyOpenAIWSReconnectReason(err error) (string, bool) {
 		"upgrade_required",
 		"ws_unsupported",
 		"auth_failed",
+		"cloudflare_edge_rejected",
 		"invalid_encrypted_content",
 		"previous_response_not_found":
 		return reason, false
@@ -793,6 +794,7 @@ func classifyOpenAIWSReconnectReason(err error) (string, bool) {
 		"event_error",
 		"error_event",
 		"upstream_error_event",
+		"upstream_capacity_shed",
 		"ws_connection_limit_reached",
 		"missing_final_response":
 		return reason, true
@@ -863,6 +865,20 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 		if statusCode == 0 {
 			statusCode = http.StatusUnauthorized
 		}
+	case "cloudflare_edge_rejected":
+		if statusCode == 0 {
+			statusCode = http.StatusForbidden
+		}
+		errType = "upstream_error"
+		if upstreamMessage == "" {
+			upstreamMessage = "upstream edge temporarily rejected the websocket handshake"
+		}
+	case "upstream_capacity_shed":
+		statusCode = http.StatusServiceUnavailable
+		errType = "server_error"
+		if upstreamMessage == "" {
+			upstreamMessage = "upstream servers are temporarily overloaded, please retry later"
+		}
 	case "upstream_rate_limited":
 		if statusCode == 0 {
 			statusCode = http.StatusTooManyRequests
@@ -918,6 +934,14 @@ func (s *OpenAIGatewayService) writeOpenAIWSFallbackErrorResponse(c *gin.Context
 	}
 
 	setOpsUpstreamError(c, statusCode, upstreamMessage, "")
+	fallbackReason := ""
+	var fallbackErr *openAIWSFallbackError
+	if errors.As(wsErr, &fallbackErr) && fallbackErr != nil {
+		fallbackReason = strings.TrimPrefix(strings.TrimSpace(fallbackErr.Reason), "prewarm_")
+	}
+	if fallbackReason == "upstream_capacity_shed" {
+		c.Header("Retry-After", "2")
+	}
 	if account != nil {
 		proxyID, proxyName := opsUpstreamWSProxyAttribution(account)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

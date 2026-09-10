@@ -1090,8 +1090,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			canonicalModel := canonicalOpenAIAccountSchedulingModel(account, ingressSessionOriginalModel)
 			s.handleOpenAIWSDialTransientFailure(ctx, account, canonicalModel, acquireErr)
 			dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(acquireErr)
+			dialRespCFMitigated := openAIWSHeaderValueForLog(openAIWSDialResponseHeaders(acquireErr), "cf-mitigated")
+			dialRespBodySummary := openAIWSCloudflareResponseBodySummary(acquireErr)
 			logOpenAIWSModeInfo(
-				"ingress_ws_upstream_acquire_fail account_id=%d turn=%d reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_x_request_id=%s cause=%s preferred_conn_id=%s force_preferred_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
+				"ingress_ws_upstream_acquire_fail account_id=%d turn=%d reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_cf_mitigated=%s dial_resp_x_request_id=%s dial_resp_body_summary=%s cause=%s preferred_conn_id=%s force_preferred_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
 				account.ID,
 				turn,
 				normalizeOpenAIWSLogValue(classifyOpenAIWSAcquireError(acquireErr)),
@@ -1102,7 +1104,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				dialRespServer,
 				dialRespVia,
 				dialRespCFRay,
+				dialRespCFMitigated,
 				dialRespReqID,
+				dialRespBodySummary,
 				truncateOpenAIWSLogValue(acquireErr.Error(), openAIWSLogValueMaxLen),
 				truncateOpenAIWSLogValue(preferred, openAIWSIDValueMaxLen),
 				forcePreferredConn,
@@ -1721,8 +1725,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			HasFunctionCallOutput: openAIWSRawPayloadHasToolCallOutput(currentPayload),
 		}
 		if isDerivedOpenAIOfficialEgressWSContext(ctx) {
+			derivedPayload, decodeErr := decodeOfficialJSONObjectUseNumber(currentPayload)
+			if decodeErr != nil {
+				return NewOpenAIWSClientCloseError(
+					coderws.StatusPolicyViolation,
+					"official egress websocket tool continuation classification failed",
+					decodeErr,
+				)
+			}
+			egressContext, _ := OfficialEgressContextFromContext(ctx)
 			_, hasCurrentToolOutput, reliable, classifyErr :=
-				classifyOfficialOpenAIWSToolOutputTurnFromRaw(currentPayload)
+				classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(
+					derivedPayload,
+					egressContext.openAIWSDerived,
+				)
 			if classifyErr != nil {
 				return NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
@@ -2274,6 +2290,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		if result == nil {
 			return errors.New("websocket turn result is nil")
+		}
+		if egressContext, enabled := OfficialEgressContextFromContext(ctx); enabled &&
+			egressContext != nil && egressContext.openAIWSDerived != nil {
+			// 保存上一轮上游真实产生的工具调用 call_id。断线后客户端
+			// 可能重发没有逐项 turn_id 的完整历史，下一轮只能用这份
+			// 会话状态做安全消歧。
+			egressContext.openAIWSDerived.setPendingToolCallIDs(result.wsReplayInput)
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID

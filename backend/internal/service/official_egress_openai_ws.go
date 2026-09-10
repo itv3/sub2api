@@ -50,6 +50,46 @@ type officialOpenAIWSDerivedState struct {
 	mu                  sync.Mutex
 	lastTurnID          string
 	lastTurnStartedAtMS int64
+	// pendingToolCallIDs 来自上一轮上游 response.output 中实际产生的
+	// function_call/tool_call。客户端断线后重发完整历史时，逐项 turn_id
+	// 可能已经丢失；这些会话级 call_id 是仍然可信的消歧锚点。
+	pendingToolCallIDs map[string]struct{}
+}
+
+func (s *officialOpenAIWSDerivedState) setPendingToolCallIDs(items []json.RawMessage) {
+	if s == nil {
+		return
+	}
+	pending := make(map[string]struct{})
+	for _, item := range items {
+		itemType := strings.TrimSpace(gjson.GetBytes(item, "type").String())
+		if !isCodexToolCallContextItemType(itemType) {
+			continue
+		}
+		callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String())
+		if callID != "" {
+			pending[callID] = struct{}{}
+		}
+	}
+	s.mu.Lock()
+	s.pendingToolCallIDs = pending
+	s.mu.Unlock()
+}
+
+func (s *officialOpenAIWSDerivedState) pendingToolCallIDSet() map[string]struct{} {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pendingToolCallIDs) == 0 {
+		return nil
+	}
+	cloned := make(map[string]struct{}, len(s.pendingToolCallIDs))
+	for callID := range s.pendingToolCallIDs {
+		cloned[callID] = struct{}{}
+	}
+	return cloned
 }
 
 // prepareOpenAIOfficialEgressWSContext 从入口首帧和握手头提取语义锚点，再登记
@@ -536,7 +576,10 @@ func prepareDerivedOpenAIOfficialEgressWSFrame(
 	// 历史轮次可能包含 function_call_output，而当前轮只是普通用户消息；
 	// 这种请求必须生成新的普通轮次身份，否则后续会被误裁剪成空工具续接。
 	_, hasCurrentToolOutput, toolOutputTurnReliable, toolOutputTurnErr :=
-		classifyOfficialOpenAIWSToolOutputTurn(payload)
+		classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(
+			payload,
+			egressContext.openAIWSDerived,
+		)
 	if toolOutputTurnErr != nil {
 		return nil, result, toolOutputTurnErr
 	}
@@ -821,8 +864,18 @@ func buildDerivedOpenAIOfficialEgressWSPrewarmFrame(
 		egressContext.openAIWSDerived == nil {
 		return nil, false, nil
 	}
+	payload, err := decodeOfficialJSONObjectUseNumber(candidate)
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"decode derived OpenAI official egress WebSocket prewarm source: %w",
+			err,
+		)
+	}
 	hasAnyToolOutput, hasCurrentToolOutput, reliable, classifyErr :=
-		classifyOfficialOpenAIWSToolOutputTurnFromRaw(candidate)
+		classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(
+			payload,
+			egressContext.openAIWSDerived,
+		)
 	if classifyErr != nil {
 		return nil, false, classifyErr
 	}
@@ -836,13 +889,6 @@ func buildDerivedOpenAIOfficialEgressWSPrewarmFrame(
 		return nil, false, nil
 	}
 
-	payload, err := decodeOfficialJSONObjectUseNumber(candidate)
-	if err != nil {
-		return nil, false, fmt.Errorf(
-			"decode derived OpenAI official egress WebSocket prewarm source: %w",
-			err,
-		)
-	}
 	if strings.TrimSpace(officialOpenAIString(payload, "type")) != officialOpenAIWSResponseCreateType {
 		return nil, false, nil
 	}
@@ -1104,18 +1150,54 @@ func classifyOfficialOpenAIWSToolOutputTurn(payload map[string]any) (bool, bool,
 	return hasAny, hasCurrent, reliable, nil
 }
 
-func classifyOfficialOpenAIWSToolOutputTurnFromRaw(payload []byte) (bool, bool, bool, error) {
-	if len(payload) == 0 {
-		return false, false, true, nil
+// classifyOfficialOpenAIWSToolOutputTurnWithDerivedState 先执行逐项 metadata
+// 的严格判断；只有判断不可靠时，才使用同一入站 WS 会话上一轮真实产生的
+// call_id 消歧。若工具输出混合了“上一轮已完成”和“当前待回传”两组
+// call_id，仍然 fail-close，禁止按数组位置猜测。
+func classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(
+	payload map[string]any,
+	state *officialOpenAIWSDerivedState,
+) (bool, bool, bool, error) {
+	hasAny, hasCurrent, reliable, err := classifyOfficialOpenAIWSToolOutputTurn(payload)
+	if err != nil || reliable || !hasAny || state == nil {
+		return hasAny, hasCurrent, reliable, err
 	}
-	decoded, err := decodeOfficialJSONObjectUseNumber(payload)
-	if err != nil {
-		return false, false, false, fmt.Errorf(
-			"decode OpenAI official egress WebSocket tool output turn: %w",
-			err,
-		)
+	pending := state.pendingToolCallIDSet()
+	if len(pending) == 0 {
+		return hasAny, hasCurrent, reliable, nil
 	}
-	return classifyOfficialOpenAIWSToolOutputTurn(decoded)
+	input, ok := payload["input"].([]any)
+	if !ok {
+		return hasAny, hasCurrent, reliable, nil
+	}
+	totalOutputs := 0
+	currentOutputs := 0
+	for _, rawItem := range input {
+		item, valid := rawItem.(map[string]any)
+		if !valid || !isCodexToolCallOutputItemType(
+			strings.TrimSpace(officialOpenAIString(item, "type")),
+		) {
+			continue
+		}
+		callID := strings.TrimSpace(officialOpenAIString(item, "call_id"))
+		if callID == "" {
+			return hasAny, hasCurrent, false, nil
+		}
+		totalOutputs++
+		if _, ok := pending[callID]; ok {
+			currentOutputs++
+		}
+	}
+	switch {
+	case totalOutputs == 0:
+		return hasAny, false, true, nil
+	case currentOutputs == 0:
+		return hasAny, false, true, nil
+	case currentOutputs == totalOutputs:
+		return hasAny, true, true, nil
+	default:
+		return hasAny, true, false, nil
+	}
 }
 
 // buildDerivedOpenAIOfficialEgressWSToolContinuationFrame 把第三方客户端
@@ -1133,8 +1215,22 @@ func buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
 	if !isDerivedOpenAIOfficialEgressWSContext(ctx) {
 		return candidate, false, nil
 	}
+	egressContext, enabled := OfficialEgressContextFromContext(ctx)
+	if !enabled || egressContext == nil {
+		return candidate, false, nil
+	}
+	payload, err := decodeOfficialJSONObjectUseNumber(candidate)
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"decode derived OpenAI official egress WebSocket tool continuation: %w",
+			err,
+		)
+	}
 	hasAnyToolOutput, hasCurrentToolOutput, reliable, classifyErr :=
-		classifyOfficialOpenAIWSToolOutputTurnFromRaw(candidate)
+		classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(
+			payload,
+			egressContext.openAIWSDerived,
+		)
 	if classifyErr != nil {
 		return nil, false, classifyErr
 	}
@@ -1170,14 +1266,6 @@ func buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
 		)
 	}
 
-	egressContext, _ := OfficialEgressContextFromContext(ctx)
-	payload, err := decodeOfficialJSONObjectUseNumber(candidate)
-	if err != nil {
-		return nil, false, fmt.Errorf(
-			"decode derived OpenAI official egress WebSocket tool continuation: %w",
-			err,
-		)
-	}
 	previousMetadata, _ := payload["client_metadata"].(map[string]any)
 	currentTurnID := strings.TrimSpace(officialOpenAIString(previousMetadata, "turn_id"))
 	if currentTurnID == "" {
@@ -1186,6 +1274,7 @@ func buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
 		)
 	}
 	input, _ := payload["input"].([]any)
+	pendingToolCallIDs := egressContext.openAIWSDerived.pendingToolCallIDSet()
 	toolOutputs := make([]any, 0, len(input))
 	for _, rawItem := range input {
 		item, ok := rawItem.(map[string]any)
@@ -1216,6 +1305,11 @@ func buildDerivedOpenAIOfficialEgressWSToolContinuationFrame(
 		// 上游持有这些历史项，本次只发送当前轮新增的工具结果。
 		if itemTurnID != "" && itemTurnID != currentTurnID {
 			continue
+		}
+		if itemTurnID == "" && len(pendingToolCallIDs) > 0 {
+			if _, ok := pendingToolCallIDs[strings.TrimSpace(officialOpenAIString(item, "call_id"))]; !ok {
+				continue
+			}
 		}
 		toolOutputs = append(toolOutputs, item)
 	}

@@ -1,0 +1,115 @@
+{
+  "schema_version": "sub2apiplus-openai-ws-reconnect-repair-source-transition/v1",
+  "issued_at_utc": "2026-09-10T05:00:00Z",
+  "base_commit": "74618d702cc57155a2d812ae0dfd9702ced0af06",
+  "current_commit": "74618d702cc57155a2d812ae0dfd9702ced0af06",
+  "scope": "openai-ws-reconnect-repair",
+  "transitions": [
+    {
+      "path": "backend/internal/service/official_egress_openai_ws.go",
+      "predecessor_sha256s": [
+        "b11f348a872eb38a3c3f8159b50ee5a8f744a881ac8615b8c6ca451a3c27752e"
+      ],
+      "to_sha256": "9ab49b7bf5c9311f817435af0fcabfeac76d508abbe38f44c7d1d06f18e0b48d",
+      "reason": "为官方出站 WebSocket 保存上一轮真实工具调用的 call_id，并在逐项轮次元数据缺失时用会话状态安全消歧；历史工具输出与当前轮工具续接继续 fail-close。"
+    },
+    {
+      "path": "backend/internal/service/openai_gateway_forward.go",
+      "predecessor_sha256s": [
+        "ff300dd374ac17b74af8f4c72bdce4ee7cba4e80f8f4a8b63e99b511b7904268"
+      ],
+      "to_sha256": "37fba1a8f551dcd83cd1641dfaa3369986f6a570e8d9f6752e99cfafbeca93ac",
+      "reason": "将已确认的 Cloudflare WebSocket 握手拒绝转入同一冻结调用的 OAuth HTTP fallback，并为上游容量降载增加一次有界重试；第二次仍过载时返回 503 而非继续回退或无限重连。"
+    },
+    {
+      "path": "backend/internal/service/openai_gateway_service.go",
+      "predecessor_sha256s": [
+        "2a2cebe92fa0d44834b4cfa93c3fc0b32aa171ee8926b383603ae9ccbdffe595"
+      ],
+      "to_sha256": "b651b1b7d5e68803add18d336a331ab48e3ad973ad34663840c9cd35d34ff2e7",
+      "reason": "登记 Cloudflare 边缘拒绝与上游容量降载的独立恢复分类、响应语义和 Retry-After 门禁。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_fallback_test.go",
+      "predecessor_sha256s": [
+        "a851baf6a5878a544ef0c57d4c15b2952afe0d10e84f98136eb5db96bcaec8a7"
+      ],
+      "to_sha256": "4a183ce410f23018cb414d22e7d803b87e594e0e62fd67734a79d11a51513171",
+      "reason": "补充 Cloudflare 403、普通 403、上游容量降载 503、预热容量错误与先前响应锚点错误分类的回归断言。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_forwarder_ingress.go",
+      "predecessor_sha256s": [
+        "2d09a920a40c8d1fcad6a91b3c3711c5c05750cdecb6c2572e38227f47951fab"
+      ],
+      "to_sha256": "f7dde387700f3a9977bcddde5c3c0c26f4580ec5b818768b620d7d93ec02bc2e",
+      "reason": "在入站 WebSocket 工具续接判定和成功轮次结束处接入会话级 call_id 状态，并记录 Cloudflare 边缘响应证据。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_forwarder_logutil.go",
+      "predecessor_sha256s": [
+        "bc8854aee45f35f5b8328b57801c898d83e09c67693cb9b565debf74345ed2a7"
+      ],
+      "to_sha256": "d373a9e1272808704a6cedd62a7d1c34714fe8282bcc852c25f412c6d3e02cf2",
+      "reason": "仅在 cf-mitigated 或 Cloudflare cf-ray/server/via 证据齐备时识别边缘 403，并只对确认的边缘拒绝记录脱敏响应摘要，避免泄露普通授权错误正文。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_forwarder_support.go",
+      "predecessor_sha256s": [
+        "f26bc0dcedbb19ba07a5480a50bf1e21838213266b87838b3a5e49df076a1c00"
+      ],
+      "to_sha256": "3dafae92840174bde098f53c70c431bd605e3dfaf511c849795988b12b2953c6",
+      "reason": "把具备 Cloudflare 边缘证据的 403 与普通 auth_failed 分开分类，并让预热路径的 server_is_overloaded/slow_down 进入统一容量降载恢复语义。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_forwarder_v2.go",
+      "predecessor_sha256s": [
+        "130095df553b6f63579b86ba33f6998941ba9071d2cfa2ef7c4ee1b41344ae0a"
+      ],
+      "to_sha256": "707f04c77dd06e6faf9e597ac643acbf87962e50afcbf3e41f6307465fcb6fad",
+      "reason": "识别尚未向下游输出的 server_is_overloaded 事件并返回结构化容量降载错误；已输出场景只改写客户端错误码，不重放请求。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_pool.go",
+      "predecessor_sha256s": [
+        "0ec8eeef4acdaa81b46d79334f0ba45e236f378d5e47d8f79c7b48dc1badcb02"
+      ],
+      "to_sha256": "183ce9acad08382551de8301580513f0bcba2fa7e685fa4715444c86f08f69bc",
+      "reason": "为每个账号的新建 WebSocket 拨号增加最小间隔和 Cloudflare 拒绝后的指数退避；连接复用不受影响，成功建连后清除边缘退避状态。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_pool_test.go",
+      "predecessor_sha256s": [
+        "dbdf6d25c97b342108350cc18fe2ef21cc0e0fc1d5b2e51688ae129067413e01"
+      ],
+      "to_sha256": "2646539bb378d213cfd0d6a65536cca6275bc40790853eeee5a68f07e165800e",
+      "reason": "验证 Cloudflare 拒绝后的账号级拨号退避、退避状态清理与连接池节流状态。"
+    },
+    {
+      "path": "backend/internal/service/openai_ws_tool_turn_classification_test.go",
+      "predecessor_sha256s": [
+        "4823a01ae42562b62751ad7ee9fe244b8147a76da434b01bc66c085985c1396c"
+      ],
+      "to_sha256": "825552345973ea9bfc7d5821284dbe3e4e64e4cb07cdeec8f30ff59869efd3f2",
+      "reason": "验证逐项轮次元数据缺失时，工具续接分类可使用同一会话上一轮真实 call_id 安全消歧，并对历史或混合 call_id 保持安全拒绝。"
+    }
+  ],
+  "verification": [
+    "go test ./internal/service -run 'Test(ClassifyOpenAIWS|SummarizeOpenAIWS|OpenAIOfficialEgressWSToolOutputTurn|OpenAIWSConnPool_DialThrottle|OpenAIGatewayServiceForwardWSv2|ResolveOpenAIWSFallbackErrorResponse|ForwardOpenAIWSV2|OpenAI.*Capacity)' -count=1",
+    "go test -race ./internal/service -run 'Test(ClassifyOpenAIWS|OpenAIOfficialEgressWSToolOutputTurn|OpenAIWSConnPool_DialThrottle|OpenAIGatewayServiceForwardWSv2|ResolveOpenAIWSFallbackErrorResponse|ForwardOpenAIWSV2|OpenAI.*Capacity)' -count=1",
+    "go test ./internal/service -run 'Test.*(OpenAI|WS|WebSocket)' -count=1",
+    "go vet ./internal/service",
+    "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/server",
+    "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c ./internal/service"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "online_acceptance_performed": false,
+    "production_config_changed": false,
+    "official_egress_profile_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "deployment_performed": false
+  },
+  "result": "passed_targeted_arm64_validation",
+  "identity_sha256": "273b44bcc29f4a5990040b9b1de947c3ccd91b4f7ed3e914c2d26b8fb5d2d80b"
+}

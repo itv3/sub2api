@@ -45,6 +45,54 @@ func openAIWSHeaderValueForLog(headers http.Header, key string) string {
 	return truncateOpenAIWSLogValue(headers.Get(key), openAIWSHeaderValueMaxLen)
 }
 
+// isOpenAIWSCloudflareEdgeReject 只识别已经有边缘证据的 403。
+//
+// 不能把所有 401/403 都当作 Cloudflare 限速：真实的 OAuth 失效、权限
+// 变化仍然必须 fail-close。这里要求 403 同时满足 cf-mitigated，或
+// cf-ray + Cloudflare 服务器/代理标识，避免误把普通上游授权错误转成
+// HTTP fallback。
+func isOpenAIWSCloudflareEdgeReject(err error) bool {
+	var dialErr *openAIWSDialError
+	if !errors.As(err, &dialErr) || dialErr == nil || dialErr.StatusCode != http.StatusForbidden {
+		return false
+	}
+	headers := dialErr.ResponseHeaders
+	if headers == nil {
+		return false
+	}
+	if strings.TrimSpace(headers.Get("cf-mitigated")) != "" {
+		return true
+	}
+	cfRay := strings.TrimSpace(headers.Get("cf-ray"))
+	if cfRay == "" {
+		return false
+	}
+	server := strings.ToLower(strings.TrimSpace(headers.Get("server")))
+	via := strings.ToLower(strings.TrimSpace(headers.Get("via")))
+	return strings.Contains(server, "cloudflare") || strings.Contains(via, "cloudflare")
+}
+
+// openAIWSCloudflareResponseBodySummary 返回有限的、脱敏后的边缘响应摘要，
+// 仅用于日志取证，不记录完整 HTML/JSON 响应体。
+func openAIWSCloudflareResponseBodySummary(err error) string {
+	var dialErr *openAIWSDialError
+	if !isOpenAIWSCloudflareEdgeReject(err) || !errors.As(err, &dialErr) ||
+		dialErr == nil || len(dialErr.ResponseBody) == 0 {
+		return "-"
+	}
+	summary := sanitizeUpstreamErrorMessage(strings.TrimSpace(string(dialErr.ResponseBody)))
+	summary = strings.Join(strings.Fields(summary), " ")
+	return truncateOpenAIWSLogValue(summary, openAIWSHeaderValueMaxLen)
+}
+
+func openAIWSDialResponseHeaders(err error) http.Header {
+	var dialErr *openAIWSDialError
+	if !errors.As(err, &dialErr) || dialErr == nil {
+		return nil
+	}
+	return dialErr.ResponseHeaders
+}
+
 func hasOpenAIWSHeader(headers http.Header, key string) bool {
 	if headers == nil {
 		return false

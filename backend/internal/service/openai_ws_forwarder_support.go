@@ -659,7 +659,12 @@ func classifyOpenAIWSAcquireError(err error) string {
 		switch dialErr.StatusCode {
 		case 426:
 			return "upgrade_required"
-		case 401, 403:
+		case 401:
+			return "auth_failed"
+		case 403:
+			if isOpenAIWSCloudflareEdgeReject(dialErr) {
+				return "cloudflare_edge_rejected"
+			}
 			return "auth_failed"
 		case 429:
 			return "upstream_rate_limited"
@@ -777,6 +782,12 @@ func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (stri
 	if strings.Contains(msg, "invalid_encrypted_content") ||
 		(strings.Contains(msg, "encrypted content") && strings.Contains(msg, "could not be verified")) {
 		return "invalid_encrypted_content", true
+	}
+	// 预热帧和部分兼容路径只有 error 事件，没有后续 response.failed；
+	// 这些事件也必须沿用容量降载的“同账号重试一次，随后 503”语义。
+	if code == "server_is_overloaded" || code == "slow_down" ||
+		isOpenAICapacityShedMessage(msg) {
+		return "upstream_capacity_shed", true
 	}
 	// 生产 WebSocket 实际返回过 `Invalid \`previous_response_id\`.`，
 	// 与旧版 previous_response_not_found 的语义相同：当前连接/存储作用域

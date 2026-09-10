@@ -994,6 +994,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		agentTaskRecoveryTried := false
 		wsPrevResponseRecoveryTried := false
 		wsInvalidEncryptedContentRecoveryTried := false
+		wsCapacityRetryUsed := false
 		recoverPrevResponseNotFound := func(attempt int) bool {
 			if wsPrevResponseRecoveryTried {
 				return false
@@ -1109,6 +1110,30 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if reason != "" {
 				wsLastFailureReason = reason
 			}
+			// Cloudflare 边缘 403 不是账号授权失败。只对已经确认是
+			// 官方 OAuth 出口、且当前请求尚未向客户端写出内容的场景
+			// 转入同一冻结调用的 HTTP bridge；API Key 或证据不足时
+			// 仍保持原有 fail-close。
+			if reason == "cloudflare_edge_rejected" {
+				if account.IsOpenAIOAuth() {
+					forceHTTPFallback = true
+					s.recordOpenAIWSNonRetryableFastFallback()
+					logOpenAIWSModeInfo(
+						"reconnect_stop account_id=%d attempt=%d reason=%s action=fallback_http",
+						account.ID,
+						attempt,
+						normalizeOpenAIWSLogValue(reason),
+					)
+				} else {
+					logOpenAIWSModeInfo(
+						"reconnect_stop account_id=%d attempt=%d reason=%s action=fail_close_non_oauth",
+						account.ID,
+						attempt,
+						normalizeOpenAIWSLogValue(reason),
+					)
+				}
+				break
+			}
 			// previous_response_not_found 说明续链锚点不可用：
 			// 对非 function_call_output 场景，允许一次“去掉 previous_response_id 后重放”。
 			if reason == "previous_response_not_found" && recoverPrevResponseNotFound(attempt) {
@@ -1133,10 +1158,23 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				)
 				break
 			}
+			if reason == "upstream_capacity_shed" {
+				if wsCapacityRetryUsed {
+					retryable = false
+					logOpenAIWSModeInfo(
+						"reconnect_stop account_id=%d attempt=%d reason=%s action=return_503",
+						account.ID,
+						attempt,
+						normalizeOpenAIWSLogValue(reason),
+					)
+				} else {
+					wsCapacityRetryUsed = true
+				}
+			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)
 				if retryBudget > 0 && time.Since(retryStartedAt)+backoff > retryBudget {
-					forceHTTPFallback = account.IsOpenAIOAuth()
+					forceHTTPFallback = account.IsOpenAIOAuth() && reason != "upstream_capacity_shed"
 					s.recordOpenAIWSRetryExhausted()
 					logOpenAIWSModeInfo(
 						"reconnect_budget_exhausted account_id=%d attempts=%d max_retries=%d reason=%s elapsed_ms=%d budget_ms=%d",
@@ -1173,7 +1211,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				continue
 			}
 			if retryable {
-				forceHTTPFallback = account.IsOpenAIOAuth()
+				forceHTTPFallback = account.IsOpenAIOAuth() && reason != "upstream_capacity_shed"
 				s.recordOpenAIWSRetryExhausted()
 				logOpenAIWSModeInfo(
 					"reconnect_exhausted account_id=%d attempts=%d max_retries=%d reason=%s",

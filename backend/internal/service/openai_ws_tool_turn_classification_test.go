@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,4 +51,63 @@ func TestOpenAIOfficialEgressWSToolOutputTurnFailsClosedWhenBoundaryIsAmbiguous(
 	require.True(t, hasAny)
 	require.False(t, hasCurrent)
 	require.False(t, reliable)
+}
+
+func TestOpenAIOfficialEgressWSToolOutputTurnUsesSessionCallIDsAfterReconnect(t *testing.T) {
+	state := &officialOpenAIWSDerivedState{}
+	state.setPendingToolCallIDs([]json.RawMessage{
+		json.RawMessage(`{"type":"function_call","call_id":"call_current","name":"exec","arguments":"{}"}`),
+	})
+	payload := map[string]any{
+		"type": "response.create",
+		"input": []any{
+			map[string]any{"type": "function_call", "call_id": "call_current", "name": "exec", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "call_current", "output": "ok"},
+			map[string]any{"type": "input_text", "text": "continued"},
+		},
+	}
+	hasAny, hasCurrent, reliable, err := classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(payload, state)
+	require.NoError(t, err)
+	require.True(t, hasAny)
+	require.True(t, hasCurrent)
+	require.True(t, reliable)
+}
+
+func TestOpenAIOfficialEgressWSToolOutputTurnRejectsHistoricalOrMixedCallIDs(t *testing.T) {
+	state := &officialOpenAIWSDerivedState{}
+	state.setPendingToolCallIDs([]json.RawMessage{
+		json.RawMessage(`{"type":"function_call","call_id":"call_current","name":"exec","arguments":"{}"}`),
+	})
+
+	t.Run("historical_only", func(t *testing.T) {
+		payload := map[string]any{
+			"type": "response.create",
+			"input": []any{
+				map[string]any{"type": "function_call", "call_id": "call_old", "name": "exec", "arguments": "{}"},
+				map[string]any{"type": "function_call_output", "call_id": "call_old", "output": "old"},
+				map[string]any{"type": "input_text", "text": "new"},
+			},
+		}
+		_, hasCurrent, reliable, err := classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(payload, state)
+		require.NoError(t, err)
+		require.False(t, hasCurrent)
+		require.True(t, reliable)
+	})
+
+	t.Run("mixed_call_ids", func(t *testing.T) {
+		payload := map[string]any{
+			"type": "response.create",
+			"input": []any{
+				map[string]any{"type": "function_call", "call_id": "call_old", "name": "exec", "arguments": "{}"},
+				map[string]any{"type": "function_call_output", "call_id": "call_old", "output": "old"},
+				map[string]any{"type": "function_call", "call_id": "call_current", "name": "exec", "arguments": "{}"},
+				map[string]any{"type": "function_call_output", "call_id": "call_current", "output": "current"},
+				map[string]any{"type": "input_text", "text": "new"},
+			},
+		}
+		_, hasCurrent, reliable, err := classifyOfficialOpenAIWSToolOutputTurnWithDerivedState(payload, state)
+		require.NoError(t, err)
+		require.True(t, hasCurrent)
+		require.False(t, reliable)
+	})
 }

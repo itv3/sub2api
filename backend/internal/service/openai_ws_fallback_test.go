@@ -38,6 +38,33 @@ func TestClassifyOpenAIWSAcquireError(t *testing.T) {
 		require.Equal(t, "auth_failed", classifyOpenAIWSAcquireError(err))
 	})
 
+	t.Run("cloudflare_edge_403", func(t *testing.T) {
+		err := &openAIWSDialError{
+			StatusCode: http.StatusForbidden,
+			ResponseHeaders: http.Header{
+				"Server":       []string{"cloudflare"},
+				"Cf-Ray":       []string{"abc123-LAX"},
+				"Cf-Mitigated": []string{"challenge"},
+			},
+			ResponseBody: []byte("Attention Required"),
+			Err:          errors.New("forbidden"),
+		}
+		require.True(t, isOpenAIWSCloudflareEdgeReject(err))
+		require.Equal(t, "cloudflare_edge_rejected", classifyOpenAIWSAcquireError(err))
+		require.Contains(t, openAIWSCloudflareResponseBodySummary(err), "Attention Required")
+	})
+
+	t.Run("plain_403_remains_auth_failed", func(t *testing.T) {
+		err := &openAIWSDialError{
+			StatusCode:      http.StatusForbidden,
+			ResponseHeaders: http.Header{"Server": []string{"openai"}},
+			Err:             errors.New("forbidden"),
+		}
+		require.False(t, isOpenAIWSCloudflareEdgeReject(err))
+		require.Equal(t, "auth_failed", classifyOpenAIWSAcquireError(err))
+		require.Equal(t, "-", openAIWSCloudflareResponseBodySummary(err))
+	})
+
 	t.Run("upstream_rate_limited", func(t *testing.T) {
 		err := &openAIWSDialError{StatusCode: 429, Err: errors.New("rate limited")}
 		require.Equal(t, "upstream_rate_limited", classifyOpenAIWSAcquireError(err))
@@ -112,6 +139,10 @@ func TestClassifyOpenAIWSErrorEvent(t *testing.T) {
 	require.Equal(t, "previous_response_not_found", reason)
 	require.True(t, recoverable)
 
+	reason, recoverable = classifyOpenAIWSErrorEvent([]byte(`{"type":"error","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`))
+	require.Equal(t, "upstream_capacity_shed", reason)
+	require.True(t, recoverable)
+
 	for _, message := range []string{
 		"Invalid `previous_response_id`.",
 		"invalid previous_response_id",
@@ -166,6 +197,15 @@ func TestResolveOpenAIWSFallbackErrorResponse(t *testing.T) {
 		require.Equal(t, "upstream_error", errType)
 		require.Equal(t, "forbidden", clientMessage)
 		require.Equal(t, "forbidden", upstreamMessage)
+	})
+
+	t.Run("capacity_shed_is_retryable_503", func(t *testing.T) {
+		err := wrapOpenAIWSFallback("upstream_capacity_shed", errors.New("overloaded"))
+		statusCode, errType, clientMessage, _, ok := resolveOpenAIWSFallbackErrorResponse(err)
+		require.True(t, ok)
+		require.Equal(t, http.StatusServiceUnavailable, statusCode)
+		require.Equal(t, "server_error", errType)
+		require.Contains(t, clientMessage, "overloaded")
 	})
 
 	t.Run("ambiguous_tool_turn_is_client_error", func(t *testing.T) {

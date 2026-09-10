@@ -1,0 +1,38 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-version-sync-successor/v1",
+  "issued_at_utc": "2026-09-10T05:24:03Z",
+  "base_commit": "5d8637582d155eb6ae0b9dcc4a79b82c62191475",
+  "current_commit": "74618d702cc57155a2d812ae0dfd9702ced0af06",
+  "scope": "upstream-v0.2.3-version-sync-successor",
+  "predecessor": {
+    "path": "docs/egress/maintenance/upstream-v0.2.3-source-transition.json",
+    "sha256": "155cced56d77bc799acdf27cd66bba0958e73cd30dc3136c4cb15077e2dd95fc"
+  },
+  "transitions": [
+    {
+      "path": "backend/cmd/server/VERSION",
+      "predecessor_sha256s": [
+        "3ab94c04d24986f3af288ba1cda2c0bbddbc5a89dff097182805f54578e1ea75"
+      ],
+      "to_sha256": "9f3a44a5989c64c410c533cf1266dad95301aa67e312e11a27195f67061b9964",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "登记上游 v0.2.3 合并完成后的版本同步：backend/cmd/server/VERSION 从 0.2.3 更新为 0.2.3-1；历史 transition 收据保持只读。"
+    }
+  ],
+  "verification": [
+    "go test ./internal/service -run 'TestUpstream(V023SourceTransition|MergeFrameworkV4)' -count=1",
+    "go test ./internal/officialegress/... -run 'TestUpstream(V023SourceTransition|MergeFrameworkV4)' -count=1",
+    "make check-egress-spec-ci"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "deployment_performed": false
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "8bc12fdd44b5480cabe32c93a6ef04de8976733ad426eb71ccdf6d04548a7317"
+}

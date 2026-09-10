@@ -1,0 +1,32 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-reconnect-repair-gate-successor/v1",
+  "issued_at_utc": "2026-09-10T06:51:12Z",
+  "base_commit": "74618d702cc57155a2d812ae0dfd9702ced0af06",
+  "current_commit": "74618d702cc57155a2d812ae0dfd9702ced0af06",
+  "scope": "upstream-v0.2.3-reconnect-repair-gate-successor",
+  "transitions": [
+    {
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "predecessor_sha256s": [
+        "ee1388507da898390ebe475e2941d960cbf71c6948ef3263dd455483070d7218"
+      ],
+      "to_sha256": "7be1972902d2285eacb2a754b3d0d8d0fca9f0166aa27f2359f95644bc7b23d5",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-v0.2.3-release-prep-source-successor.json"
+      ],
+      "reason": "Python 工作区 successor 门禁显式读取 VERSION 同步 successor、openai-ws-reconnect-repair 源码 transition 与本收据，沿已封存 successor 图承接当前工作区；历史收据保持只读。"
+    }
+  ],
+  "verification": [
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "deployment_performed": false
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "501309aa2e2dbcf13bb71cddfa664448d2a2d6ba4ca2e20aebc5f58a5410e765"
+}

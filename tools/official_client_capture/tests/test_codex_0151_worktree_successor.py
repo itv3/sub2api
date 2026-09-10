@@ -20,6 +20,15 @@ POST_BOOTSTRAP_SUCCESSOR = (
 RELEASE_PREP_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-v0.2.3-release-prep-source-successor.json"
 )
+VERSION_SYNC_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-v0.2.3-version-sync-successor.json"
+)
+RECONNECT_REPAIR_TRANSITION = (
+    ROOT / "docs/egress/maintenance/openai-ws-reconnect-repair-source-transition.json"
+)
+RECONNECT_REPAIR_GATE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-v0.2.3-reconnect-repair-gate-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -88,7 +97,13 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
     """读取已封存的 v0.2.3 后继边，不把当前工作区当作授权来源。"""
 
     edges: list[tuple[str, str]] = []
-    for receipt_path in (POST_BOOTSTRAP_SUCCESSOR, RELEASE_PREP_SUCCESSOR):
+    for receipt_path in (
+        POST_BOOTSTRAP_SUCCESSOR,
+        RELEASE_PREP_SUCCESSOR,
+        VERSION_SYNC_SUCCESSOR,
+        RECONNECT_REPAIR_TRANSITION,
+        RECONNECT_REPAIR_GATE_SUCCESSOR,
+    ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
         edges.extend(_successor_edges_from_payload(payload, path))

@@ -34,6 +34,12 @@ const (
 
 	openAIWSPrewarmFailureWindow   = 30 * time.Second
 	openAIWSPrewarmFailureSuppress = 2
+
+	// 新建连接只做轻量级节流，避免同一账号在上游边缘拒绝后瞬间
+	// 产生连接风暴；复用连接不经过该门禁。
+	openAIWSNewDialMinInterval = 250 * time.Millisecond
+	openAIWSEdgeBackoffInitial = time.Second
+	openAIWSEdgeBackoffMax     = 30 * time.Second
 )
 
 var (
@@ -728,6 +734,9 @@ type openAIWSConnPool struct {
 	accounts sync.Map // key: int64(accountID), value: *openAIWSAccountPool
 	seq      atomic.Uint64
 
+	dialThrottleMu sync.Mutex
+	dialThrottle   map[int64]openAIWSDialThrottleState
+
 	metrics openAIWSPoolMetrics
 
 	workerStopCh chan struct{}
@@ -735,11 +744,18 @@ type openAIWSConnPool struct {
 	closeOnce    sync.Once
 }
 
+type openAIWSDialThrottleState struct {
+	nextAllowedAt time.Time
+	edgeBackoffAt time.Time
+	edgeRejects   int
+}
+
 func newOpenAIWSConnPool(cfg *config.Config) *openAIWSConnPool {
 	pool := &openAIWSConnPool{
 		cfg:          cfg,
 		clientDialer: newDefaultOpenAIWSClientDialer(),
 		workerStopCh: make(chan struct{}),
+		dialThrottle: make(map[int64]openAIWSDialThrottleState),
 	}
 	pool.startBackgroundWorkers()
 	return pool
@@ -1981,6 +1997,13 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	if p == nil || p.clientDialer == nil {
 		return nil, errors.New("openai ws client dialer is nil")
 	}
+	accountID := int64(0)
+	if req.Account != nil {
+		accountID = req.Account.ID
+	}
+	if err := p.waitForDialPermit(ctx, accountID); err != nil {
+		return nil, err
+	}
 	headers := cloneHeader(req.Headers)
 	dialContext := ctx
 	var err error
@@ -2011,12 +2034,16 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 		if errors.As(err, &handshakeErr) && handshakeErr != nil {
 			responseBody = append([]byte(nil), handshakeErr.Body...)
 		}
-		return nil, &openAIWSDialError{
+		dialErr := &openAIWSDialError{
 			StatusCode:      status,
 			ResponseHeaders: cloneHeader(handshakeHeaders),
 			ResponseBody:    responseBody,
 			Err:             err,
 		}
+		if isOpenAIWSCloudflareEdgeReject(dialErr) {
+			p.recordCloudflareEdgeReject(accountID)
+		}
+		return nil, dialErr
 	}
 	if conn == nil {
 		return nil, &openAIWSDialError{
@@ -2025,11 +2052,88 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			Err:             errors.New("openai ws dialer returned nil connection"),
 		}
 	}
+	p.clearCloudflareEdgeReject(accountID)
 	id := p.nextConnID(req.Account.ID)
 	pooledConn := newOpenAIWSConn(id, req.Account.ID, conn, handshakeHeaders)
 	pooledConn.handshakeCompatibility = normalizeOpenAIWSAcquireCompatibility(req)
 	pooledConn.routingAffinity = normalizeOpenAIWSRoutingAffinity(req.Headers)
 	return pooledConn, nil
+}
+
+func (p *openAIWSConnPool) waitForDialPermit(ctx context.Context, accountID int64) error {
+	if p == nil || accountID <= 0 {
+		return nil
+	}
+	for {
+		now := time.Now()
+		p.dialThrottleMu.Lock()
+		if p.dialThrottle == nil {
+			p.dialThrottle = make(map[int64]openAIWSDialThrottleState)
+		}
+		state := p.dialThrottle[accountID]
+		waitUntil := state.nextAllowedAt
+		if state.edgeBackoffAt.After(waitUntil) {
+			waitUntil = state.edgeBackoffAt
+		}
+		if !waitUntil.After(now) {
+			state.nextAllowedAt = now.Add(openAIWSNewDialMinInterval)
+			p.dialThrottle[accountID] = state
+			p.dialThrottleMu.Unlock()
+			return nil
+		}
+		delay := time.Until(waitUntil)
+		p.dialThrottleMu.Unlock()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (p *openAIWSConnPool) recordCloudflareEdgeReject(accountID int64) {
+	if p == nil || accountID <= 0 {
+		return
+	}
+	now := time.Now()
+	p.dialThrottleMu.Lock()
+	defer p.dialThrottleMu.Unlock()
+	if p.dialThrottle == nil {
+		p.dialThrottle = make(map[int64]openAIWSDialThrottleState)
+	}
+	state := p.dialThrottle[accountID]
+	state.edgeRejects++
+	backoff := openAIWSEdgeBackoffInitial
+	for i := 1; i < state.edgeRejects && backoff < openAIWSEdgeBackoffMax; i++ {
+		backoff *= 2
+	}
+	if backoff > openAIWSEdgeBackoffMax {
+		backoff = openAIWSEdgeBackoffMax
+	}
+	state.edgeBackoffAt = now.Add(backoff)
+	if state.nextAllowedAt.Before(state.edgeBackoffAt) {
+		state.nextAllowedAt = state.edgeBackoffAt
+	}
+	p.dialThrottle[accountID] = state
+}
+
+func (p *openAIWSConnPool) clearCloudflareEdgeReject(accountID int64) {
+	if p == nil || accountID <= 0 {
+		return
+	}
+	p.dialThrottleMu.Lock()
+	defer p.dialThrottleMu.Unlock()
+	state, ok := p.dialThrottle[accountID]
+	if !ok {
+		return
+	}
+	state.edgeBackoffAt = time.Time{}
+	state.edgeRejects = 0
+	p.dialThrottle[accountID] = state
 }
 
 func (p *openAIWSConnPool) nextConnID(accountID int64) string {
