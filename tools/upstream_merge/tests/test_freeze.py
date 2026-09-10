@@ -197,7 +197,7 @@ class FreezeSuccessorTest(unittest.TestCase):
                     {
                         "id": "scanner",
                         "description": "扫描器算法单跳",
-                        "match": {"prefixes": ["backend/cmd/scan/"], "exclude_suffixes": ["_test.go"]},
+                        "match": {"prefixes": ["backend/cmd/scan/"], "exclude_suffixes": ["_test.go"], "exclude_prefixes": ["backend/cmd/scan/testdata/"]},
                         "action": {"kind": "single_hop_file", "file": "docs/x.json", "instruction": "改写 to"},
                         "verification": ["make scan"],
                     },
@@ -284,6 +284,30 @@ class FreezeSuccessorTest(unittest.TestCase):
         committed = plan_freeze_successor(self.root, self.base, after)
         self.assertEqual(committed["mode"], "commit")
         self.assertEqual(committed["frozen_hits"], plan["frozen_hits"])
+
+    def test_registry_rules_apply_to_unregistered_paths(self) -> None:
+        # 受管目录内的新文件不在任何收据边里，但目录级摘要规则仍必须报待办。
+        scanner = self.root / "backend/cmd/scan/new_rule.go"
+        scanner.parent.mkdir(parents=True)
+        scanner.write_text("package scan\n", encoding="utf-8")
+        run(self.root, "git", "add", "--all")
+        base = self._commit("add scanner file")
+        scanner.write_text("package scan // changed\n", encoding="utf-8")
+        plan = plan_freeze_successor(self.root, base)
+        self.assertEqual(plan["frozen_hits"], [])
+        self.assertEqual(plan["unregistered_paths"], ["backend/cmd/scan/new_rule.go"])
+        self.assertEqual([(a["rule_id"], a["path"]) for a in plan["required_manual_actions"]], [("scanner", "backend/cmd/scan/new_rule.go")])
+        excluded = self.root / "backend/cmd/scan/testdata/fixture.go"
+        excluded.parent.mkdir(parents=True)
+        excluded.write_text("package testdata\n", encoding="utf-8")
+        run(self.root, "git", "add", "--all")
+        base2 = self._commit("add excluded fixture")
+        excluded.write_text("package testdata // changed\n", encoding="utf-8")
+        self.assertEqual(plan_freeze_successor(self.root, base2)["required_manual_actions"], [])
+        output = self.maintenance / "upstream-t7-freeze-successor.json"
+        summary = generate_freeze_successor(self.root, base, None, output, tag="t7")
+        self.assertEqual(summary["result"], "manual_actions_required")
+        self.assertEqual(summary["transition_count"], 0)
 
     def test_broken_chain_fails_closed(self) -> None:
         # 先把 a.go 改到一个未登记的摘要并提交，再从该提交出发生成：前序摘要不在登记集合中。

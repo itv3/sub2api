@@ -319,6 +319,9 @@ def _rule_matches(rule: dict[str, Any], path: str, receipt_index: dict[str, set[
     for suffix in match.get("exclude_suffixes", []) or []:
         if isinstance(suffix, str) and path.endswith(suffix):
             return False
+    for prefix in match.get("exclude_prefixes", []) or []:
+        if isinstance(prefix, str) and path.startswith(prefix):
+            return False
     if any(isinstance(prefix, str) and path.startswith(prefix) for prefix in match.get("prefixes", []) or []):
         return True
     if path in (match.get("paths") or []):
@@ -362,9 +365,26 @@ def plan_freeze_successor(
     broken: list[dict[str, Any]] = []
     manual_actions: list[dict[str, Any]] = []
     deleted_frozen: list[str] = []
+    def note_rule_actions(path: str) -> None:
+        # 注册表规则描述的是“目录级摘要”等收据边之外的冻结，必须对每个变化路径
+        # 判定，而不只对已登记收据边的路径判定；否则改一个目录内的新文件会漏报。
+        for rule in registry["rules"]:
+            if _rule_matches(rule, path, receipt_index):
+                manual_actions.append(
+                    {
+                        "rule_id": rule["id"],
+                        "path": path,
+                        "action_kind": rule["action"]["kind"],
+                        "file": rule["action"].get("file"),
+                        "instruction": rule["action"]["instruction"],
+                        "verification": list(rule["verification"]),
+                    }
+                )
+
     for change in changes:
         path = change["path"]
         old_path = change["old_path"] or path
+        note_rule_actions(path)
         frozen_paths = [candidate for candidate in {path, old_path} if candidate in known]
         if not frozen_paths:
             unregistered.append(path)
@@ -400,18 +420,6 @@ def plan_freeze_successor(
                 "source_receipts": source_receipts,
             }
         )
-        for rule in registry["rules"]:
-            if _rule_matches(rule, path, receipt_index):
-                manual_actions.append(
-                    {
-                        "rule_id": rule["id"],
-                        "path": path,
-                        "action_kind": rule["action"]["kind"],
-                        "file": rule["action"].get("file"),
-                        "instruction": rule["action"]["instruction"],
-                        "verification": list(rule["verification"]),
-                    }
-                )
     hits.sort(key=lambda item: item["path"])
     manual_actions.sort(key=lambda item: (item["rule_id"], item["path"]))
     return {
@@ -555,8 +563,8 @@ def generate_freeze_successor(
     )
     if dry_run:
         return {"dry_run": True, "output": None, **document}
-    if not transitions:
-        raise UpstreamMergeError("区间内没有命中冻结覆盖的路径变化，无需生成 successor")
+    if not transitions and not plan["required_manual_actions"] and not plan["deleted_frozen_paths"]:
+        raise UpstreamMergeError("区间内没有命中冻结覆盖的路径变化，也没有注册表待办，无需生成 successor")
     assert output_path is not None
     write_once(output_path, pretty_bytes(document), mode=0o644)
     return {

@@ -1,6 +1,6 @@
 {
-  "identity_sha256": "235a22b9fe39c77f99ea797901112d39d8a54e506e89873d5df0e37324e80591",
-  "issued_at_utc": "2026-09-10T08:59:00Z",
+  "identity_sha256": "ce2ec9e5b4d4cf7fe0d381489724782854dfba729bfad4e27194ae84b7f37fef",
+  "issued_at_utc": "2026-09-10T10:00:00Z",
   "policy": {
     "chain_policy": "只承接已登记摘要到当前摘要的精确边；前序摘要不在已登记集合中即链断裂，工具 fail-close，不得凭空补边。",
     "generic_graph": "docs/egress/maintenance/*.json 中 schema_version 含 successor、transition、ledger 或 receipt 的收据参与抽边；任何带非空 path 与 reason 的对象按 predecessor_sha256s、predecessor_sha256、from_sha256、before.sha256 到 to_sha256、current_sha256、head_sha256、after.sha256 抽取显式边；after 含 existence 的收据视为已封存快照，该路径全部已登记摘要都可承接到快照。",
@@ -32,9 +32,21 @@
         "instruction": "用 tools/arm64_supervised_deploy.py 的 tool_digest() 与 file_sha256() 重算 DEFAULT_TOOL_DIGEST、DEFAULT_SUPERVISOR_DIGEST、DEFAULT_ASSERTION_PREPARER_DIGEST 并更新常量；脚本自身随之变化，须在同一收据或后续收据中登记其后继摘要。",
         "kind": "script_constant"
       },
-      "description": "ARM64 受监督部署脚本内置 official_client_capture 工具树、supervisor 与 assertion preparer 三个摘要常量。",
+      "description": "ARM64 受监督部署脚本内置 official_client_capture 工具树摘要，只覆盖 .py/.sh/.json 且排除 tests、versions 与 __pycache__。",
       "id": "arm64-managed-tool-digests",
       "match": {
+        "exclude_prefixes": [
+          "tools/official_client_capture/tests/",
+          "tools/official_client_capture/versions/"
+        ],
+        "exclude_suffixes": [
+          ".md",
+          ".txt",
+          ".mjs",
+          ".yaml",
+          ".yml",
+          ".toml"
+        ],
         "prefixes": [
           "tools/official_client_capture/",
           "tools/prepare_assertion_bundle.sh"
