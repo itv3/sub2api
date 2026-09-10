@@ -262,9 +262,60 @@ func (s *OpenAIGatewayService) resolveOpenAIModelCapabilities(
 	if s == nil || account == nil || !account.IsOpenAIOAuth() {
 		return openAIModelCapabilities{}
 	}
+	lookup := s.lookupOpenAIModelCapabilities(account, body)
+	return applyOpenAIModelCapabilityBodyRules(lookup, body)
+}
+
+// openAIModelCapabilityLookup 是一次请求内对模型能力快照的查表结果。它在
+// ensure 之后被钉在 ctx 上：后台刷新可能落在入站归一化与出站画像之间，若两处各自
+// 再查快照，会得到“入站按 Lite、出站按非 Lite”的自相矛盾形态。按 body 的修正
+// （hosted tool 必须走完整 Responses）仍在每次使用时按当时的 body 计算。
+type openAIModelCapabilityLookup struct {
+	accountID int64
+	model     string
+	value     openAIModelCapabilities
+	known     bool
+}
+
+type openAIModelCapabilityLookupContextKey struct{}
+
+func (s *OpenAIGatewayService) lookupOpenAIModelCapabilities(
+	account *Account,
+	body []byte,
+) openAIModelCapabilityLookup {
 	model := openAIModelCapabilityKey(account, body)
 	value, known := s.openaiModelCapabilities.modelCapabilities(account.ID, model)
-	if !known {
+	return openAIModelCapabilityLookup{accountID: account.ID, model: model, value: value, known: known}
+}
+
+// resolveOpenAIModelCapabilitiesInContext 优先沿用 ctx 上已钉住的查表结果；
+// 首次调用时查快照并钉住，返回更新后的 ctx。
+func (s *OpenAIGatewayService) resolveOpenAIModelCapabilitiesInContext(
+	ctx context.Context,
+	account *Account,
+	body []byte,
+) (openAIModelCapabilities, context.Context) {
+	if s == nil || account == nil || !account.IsOpenAIOAuth() {
+		return openAIModelCapabilities{}, ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	model := openAIModelCapabilityKey(account, body)
+	if pinned, ok := ctx.Value(openAIModelCapabilityLookupContextKey{}).(openAIModelCapabilityLookup); ok &&
+		pinned.accountID == account.ID && pinned.model == model {
+		return applyOpenAIModelCapabilityBodyRules(pinned, body), ctx
+	}
+	lookup := s.lookupOpenAIModelCapabilities(account, body)
+	ctx = context.WithValue(ctx, openAIModelCapabilityLookupContextKey{}, lookup)
+	return applyOpenAIModelCapabilityBodyRules(lookup, body), ctx
+}
+
+func applyOpenAIModelCapabilityBodyRules(
+	lookup openAIModelCapabilityLookup,
+	body []byte,
+) openAIModelCapabilities {
+	if !lookup.known {
 		// 官方对未知 slug 使用 model_info_from_slug：effort=None、summary=auto，
 		// 且 summary 参数受支持。拉取清单失败时也只能采用这一公开 fallback，
 		// 不能发出缺失 reasoning 结构体的非官方形态。
@@ -274,6 +325,7 @@ func (s *OpenAIGatewayService) resolveOpenAIModelCapabilities(
 			ReasoningDefaultsKnown:            true,
 		}
 	}
+	value := lookup.value
 	if value.UseResponsesLite && openAIResponsesLiteRequiresFullResponses(body) {
 		// Lite 只适用于有限的内置/函数工具。明确携带 hosted tool 或其
 		// 调用历史时必须走完整 Responses 能力链路，不能在 Lite 本地 400，
@@ -430,15 +482,14 @@ func (s *OpenAIGatewayService) bindOpenAIResponsesLiteCapability(
 	account *Account,
 	body []byte,
 ) context.Context {
-	return withOpenAIModelCapabilities(
-		ctx,
-		s.resolveOpenAIModelCapabilities(account, body),
-	)
+	value, ctx := s.resolveOpenAIModelCapabilitiesInContext(ctx, account, body)
+	return withOpenAIModelCapabilities(ctx, value)
 }
 
 // normalizeOpenAIResponsesLiteIngressHeader 覆盖客户端自报的 Lite Header，
 // 使权限、工具归一化和最终画像始终使用同一份模型能力判定。
 func (s *OpenAIGatewayService) normalizeOpenAIResponsesLiteIngressHeader(
+	ctx context.Context,
 	c *gin.Context,
 	account *Account,
 	body []byte,
@@ -449,7 +500,8 @@ func (s *OpenAIGatewayService) normalizeOpenAIResponsesLiteIngressHeader(
 		}
 		return isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader))
 	}
-	enabled := s.resolveOpenAIResponsesLiteCapability(account, body)
+	capabilities, _ := s.resolveOpenAIModelCapabilitiesInContext(ctx, account, body)
+	enabled := capabilities.UseResponsesLite
 	if c == nil || c.Request == nil {
 		return enabled
 	}

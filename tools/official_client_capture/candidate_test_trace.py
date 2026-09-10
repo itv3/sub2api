@@ -65,8 +65,11 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 2026-09-09：合并 Sub2API v0.2.3 后，WebSocket payload、gateway 转发、alpha search、
 # live 转发及 HTTP upstream 五份生产源码发生受管变化；本轮只重绑对应源码摘要，不改变
 # 候选测试、事实宇宙或断言规则。
+# 2026-09-10：openai_gateway_forward.go 在 ensure 之后把模型能力查表结果钉在 ctx，
+# 消除入站归一化与出站画像之间的判定撕裂；本轮只重绑该源码摘要，不改变候选测试、
+# 事实宇宙或断言规则。
 FROZEN_MAPPING_SHA256 = (
-    "94fec2c8e63c04a09e4970f26d742ee2b0a257a49a056f33e7045dd447713f1f"
+    "3bf63d404fea6edb7339e966bd7ca48439e6497b43fe959f98244952377d4529"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。

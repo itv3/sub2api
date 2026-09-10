@@ -116,6 +116,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, capabilityErr
 		}
 	}
+	// 模型能力只查表一次并钉在 ctx：后台刷新落在入站归一化与出站画像之间时，
+	// 两处仍读同一份判定，避免入站按 Lite、出站按非 Lite 的撕裂。
+	ctx = s.bindOpenAIResponsesLiteCapability(ctx, account, body)
 	wsDecision := resolveOpenAIWSProtocolForRequest(s.getOpenAIWSProtocolResolver(), ctx, account)
 	clientTransport := GetOpenAIClientTransport(c)
 	codexReleaseMode := ""
@@ -167,7 +170,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, fmt.Errorf("解析 Codex 进程运行态：%w", err)
 		}
 	}
-	useResponsesLite := s.normalizeOpenAIResponsesLiteIngressHeader(c, account, body)
+	useResponsesLite := s.normalizeOpenAIResponsesLiteIngressHeader(ctx, c, account, body)
 	compactPath := isOpenAIResponsesCompactPath(c)
 	// namespace 冲突必须在 Lite 工具归一化之前校验；非 Lite HTTP 再执行摊平。
 	// 否则转换可能先丢失命名空间结构，让冲突请求绕过 400 校验。
