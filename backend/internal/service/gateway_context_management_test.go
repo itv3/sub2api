@@ -420,13 +420,15 @@ func TestApplyClaudeSetupTokenThirdPartyCompatibilityToBody_OfficialEgressPreser
 	require.Equal(t, "5m", gjson.GetBytes(out, "tools.0.cache_control.ttl").String())
 }
 
-func TestApplyClaudeCodeOAuthMimicryToBody_FableOmitsRefusedExpansion(t *testing.T) {
-	account := &Account{ID: 406, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+func TestApplyClaudeSetupTokenThirdPartyCompatibilityToBody_FableOmitsRefusedExpansion(t *testing.T) {
+	// Claude OAuth 旧 mimicry 链已退休；Fable 的拒绝扩展回归改由 Setup Token
+	// 第三方兼容路径覆盖，避免测试重新依赖已删除的 OAuth 方法。
+	account := &Account{ID: 406, Platform: PlatformAnthropic, Type: AccountTypeSetupToken}
 	body := []byte(`{"model":"claude-fable-5","system":"Project instructions","messages":[{"role":"user","content":"hello"}]}`)
 	svc := &GatewayService{cfg: &config.Config{}}
 
-	out := svc.applyClaudeCodeOAuthMimicryToBody(
-		context.Background(), nil, account, body, "Project instructions", "claude-fable-5",
+	out, _ := svc.applyClaudeSetupTokenThirdPartyCompatibilityToBody(
+		context.Background(), nil, account, body, "Project instructions", "claude-fable-5", false,
 	)
 
 	system := gjson.GetBytes(out, "system").Array()
@@ -435,8 +437,8 @@ func TestApplyClaudeCodeOAuthMimicryToBody_FableOmitsRefusedExpansion(t *testing
 	require.Equal(t, claudeCodeSystemPrompt, system[1].Get("text").String())
 	require.NotContains(t, string(out), claudeCodeSystemPromptExpansion)
 	require.Contains(t, gjson.GetBytes(out, "messages.0.content.0.text").String(), "Project instructions")
-	require.Equal(t, "Understood. I will follow these instructions.", gjson.GetBytes(out, "messages.1.content.0.text").String())
-	require.Equal(t, "hello", gjson.GetBytes(out, "messages.2.content").String())
+	require.Equal(t, "hello", gjson.GetBytes(out, "messages.1.content").String())
+	require.Len(t, gjson.GetBytes(out, "messages").Array(), 2)
 }
 
 // ============================================================================

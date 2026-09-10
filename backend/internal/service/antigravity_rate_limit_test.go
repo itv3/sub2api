@@ -844,7 +844,7 @@ func TestSetAntigravityModelRateLimits_GeminiWritesFamilyScope(t *testing.T) {
 	require.Equal(t, antigravityGeminiModelRateLimitKey, repo.modelRateLimitCalls[1].modelKey)
 }
 
-func TestSetAntigravityModelRateLimits_DoesNotDoubleMapCustomChain(t *testing.T) {
+func TestSetAntigravityModelRateLimits_RejectsUnwhitelistedCustomChain(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{}
 	account := &Account{
@@ -859,7 +859,9 @@ func TestSetAntigravityModelRateLimits_DoesNotDoubleMapCustomChain(t *testing.T)
 	}
 	resetAt := time.Now().Add(30 * time.Second)
 	canonicalModel := resolveFinalAntigravityModelKey(context.Background(), account, "custom-sonnet")
-	require.Equal(t, "claude-sonnet-4-5", canonicalModel)
+	// 自定义合同要求最终发包目标出现在自映射白名单中；不能沿第二段映射
+	// 自动追踪，否则会把管理员未明确放行的模型带入发包和限流键。
+	require.Empty(t, canonicalModel)
 
 	success := svc.setAntigravityModelRateLimits(
 		context.Background(),
@@ -872,9 +874,8 @@ func TestSetAntigravityModelRateLimits_DoesNotDoubleMapCustomChain(t *testing.T)
 		false,
 	)
 
-	require.True(t, success)
-	require.Len(t, repo.modelRateLimitCalls, 1)
-	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
+	require.False(t, success)
+	require.Empty(t, repo.modelRateLimitCalls)
 }
 
 func TestSetModelRateLimitAndClearSession_UsesUpstreamReportedModelMetadata(t *testing.T) {

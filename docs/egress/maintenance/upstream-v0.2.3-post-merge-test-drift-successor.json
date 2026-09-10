@@ -1,0 +1,141 @@
+{
+  "schema_version": "official-egress-upstream-v0.2.3-post-merge-test-drift-successor/v1",
+  "issued_at_utc": "2026-09-10T01:29:00Z",
+  "base_commit": "8e688121fcd52bc6eff1a55100b7efa2b274261e",
+  "scope": "upstream-v0.2.3-post-merge-test-drift-successor",
+  "transitions": [
+    {
+      "path": "backend/internal/handler/openai_responses_astra_pro_failover_test.go",
+      "predecessor_sha256s": [
+        "96e9b066bb2ce8fdb28b125bdbd73c4d3cee4a0a44a1d36acfa3b83a279a298d"
+      ],
+      "to_sha256": "a96fff026f232c841eef8e5cc4dd01ee68782dd57b837feb2ad996096e437a34",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "Astra 测试本轮改为显式 astra opt-in；本收据登记其追加式后继摘要，不改变 Astra 生产代码。"
+    },
+    {
+      "path": "backend/internal/service/antigravity_model_mapping_test.go",
+      "predecessor_sha256s": [
+        "ff2f87ff5b78835341dff78d4e2cdc0c1818ecd31461d7ce6439ae459ec76ed8"
+      ],
+      "to_sha256": "a35e8b20d6395796943bd706acf5b3e7a8d2dd12d3f889487a2568b7b02c6946",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "上游新增 Antigravity 断言与本仓库显式白名单安全合同冲突；测试改为验证未取证模型和多级自映射被拒绝，不放宽生产白名单。"
+    },
+    {
+      "path": "backend/internal/service/antigravity_rate_limit_test.go",
+      "predecessor_sha256s": [
+        "467c09b3deeaca014cf952c11ebcd77340bd062b969e2825bd0c904fb50e908c"
+      ],
+      "to_sha256": "2cb9a8f7e5d5de62c62a8c50d4b02340c402c2f5cd9f22866442821ba0eb9f19",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "限流测试按本地显式白名单合同拒绝未取证自定义模型链；不改变运行时限流实现。"
+    },
+    {
+      "path": "backend/internal/service/gateway_context_management_test.go",
+      "predecessor_sha256s": [
+        "6aa493340bca5fec6e1349a3c61166726443a9a0b6d1bf7e260216af05f5ff44"
+      ],
+      "to_sha256": "2e01cb96c321c7a942c67200b29f591b931eb4184c4efacce08d61aa42210eca",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "Claude 已退休 OAuth mimicry 测试迁移到当前 Setup Token 第三方兼容语义；不恢复已退休生产方法。"
+    },
+    {
+      "path": "backend/internal/service/gateway_fallbacks_sanitize_test.go",
+      "predecessor_sha256s": [
+        "2aaafa2f260c0c259a55cb3c0d74f5578f4d16c5ae301131dd6c811c26686ce3"
+      ],
+      "to_sha256": "3cd52b5d43221a48d44ed0c5776ce40e00edb2098d25a0162870f5b182051d99",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "Claude OAuth 旧 Messages mimic 测试改为验证当前 strict ReleaseBundle fail-close；API-key 与 Bedrock 的 fallbacks 净化覆盖保持不变。"
+    },
+    {
+      "path": "backend/internal/service/openai_astra_pro_mode_test.go",
+      "predecessor_sha256s": [
+        "cf05648f28c73fd9927c61e253d77eb484649997a0c99b054c431eda36282130"
+      ],
+      "to_sha256": "0d52ce9f37ac84a05238e474143d599970a99e4ae9a96fdca691788ccb999970",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "Astra 专项模式测试改为显式 astra opt-in，避免当前 Codex CLI 默认门禁误执行未支持画像。"
+    },
+    {
+      "path": "backend/internal/service/openai_astra_pro_normalization_test.go",
+      "predecessor_sha256s": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "to_sha256": "93e09146dc6bdb6cfe38166c0cbd7c8454bb73fdff9a5ef042105a712c088888",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "新增独立 Astra normalization opt-in 测试文件；默认测试路径不宣称当前 CLI 支持 Astra。"
+    },
+    {
+      "path": "backend/internal/service/openai_astra_pro_retry_test.go",
+      "predecessor_sha256s": [
+        "eb5c72c2ca023f9f573f9a94d2846ecd9aaa349ac14c46113bdd642d7708b627"
+      ],
+      "to_sha256": "454c39b8fa349c87b4ca16adc88379e505cab04c85e330e42a71c982520acb4a",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "Astra 专项重试测试改为显式 astra opt-in；不修改生产重试逻辑。"
+    },
+    {
+      "path": "backend/internal/service/openai_passthrough_normalization_test.go",
+      "predecessor_sha256s": [
+        "a95cefa82457f81142689bebc76cc5f3312ea2dc91570babe50cdb877cf463f8"
+      ],
+      "to_sha256": "ad6c1e63d48d066a688eee7fd8333fa683749043681d33c69f62ddc6036a002e",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "Astra 专项断言移出默认测试文件并由显式 opt-in 测试承接；默认 Codex CLI 路径保持原有行为。"
+    },
+    {
+      "path": "backend/internal/service/ratelimit_service_openai_image_test.go",
+      "predecessor_sha256s": [
+        "769bc016acd318551404e31cd6878438ff6fe29dfa28fa043bb7b9e0d7d7c8b8"
+      ],
+      "to_sha256": "acf8d8fe5ff77d49ead9418c138d9e4749330c44cd7d98e1e0d6ee4134aed4ad",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-source-transition.json"
+      ],
+      "reason": "OpenAI 图片 OAuth 限流测试夹具补齐 official egress 所需 chatgpt-account-id 结构化身份事实；不改变生产限流逻辑。"
+    }
+  ],
+  "verification": [
+    "go test -tags=unit ./internal/service -run 'Test.*(Frozen|Transition|Successor).*' -count=1",
+    "go test -tags=unit ./internal/handler -count=1"
+  ],
+  "safety": {
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false,
+    "astra_production_code_changed": false
+  },
+  "result": "passed_local_evidence_successor",
+  "identity_sha256": "0edcebbcc5aa6b3896fe0fa44c3fc97333ad6b7fb131c5046ad1f19a95ba439d"
+}

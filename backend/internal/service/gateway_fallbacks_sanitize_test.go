@@ -29,15 +29,15 @@ import (
 //
 // fallbacks 是 beta Messages API 的 server-side refusal fallback 字段；本仓
 // 不写入该字段，全部来自客户端（Claude Code / SDK / OpenCode 等）透传。
-// OAuth mimic 用 FullClaudeCodeMimicryBetas 覆盖客户端 beta（不含 fallback
-// beta），因此必须在出口按最终 beta header 条件 strip，与 context_management
-// 的对称约束同构。策略是"剥字段，不注入 beta"：fallback 会换模型、改计费，
-// 不允许当默认打开。
+// 当前 Claude OAuth 已由 strict ReleaseBundle 独占，旧 OAuth mimic 构造链必须
+// fail-close；Setup Token／API-key 的现行路径仍按最终 beta header 条件 strip，
+// 与 context_management 的对称约束同构。策略是"剥字段，不注入 beta"：fallback
+// 会换模型、改计费，不允许当默认打开。
 //
 // 本文件覆盖：
 //   1) sanitizeAnthropicBodyForBetaTokens 对 fallbacks / fallback_credit_token
 //      的条件 strip（以及与 context_management 的组合行为）
-//   2) buildUpstreamRequest OAuth mimic / API-key passthrough 端到端
+//   2) buildUpstreamRequest OAuth 旧链 fail-close / API-key passthrough 端到端
 //   3) Bedrock 路径的对称 strip（PrepareBedrockRequestBodyWithTokens /
 //      sanitizeBedrockCCFields）
 
@@ -147,10 +147,9 @@ func TestSanitizeAnthropicBodyForBetaTokens_EmptyBodyUnchanged(t *testing.T) {
 // 挡住未来某人忘调 sanitize / 将 sanitize 挪到 CCH 之后 等 regression。
 // ============================================================================
 
-// OAuth mimic：FullClaudeCodeMimicryBetas 不含 fallback beta → body.fallbacks
-// 必须被 strip，且 outgoing anthropic-beta 不得注入 server-side-fallback beta
-// （剥字段，不注入 beta）。
-func TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd(t *testing.T) {
+// Claude OAuth 旧 Messages 构造链已退休；即使请求体带有历史 fallbacks 字段，
+// 也不得重新生成旁路上游请求。现行 OAuth strict ReleaseBundle 由独立测试覆盖。
+func TestBuildUpstreamRequest_OAuthMimicHaiku_FallbacksRetiredBuilderFailsClose(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -161,25 +160,15 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd(t *testing
 		Status:      StatusActive,
 		Schedulable: true,
 	}
-	// 客户端默认透传 "fallbacks":"default"（Claude Code / SDK / OpenCode 等）
+	// 历史客户端可能透传 fallbacks，但不能因此重启已退休的 OAuth mimic 链。
 	body := []byte(`{"model":"claude-haiku-4-5","fallbacks":"default","messages":[]}`)
 	svc := &GatewayService{cfg: &config.Config{}}
 	req, _, err := svc.buildUpstreamRequest(
 		context.Background(), c, account, body,
 		"oauth-tok", "oauth", "claude-haiku-4-5", false, true, // mimicClaudeCode=true
 	)
-	require.NoError(t, err)
-
-	outBody := readUpstreamBodyForTest(t, req)
-	outBeta := getHeaderRaw(req.Header, "anthropic-beta")
-
-	require.False(t, gjson.GetBytes(outBody, "fallbacks").Exists(),
-		"OAuth mimic 端到端：mimic beta 集合不含 fallback beta → outgoing body 必须没有 fallbacks，"+
-			"否则上游报 fallbacks: Extra inputs are not permitted")
-	require.False(t, anthropicBetaTokensContains(outBeta, claude.BetaServerSideFallback),
-		"修复策略是剥字段而非注入 beta：outgoing anthropic-beta 不得含 server-side-fallback beta")
-	require.True(t, anthropicBetaTokensContains(outBeta, claude.BetaContextManagement),
-		"mimic beta 集合本身不受影响")
+	require.Nil(t, req)
+	require.ErrorContains(t, err, "旧 Messages 构造链已退休")
 }
 
 // API-key passthrough + 客户端 header 未带 fallback beta → strip

@@ -127,43 +127,21 @@ func TestOpenAIGatewayServiceForwardImages_ImageRateLimitReturnsFailoverAndCools
 // 回复就会沿号池把每个被重试到的账号依次冷却掉。冷却仍保留给结构化上游证据，见
 // TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability。
 func TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapability(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	// 当前 OAuth 图片出口接收独立 images JSON；文字兜底判据仍由旧的
+	// Responses 兼容解析器产生，因此在错误处理边界直接验证其账号状态语义。
+	c, _ := newImagesCooldownContext(t)
 	repo := &modelNotFoundAccountRepoStub{}
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
-	upstreamSSE := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\",\"model\":\"gpt-5.4-mini\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Here's a polished image prompt for your request.\"}]}]}}\n\n"
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := imagesCooldownAccount()
+	upstreamErr := openAIImagesTextFallbackErrorForText("Here's a polished image prompt for your request.")
+	require.NotNil(t, upstreamErr)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = req
+	err := svc.handleOpenAIImagesOAuthResponseError(
+		context.Background(), c, account, "gpt-image-2", "https://upstream.example/v1/responses",
+		&http.Response{StatusCode: http.StatusOK, Header: http.Header{}},
+		OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), upstreamErr,
+	)
 
-	svc := &OpenAIGatewayService{
-		accountRepo: repo,
-		httpUpstream: &httpUpstreamRecorder{
-			resp: &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
-			},
-		},
-	}
-	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
-	require.NoError(t, err)
-	account := &Account{
-		ID:       205,
-		Name:     "openai-oauth",
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-		Credentials: map[string]any{
-			"access_token": "token-123",
-		},
-	}
-
-	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
-
-	require.Nil(t, result)
-	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.False(t, failoverErr.RetryableOnSameAccount)
@@ -179,10 +157,8 @@ func TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapabilit
 func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &modelNotFoundAccountRepoStub{}
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
-	upstreamSSE := "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"error\":" +
-		"{\"type\":\"upstream_error\",\"code\":\"image_generation_unavailable\"," +
-		"\"message\":\"image generation tool is not available for this account\"}}}\n\n"
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true}`)
+	upstreamJSON := `{"error":{"type":"upstream_error","code":"image_generation_unavailable","message":"image generation tool is not available for this account"}}`
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -191,12 +167,13 @@ func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapabi
 	c.Request = req
 
 	svc := &OpenAIGatewayService{
-		accountRepo: repo,
+		accountRepo:      repo,
+		rateLimitService: &RateLimitService{accountRepo: repo},
 		httpUpstream: &httpUpstreamRecorder{
 			resp: &http.Response{
 				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamJSON)),
 			},
 		},
 	}
@@ -208,7 +185,8 @@ func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapabi
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"access_token": "token-123",
+			"access_token":       "token-123",
+			"chatgpt_account_id": "chatgpt-account-206",
 		},
 	}
 
@@ -217,6 +195,9 @@ func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapabi
 
 	require.Nil(t, result)
 	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Contains(t, string(failoverErr.ResponseBody), "image_generation_unavailable")
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	call := repo.modelRateLimitCalls[0]
 	require.Equal(t, account.ID, call.accountID)
@@ -271,7 +252,8 @@ func TestOpenAIGatewayServiceForwardImages_CapabilityLossCoolsImageScope(t *test
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"access_token": "token-123",
+			"access_token":       "token-123",
+			"chatgpt_account_id": "chatgpt-account-205",
 		},
 	}
 

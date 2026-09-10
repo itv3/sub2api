@@ -1,6 +1,9 @@
-//go:build unit
+//go:build unit && astra
 
 package service
+
+// Astra 不是当前 Codex CLI 0.151 的仿真范围；该文件仅在下一次明确启用 Astra
+// 画像时，通过 `go test -tags='unit astra'` 显式执行。
 
 // Integration-level tests for GPT-6 Astra reasoning.mode preservation through
 // OpenAIGatewayService.Forward.

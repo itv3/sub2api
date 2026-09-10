@@ -91,12 +91,12 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-6",
 		},
 
-		// 3. 默认映射中的透传（映射到自己）
+		// 3. 尚未完成官方抓包的 Fable 5.1 不进入严格默认发包目录。
 		{
-			name:           "默认映射透传 - claude-fable-5-1",
+			name:           "严格默认目录拒绝未封存官方枚举 - claude-fable-5-1",
 			requestedModel: "claude-fable-5-1",
 			accountMapping: nil,
-			expected:       "claude-fable-5-1",
+			expected:       "",
 		},
 		// 3. 官方模型透传 + 历史入口兼容映射
 		{
@@ -142,13 +142,13 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-6",
 		},
 		{
-			name:           "账户显式目标只映射一步 - custom-sonnet → claude-sonnet-4-5",
+			name:           "账户显式目标未进入自映射白名单 - 多级链拒绝",
 			requestedModel: "custom-sonnet",
 			accountMapping: map[string]string{
 				"custom-sonnet":     "claude-sonnet-4-5",
 				"claude-sonnet-4-5": "claude-sonnet-4-6",
 			},
-			expected: "claude-sonnet-4-5",
+			expected: "",
 		},
 		{
 			name:           "兼容映射 - gemini-2.5-flash → gemini-3.5-flash-low",
@@ -280,7 +280,7 @@ func TestAntigravityGatewayService_IsModelSupported(t *testing.T) {
 		expected bool
 	}{
 		// 直接支持
-		{"直接支持 - claude-fable-5-1", "claude-fable-5-1", true},
+		{"严格默认目录拒绝未封存官方枚举 - claude-fable-5-1", "claude-fable-5-1", false},
 		{"直接支持 - claude-fable-5", "claude-fable-5", true},
 		{"直接支持 - claude-sonnet-4-5", "claude-sonnet-4-5", true},
 		{"直接支持 - gemini-3-flash", "gemini-3-flash", true},
