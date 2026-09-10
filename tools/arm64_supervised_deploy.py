@@ -32,7 +32,7 @@ from typing import Any, Callable, Mapping
 # 2026-09-09：candidate_test_fact_map_0_151_0.json 与 candidate_test_trace.py 在合并
 # Sub2API v0.2.3 后重绑五份生产源码摘要；事实和规则语义不变，受管工具树摘要随之更新。
 DEFAULT_TOOL_DIGEST = (
-    "1a40e8f27716db6bdbd3c8a2278cb9f10245387e138219f1f06633ea796cbd38"
+    "bffa68c9448b115dfe66da2e89a5218fc771ff99b1a78e4844b4a6934277094e"
 )
 DEFAULT_SUPERVISOR_DIGEST = (
     "bec3322056c66a3dfdb8ad570dafdb2ec322fbbb4219f09b0e6b2b6a58421703"

@@ -69,7 +69,7 @@ DEFAULT_PROFILE_RELATIVE_PATH = (
 # 消除入站归一化与出站画像之间的判定撕裂；本轮只重绑该源码摘要，不改变候选测试、
 # 事实宇宙或断言规则。
 FROZEN_MAPPING_SHA256 = (
-    "3bf63d404fea6edb7339e966bd7ca48439e6497b43fe959f98244952377d4529"
+    "a40f458e59643cb67fb0f2fe65c55de0534dc263d0e94502aa2946aedc06b56f"
 )
 # 2026-08-11（R8）：与双轨 selector 修订后的冻结断言画像保持同一摘要，
 # 含 BODY-006/nonlite-* 两条补 method=POST 与 responses 路径约束的修订。

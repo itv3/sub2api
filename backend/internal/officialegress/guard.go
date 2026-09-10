@@ -653,10 +653,14 @@ type HTTPTransportFacts struct {
 	TLSHandshakeTimeout    time.Duration
 	ForceAttemptHTTP2      bool
 	TLSNextProtoConfigured bool
-	MaxConnsPerHost        int
-	MaxIdleConns           int
-	MaxIdleConnsPerHost    int
-	DisableCompression     bool
+	// HTTP2ProtocolEnabled 反映 Transport.Protocols 是否已启用 HTTP/2。
+	// Go 1.27 的 http2.ConfigureTransports 只写 Protocols，不再写 TLSNextProto，
+	// 因此判断 HTTP/2（含 PING 健康探测）是否装配必须读这一位。
+	HTTP2ProtocolEnabled bool
+	MaxConnsPerHost      int
+	MaxIdleConns         int
+	MaxIdleConnsPerHost  int
+	DisableCompression   bool
 }
 
 // InspectHTTPTransport 只读取 Guard 直属底层的标准库 transport 参数。
@@ -675,6 +679,7 @@ func InspectHTTPTransport(transport http.RoundTripper) (HTTPTransportFacts, bool
 		TLSHandshakeTimeout:    base.TLSHandshakeTimeout,
 		ForceAttemptHTTP2:      base.ForceAttemptHTTP2,
 		TLSNextProtoConfigured: base.TLSNextProto != nil,
+		HTTP2ProtocolEnabled:   base.Protocols != nil && base.Protocols.HTTP2(),
 		MaxConnsPerHost:        base.MaxConnsPerHost,
 		MaxIdleConns:           base.MaxIdleConns,
 		MaxIdleConnsPerHost:    base.MaxIdleConnsPerHost,

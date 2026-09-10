@@ -114,7 +114,7 @@ func accountSupportsCompositeModelListProtocol(account *Account, protocol string
 		return protocol == CompositeModelListProtocolAnthropic
 	case PlatformOpenAI, PlatformGrok:
 		return protocol == CompositeModelListProtocolOpenAI
-	case PlatformKimi, PlatformZhipu, PlatformDeepseek:
+	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
 		switch account.GetAPIProtocol() {
 		case APIProtocolAnthropic:
 			return protocol == CompositeModelListProtocolAnthropic
