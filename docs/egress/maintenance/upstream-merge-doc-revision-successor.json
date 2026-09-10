@@ -1,0 +1,33 @@
+{
+  "base_commit": "2e5d99b791a6bbcae32be411dd2bc02e3cfb5ef1",
+  "identity_sha256": "cf463b90b7808a6f4ec9aa1312e3ebe65fef3a2a652f1137e4c2c11dfb96da33",
+  "issued_at_utc": "2026-09-10T08:28:00Z",
+  "result": "passed_local_evidence_successor",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-merge-doc-revision-successor/v1",
+  "scope": "upstream-merge-doc-revision-successor",
+  "transitions": [
+    {
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "predecessor_sha256s": [
+        "728e1cf865e7d6f4f45413aa312f679bcf9d0cd5c55fea20609587cc28844d56"
+      ],
+      "reason": "依据 v0.2.3 合并复盘改写 §5.2 上游合并流程规则：基线验收前移、预检五项报告、台账 revision carry-forward、U-4 按输入摘要复用与冻结台账修复模式、successor 只在最终 revision 一次生成、工具闭集范围收窄、时间账本与预算表重写；只登记文档自身的追加式后继摘要，不改变官方客户端画像、Persona、wire 或任何生产代码。",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json"
+      ],
+      "to_sha256": "81f88b8bc81cbcde59a87fb089c9fe84cebeb8ceb07543124663fad374897d4d"
+    }
+  ],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci"
+  ]
+}
