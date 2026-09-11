@@ -1,0 +1,25 @@
+{
+  "active_version": "0.151.0",
+  "campaign_id": "c0151-formal-rule-correction-20260905t0033z",
+  "completed_at_utc": "2026-09-06T14:39:25Z",
+  "consumer_scan": {
+    "catalog_references": 0,
+    "selector_references": 0,
+    "unknown_references": 0
+  },
+  "deployed_image_id": "sha256:2589b419055073fc0d9f3b0c47d3efe3e0f0f93fac798604c91355d9a9e088ae",
+  "deployment_receipt_sha256": "6b0bf6fd39ea4ba0229d7db88a09e685e230f5a442b3bc3489890f3723de2ef1",
+  "environment_receipt_sha256": "fd4147cf422bc931e3ad3ddc0d164e2016ea17eb2a2367b3240d957e223bfdda",
+  "historical_evidence_preserved": true,
+  "historical_route_profile_preserved": true,
+  "historical_route_receipt_references": 1,
+  "production_activation_sha256": "7f1b6f5856bd2f77f9b929520c7b9c228f4d07bb4825d57c6d10f497c496e45b",
+  "removed_version": "0.147.0",
+  "retired_image_sha256": "e189d25093bd26c920290155e99eb080129246099bf089c8595626dcb32821cc",
+  "retirement_audit_sha256": "59612669e245cbdb88adf55f1f8428e8794554bbac9866b562fc58abb8cba573",
+  "rollback_version": "0.149.1",
+  "runtime_catalog_removed": true,
+  "schema_version": "codex-runtime-profile-removal/v1",
+  "source_tree_sha256": "363f4d5dd011f9dc4ed7d72eb83185dde2a7c025a4f6e3c09bda1c179fe15a18",
+  "status": "complete"
+}

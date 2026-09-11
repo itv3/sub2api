@@ -1,0 +1,565 @@
+{
+  "audit_archive": {
+    "bytes": 80910251,
+    "entry_count": 4751,
+    "host": "ARM64",
+    "list_path": "/root/oauth-capture/audit/codex-0.151.0-consolidated-audit-20260911.list",
+    "path": "/root/oauth-capture/audit/codex-0.151.0-consolidated-audit-20260911.tar.gz",
+    "sha256": "cd4106cd77ec43aec9abab8596adb6c3ba4a18650064bcadfd99dbb383280cf5"
+  },
+  "audit_index": {
+    "bytes": 1150993,
+    "path": "docs/egress/maintenance/CODEX_CLI_01491_TO_0151_AUDIT_INDEX.json",
+    "sha256": "8d1a728d53778792905e4ad27a5c05de01b7c890386238a220b6725cccf55710"
+  },
+  "audit_index_identity_sha256": "31abd3b5099593b2cefdb027b3837a6bfe4e0969354965acc779fc0e40f6fc1d",
+  "audit_index_totals": {
+    "byte_count": 5263488,
+    "file_count": 2348,
+    "ledgers_by_kind": {
+      "campaign_run": 84,
+      "campaign_run_draft": 110,
+      "supervisor_run": 132,
+      "timing_dir": 3,
+      "upgrade_timing_ledger": 22
+    },
+    "runs_audited": 198,
+    "runs_not_audited": 18,
+    "timing_ledger_stop_the_line_events": 21,
+    "timing_ledgers_not_replayable": 2,
+    "timing_ledgers_replayed": 23
+  },
+  "campaign_chain": [
+    {
+      "campaign_dir": "campaigns/c0151-formal-20260902t0916z-tool-3b849980",
+      "campaign_id": "c0151-formal-20260902t0916z-tool-3b849980",
+      "campaign_json": {
+        "bytes": 129749,
+        "path": "campaigns/c0151-formal-20260902t0916z-tool-3b849980/campaign.json",
+        "sha256": "424308bf4d7c11ac14ab229f815fb171aa4b40b2183f78f0a806bd1f444c684b"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "424308bf4d7c11ac14ab229f815fb171aa4b40b2183f78f0a806bd1f444c684b",
+      "created_at_utc": "2026-09-02T09:15:22Z",
+      "order": 1,
+      "predecessor": null,
+      "predecessor_import": null
+    },
+    {
+      "campaign_dir": "campaigns/c0151-formal-v10-successor-20260902t2300z",
+      "campaign_id": "c0151-formal-v10-successor-20260902t2300z",
+      "campaign_json": {
+        "bytes": 130039,
+        "path": "campaigns/c0151-formal-v10-successor-20260902t2300z/campaign.json",
+        "sha256": "2045504497e7aa84db0595665fe5ce9ba30b7f4c4dee4740545dfc1ebd488f53"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "2045504497e7aa84db0595665fe5ce9ba30b7f4c4dee4740545dfc1ebd488f53",
+      "created_at_utc": "2026-09-02T22:57:49.125731Z",
+      "order": 2,
+      "predecessor": {
+        "campaign_id": "c0151-formal-20260902t0916z-tool-3b849980",
+        "reason": "sealed_stage_control_recovery"
+      },
+      "predecessor_import": {
+        "bytes": 14051,
+        "path": "campaigns/c0151-formal-v10-successor-20260902t2300z/predecessor-import.json",
+        "schema_version": "codex-upgrade-predecessor-import/v8",
+        "sha256": "8b841dd86124d930da7c1c3a34810fd1087bbea5931339e60efd2b3f3170179a",
+        "stages": [
+          "capture-official"
+        ]
+      }
+    },
+    {
+      "campaign_dir": "campaigns/c0151-formal-v11-runtime-identity-20260903t0139z",
+      "campaign_id": "c0151-formal-v11-runtime-identity-20260903t0139z",
+      "campaign_json": {
+        "bytes": 131681,
+        "path": "campaigns/c0151-formal-v11-runtime-identity-20260903t0139z/campaign.json",
+        "sha256": "6b4b14a5d38f80ab6d2df7ed7fc19dc8f4c3c3d363689a6ffa15a02a1a19b819"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "6b4b14a5d38f80ab6d2df7ed7fc19dc8f4c3c3d363689a6ffa15a02a1a19b819",
+      "created_at_utc": "2026-09-03T01:39:54.709023Z",
+      "order": 3,
+      "predecessor": {
+        "campaign_id": "c0151-formal-v10-successor-20260902t2300z",
+        "reason": "candidate_runtime_identity_correction"
+      },
+      "predecessor_import": {
+        "bytes": 12123,
+        "path": "campaigns/c0151-formal-v11-runtime-identity-20260903t0139z/predecessor-import.json",
+        "schema_version": "codex-upgrade-predecessor-import/v9",
+        "sha256": "e73e05b561b9eebc8a7ca3425d04757c42c86bcbb28ce158d5ec928eb9ed3b64",
+        "stages": [
+          "capture-official",
+          "classify"
+        ]
+      }
+    },
+    {
+      "campaign_dir": "campaigns/c0151-formal-v13-failed-job-recovery-20260903t0705z",
+      "campaign_id": "c0151-formal-v13-failed-job-recovery-20260903t0705z",
+      "campaign_json": {
+        "bytes": 132281,
+        "path": "campaigns/c0151-formal-v13-failed-job-recovery-20260903t0705z/campaign.json",
+        "sha256": "854546e68045e9003ee73b17f5a8e7c8034ae429816b678ef70aee881331b16f"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "854546e68045e9003ee73b17f5a8e7c8034ae429816b678ef70aee881331b16f",
+      "created_at_utc": "2026-09-03T06:53:13.635644Z",
+      "order": 4,
+      "predecessor": {
+        "campaign_id": "c0151-formal-v11-runtime-identity-20260903t0139z",
+        "reason": "candidate_failed_job_tool_recovery"
+      },
+      "predecessor_import": {
+        "bytes": 11002,
+        "path": "campaigns/c0151-formal-v13-failed-job-recovery-20260903t0705z/predecessor-import.json",
+        "schema_version": "codex-upgrade-predecessor-import/v6",
+        "sha256": "d5dd5fcc85ba019060f0e334224645269ab92de4391c8ed002a4f2050fc47144",
+        "stages": [
+          "capture-official",
+          "classify"
+        ]
+      }
+    },
+    {
+      "campaign_dir": "campaigns/c0151-formal-v21-control-refresh-20260903t1200z",
+      "campaign_id": "c0151-formal-v21-control-refresh-20260903t1200z",
+      "campaign_json": {
+        "bytes": 132983,
+        "path": "campaigns/c0151-formal-v21-control-refresh-20260903t1200z/campaign.json",
+        "sha256": "1a5e6b0d810d0a001cb88450c2d1c6c9af8e715e74a088092f99ca8ee7ad8616"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "1a5e6b0d810d0a001cb88450c2d1c6c9af8e715e74a088092f99ca8ee7ad8616",
+      "created_at_utc": "2026-09-03T12:22:13.124614Z",
+      "order": 5,
+      "predecessor": {
+        "campaign_id": "c0151-formal-v13-failed-job-recovery-20260903t0705z",
+        "reason": "candidate_recovery_control_refresh"
+      },
+      "predecessor_import": {
+        "bytes": 11225,
+        "path": "campaigns/c0151-formal-v21-control-refresh-20260903t1200z/predecessor-import.json",
+        "schema_version": "codex-upgrade-predecessor-import/v6",
+        "sha256": "920216a1fb94992f5b4f285a5bf2b7e61b18312fd4f2284bec1e3e4f4865817e",
+        "stages": [
+          "capture-official",
+          "classify"
+        ]
+      }
+    },
+    {
+      "campaign_dir": "campaigns/c0151-formal-control-replacement-20260903t1920z",
+      "campaign_id": "c0151-formal-control-replacement-20260903t1920z",
+      "campaign_json": {
+        "bytes": 134143,
+        "path": "campaigns/c0151-formal-control-replacement-20260903t1920z/campaign.json",
+        "sha256": "16d6becb3f7b03ee6fcf9db1db51b008e357e92cfab3f5b4424cb1553f2b0dbc"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "16d6becb3f7b03ee6fcf9db1db51b008e357e92cfab3f5b4424cb1553f2b0dbc",
+      "created_at_utc": "2026-09-03T20:33:58.171640Z",
+      "order": 6,
+      "predecessor": {
+        "campaign_id": "c0151-formal-v21-control-refresh-20260903t1200z",
+        "reason": "candidate_recovery_control_replacement"
+      },
+      "predecessor_import": {
+        "bytes": 19164,
+        "path": "campaigns/c0151-formal-control-replacement-20260903t1920z/predecessor-import.json",
+        "schema_version": "codex-upgrade-predecessor-import/v10",
+        "sha256": "1fc6ec16ceeea83558ea9aa86b36f5735d1599fce2bc9bb75adc6d95ffe694e7",
+        "stages": [
+          "capture-official",
+          "classify"
+        ]
+      }
+    },
+    {
+      "campaign_dir": "campaigns/c0151-formal-rule-correction-20260905t0033z",
+      "campaign_id": "c0151-formal-rule-correction-20260905t0033z",
+      "campaign_json": {
+        "bytes": 134709,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/campaign.json",
+        "sha256": "d51e2590873c550b1359b742e9fa4690df70ed44b8131eaa1833cb812d7eb046"
+      },
+      "campaign_mode": "formal",
+      "campaign_sha256_file": "d51e2590873c550b1359b742e9fa4690df70ed44b8131eaa1833cb812d7eb046",
+      "created_at_utc": "2026-09-04T18:46:15.096261Z",
+      "order": 7,
+      "predecessor": {
+        "campaign_id": "c0151-formal-control-replacement-20260903t1920z",
+        "reason": "classification_fact_correction"
+      },
+      "predecessor_import": {
+        "bytes": 5600,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/predecessor-import.json",
+        "schema_version": "codex-upgrade-predecessor-import/v5",
+        "sha256": "2a06970c92aa73a37f93c802bab8bf7d7df140255d55689691f54b49cc0136cb",
+        "stages": [
+          "capture-official",
+          "classify"
+        ]
+      }
+    }
+  ],
+  "campaign_chain_note": "ReleaseGraph 0.151 active 节点 build.source 指向第 2 级（v10-successor 的分类），catalog 顶层 source 指向第 7 级（rule-correction 的晋升与退休）；两者之间的承接由各级 predecessor-import.json 连接。",
+  "canonical": {
+    "checkpoint9": {
+      "checkpoint_sequence": 9,
+      "checkpoint_sha256": "867c975a6a09094364d468a1363de741bba79df92ec9070937a8900c54eebf1e",
+      "metrics": {
+        "live_request_count": 0,
+        "scanned_bytes": 0
+      },
+      "phase": "VC-6"
+    },
+    "checkpoints": [
+      {
+        "bytes": 40638,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000001.json",
+        "sha256": "b0100c203e7e31b4d0dccce9e01f59550dcf6a81590e40009ed2639ddb9cf850"
+      },
+      {
+        "bytes": 41240,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000002.json",
+        "sha256": "970d8e7d7c65fb90a992b5650209642ea13d03a8d1361c55a4aa9fd1fbf6d13f"
+      },
+      {
+        "bytes": 41852,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000003.json",
+        "sha256": "3a8052f52d5f8966150e4e9247ed83afd2b5907b96aff0c54df01e90ddd4abc9"
+      },
+      {
+        "bytes": 42443,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000004.json",
+        "sha256": "8fc30d63e49dd25381307aa87dc3699b6f8d3e5f6d7c9044c68785a74412f52a"
+      },
+      {
+        "bytes": 43037,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000005.json",
+        "sha256": "dadc3c6c7e1d4660a938c5d67909ae456451ccaee1b658e470a36b2b515c40c0"
+      },
+      {
+        "bytes": 43636,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000006.json",
+        "sha256": "ca6e4f8c8c28bd9f2394864c4d32040f3ec7f34d39fe65e64ded98cd9a82afa5"
+      },
+      {
+        "bytes": 44400,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000007.json",
+        "sha256": "d31770d4b3ecfdf898ecfdfed5da4a33d420747faa62d1e4649e94c90c424240"
+      },
+      {
+        "bytes": 45271,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000008.json",
+        "sha256": "91a513566bf4c6477b1caa3878f1e0da015069ca31dcc9856abed63b24f88fbc"
+      },
+      {
+        "bytes": 45923,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/checkpoints/00000009.json",
+        "sha256": "50c41a198f3b756960caa3f32f4cbe0f10ac8ef44cd06a9aa42d70c0d5720ad5"
+      }
+    ],
+    "import_receipt": {
+      "bytes": 455,
+      "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/import-receipt.json",
+      "sha256": "c429427683d6d32bc53de169ec3b64d3a725e5268a2f99419be42f8ea9b5bdad"
+    },
+    "receipts": [
+      {
+        "bytes": 2618,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/receipts/acceptance.json",
+        "sha256": "547768c0edc4be7b6d0206140d6c8a453d5a867a4bf8339f7a8e806421a9cbb3"
+      },
+      {
+        "bytes": 807,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/receipts/assert-SPEC-EP-002.json",
+        "sha256": "030720c94cf422012e93c51a313a24c071b71ea0450fd3ab5302b9db738958dc"
+      },
+      {
+        "bytes": 845,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/receipts/assert-SPEC-HDR-005.json",
+        "sha256": "178a8941bfc6851a6eea4b70917bd57ad382e00dafc889133b2d7ee593fd0669"
+      },
+      {
+        "bytes": 741,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/receipts/candidate-seal.json",
+        "sha256": "f1e28b15c0f86169e22692f096f30ebdd76274e89db719163ece5f7526849533"
+      },
+      {
+        "bytes": 2556,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/canonical/receipts/compare.json",
+        "sha256": "82b0cd3c613a50c2145c15686596216f9027ce3799a95fa44671e3400ff16c8e"
+      }
+    ],
+    "vc6_items": [
+      {
+        "details": {
+          "final_image_id": "sha256:bb100c8b077a8a70dba1ec443fbb2e1f94da279e7fe0d08ca2e5f0aca2768c2c",
+          "kind": "production-activation",
+          "rollback_version": "0.149.1",
+          "target_version": "0.151.0"
+        },
+        "disposition": "executed",
+        "item_id": "production-activation",
+        "result_key": "c6b7e5735d166c8c8e555ad3a69a56b237bd20edaa43880f4d9e13d6fd5220d9",
+        "result_sha256": "7f1b6f5856bd2f77f9b929520c7b9c228f4d07bb4825d57c6d10f497c496e45b",
+        "source": {
+          "bytes": 7476,
+          "path": "activation/c0151-v10-c1-production-20260906-r4/activation-receipt.json",
+          "sha256": "7f1b6f5856bd2f77f9b929520c7b9c228f4d07bb4825d57c6d10f497c496e45b"
+        },
+        "status": "complete"
+      },
+      {
+        "details": {
+          "kind": "runtime-profile-removal",
+          "removed_version": "0.147.0"
+        },
+        "disposition": "executed",
+        "item_id": "retire-0.147.0",
+        "result_key": "6f8091d5be065ad6ae4788c7b504b15d56081a427008f2297a3cbe269cb4e486",
+        "result_sha256": "2cd9830d4e70d16eb3e7cfafa45e932bc4b5c9e4064cbb4cb966655743feefe0",
+        "source": {
+          "bytes": 1250,
+          "path": "activation/c0151-v10-c1-production-20260906-r4/retirement/c0151-v10-c1-retire-0147-r3/removal-receipt.json",
+          "sha256": "2cd9830d4e70d16eb3e7cfafa45e932bc4b5c9e4064cbb4cb966655743feefe0"
+        },
+        "status": "complete"
+      },
+      {
+        "details": {
+          "kind": "rollback-verification",
+          "restored_image_id": "sha256:bb100c8b077a8a70dba1ec443fbb2e1f94da279e7fe0d08ca2e5f0aca2768c2c",
+          "rollback_image_id": "sha256:e67e6066c2ec0990fc8314675fdcd82d3bc37b5727f65d097356abe13f17bcbe",
+          "rollback_version": "0.149.1",
+          "target_version": "0.151.0"
+        },
+        "disposition": "executed",
+        "item_id": "rollback-verification",
+        "result_key": "e192969690785b4ea5ea8eab211d2f14db5bf2c47c9e0ce98f72f8b06ca0b0f1",
+        "result_sha256": "7f1b6f5856bd2f77f9b929520c7b9c228f4d07bb4825d57c6d10f497c496e45b",
+        "source": {
+          "bytes": 7476,
+          "path": "activation/c0151-v10-c1-production-20260906-r4/activation-receipt.json",
+          "sha256": "7f1b6f5856bd2f77f9b929520c7b9c228f4d07bb4825d57c6d10f497c496e45b"
+        },
+        "status": "complete"
+      }
+    ]
+  },
+  "catalog_promotion": {
+    "acceptance_sha256": "547768c0edc4be7b6d0206140d6c8a453d5a867a4bf8339f7a8e806421a9cbb3",
+    "bytes": 2885,
+    "campaign_id": "c0151-formal-rule-correction-20260905t0033z",
+    "origin": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalog-promotion-receipt.json",
+    "path": "docs/egress/maintenance/CODEX_CLI_01491_TO_0151_CATALOG_PROMOTION_RECEIPT.json",
+    "promoted_active_release_digest": "63524474c99a64b409a9bbcbef44e9f5b3d492528a76334002fdef360a7a1091",
+    "promoted_previous_release_digest": "ebf5947e7630e4b70efe48d5b52435a1a8b54c4c8675ebc134519b22a9175e2f",
+    "replay": {
+      "method": "egresscatalogpromote 无 replay 子命令；已核对晋升目录内 release-graph、0.151/0.149.1 画像与 HEAD 逐字一致，acceptance_sha256 与 canonical acceptance.json 一致；完整重放需晋升前候选源码树，留待 §5.7 门禁化",
+      "promotion_dir": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production",
+      "promotion_dir_files": [
+        {
+          "bytes": 2885,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalog-promotion-receipt.json",
+          "sha256": "2592a01114bdea0f7d873b13b993c0098d77c72a9eea64f9bc1385ed057fa223"
+        },
+        {
+          "bytes": 4563,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/releasecontract/testdata/release-graph.json",
+          "sha256": "9e8a211a397bec52e40e35c7cb6599172022ece85bd9f7241a6e53c9ce58daf3"
+        },
+        {
+          "bytes": 583,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/release-catalog.json",
+          "sha256": "addf39fe93a9c200311c21ffc384fe58c2160e934170ec3bc4db8ca5ceba24c3"
+        },
+        {
+          "bytes": 4563,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/release-graphs/9e8a211a397bec52e40e35c7cb6599172022ece85bd9f7241a6e53c9ce58daf3.json",
+          "sha256": "9e8a211a397bec52e40e35c7cb6599172022ece85bd9f7241a6e53c9ce58daf3"
+        },
+        {
+          "bytes": 52594,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/profiles/0.151.0/dbc65378c80a2ad843ce1ba6253a2e47f0dd5d8bc812bb536a2d24ddb7a59e39.json",
+          "sha256": "f99ffb49b17f34b4c017280acb60618f4f8b12564c6fde9a846b8a4d0156313d"
+        },
+        {
+          "bytes": 51720,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/profiles/0.147.0/94071c8eb93cfd337ac6eabc291d878084e3dcec8a9e618e04e6f68792d1a7bc.json",
+          "sha256": "af25bfd22f65298b07cf58708736cb29c4813988b6a3fed0dd55e457bfc33c1d"
+        },
+        {
+          "bytes": 52510,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/profiles/0.149.1/8c22d3b18b16d249ac041a97efad1b6703c11ef290622b0b1642679a3c010ec3.json",
+          "sha256": "a8ec3ccf43748bd225a9bd753fb2a240d3f5667da76ccd344e370294178ec2df"
+        },
+        {
+          "bytes": 52510,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/profiles/0.149.1/8e59b38e2ad90a1fd4eb7520c2c54f01fc62f802690d45a2cdab5f91f249fb60.json",
+          "sha256": "39e29520a4f10dc55c14f1b259c09d0058f3444d56824e5988850e4660e9123a"
+        },
+        {
+          "bytes": 1135,
+          "path": "promotions/c0151-formal-rule-correction-20260905t0033z-c0151-v10-c1-production/catalogdata/runtime/snapshot-catalogs/af1b4a7513b02556d4a3245a709e1e153969892a3d8ab6e1abebff6c3284b450.json",
+          "sha256": "af1b4a7513b02556d4a3245a709e1e153969892a3d8ab6e1abebff6c3284b450"
+        }
+      ],
+      "status": "consistency_checked"
+    },
+    "sha256": "2592a01114bdea0f7d873b13b993c0098d77c72a9eea64f9bc1385ed057fa223"
+  },
+  "classification": {
+    "approved": [
+      {
+        "bytes": 95210,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/classification/approved/assertion-profile.json",
+        "sha256": "926282ea04eacb0322ff399eafb5eb32acb0c0472ee179fef7dd05e73514926f"
+      },
+      {
+        "bytes": 96956,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/classification/approved/profile.json",
+        "sha256": "36ebc2cf6edc885edd9222fbe690ea021e5aef616be58e7515ddf0a882a7d232"
+      },
+      {
+        "bytes": 1094005,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/classification/approved/rule-migration.json",
+        "sha256": "388ffacfda89d2ba5997c71353f241a98d416be7d03b976138e93f4d159e3643"
+      },
+      {
+        "bytes": 80929,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/classification/approved/scenarios.json",
+        "sha256": "6d8160ad05cc95e7a158b2905deb1def2747fc1a9c899859934702da723e9962"
+      },
+      {
+        "bytes": 939,
+        "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/classification/approved/target-rules.json",
+        "sha256": "56b450fa270aa8424054bc91b827656bfa286e6d30c321df6b70cd7134e98822"
+      }
+    ],
+    "result": {
+      "bytes": 1814,
+      "path": "campaigns/c0151-formal-rule-correction-20260905t0033z/classification/result.json",
+      "sha256": "0c89ce13d867ccd53f9d4fe92f06f842a6fed66aebacadccee5450ee1d7d49cd"
+    },
+    "rule_migration": {
+      "change": 1,
+      "condition_change": 1,
+      "discovery_count": 1970,
+      "entry_count": 42,
+      "inherit": 40,
+      "unclassified_count": 0
+    }
+  },
+  "completed_at_utc": "2026-09-11T03:29:09Z",
+  "evidence_host": "ARM64",
+  "evidence_root": "/root/oauth-capture",
+  "identity_algorithm": "sha256(json.dumps(payload_without_identity_sha256, ensure_ascii=False, sort_keys=True, separators=(',', ':')))",
+  "identity_sha256": "d2e277d160640f7e0969f91b9a6a01e161b0239765f81f66d4ebc7986615fcbd",
+  "post_promotion_gate": {
+    "bytes": 7550,
+    "failed_gate_ids": [],
+    "origin": "campaigns/c0151-formal-rule-correction-20260905t0033z/activation/c0151-v10-c1-production-20260906-r4/post-promotion-gates/receipt.json",
+    "path": "docs/egress/maintenance/CODEX_CLI_01491_TO_0151_POST_PROMOTION_GATE_RECEIPT.json",
+    "replay": {
+      "evidence_root": "campaigns/c0151-formal-rule-correction-20260905t0033z/activation/c0151-v10-c1-production-20260906-r4",
+      "observed_on": "ARM64 2026-09-11",
+      "receipt": "post-promotion-gates/receipt.json",
+      "status": "passed",
+      "tool": "tools/official_client_capture/codex_upgrade_gate_receipt.py replay"
+    },
+    "sha256": "bdf54b40966c4e421c03632bc0a8217f6e5b5e172732ab55c37f45a463447909",
+    "status": "passed"
+  },
+  "production_activation": {
+    "bytes": 7476,
+    "candidate_id": "c0151-v10-c1",
+    "completed_at_utc": "2026-09-06T14:06:56Z",
+    "image_id": "sha256:bb100c8b077a8a70dba1ec443fbb2e1f94da279e7fe0d08ca2e5f0aca2768c2c",
+    "origin": "campaigns/c0151-formal-rule-correction-20260905t0033z/activation/c0151-v10-c1-production-20260906-r4/activation-receipt.json",
+    "path": "docs/egress/maintenance/CODEX_CLI_01491_TO_0151_PRODUCTION_ACTIVATION_RECEIPT.json",
+    "replay": {
+      "evidence_root": "campaigns/c0151-formal-rule-correction-20260905t0033z/activation/c0151-v10-c1-production-20260906-r4",
+      "observed_on": "ARM64 2026-09-11",
+      "status": "complete",
+      "tool": "tools/official_client_capture/production_activation_receipt.py replay"
+    },
+    "sha256": "7f1b6f5856bd2f77f9b929520c7b9c228f4d07bb4825d57c6d10f497c496e45b"
+  },
+  "promotion_intermediate_snapshot_catalog": {
+    "note": "晋升输出的 snapshot-catalog 含 0.147 与两份 0.149.1；retire-0.147.0 后成为 HEAD 的 1b8ca9b2…",
+    "sha256": "af1b4a7513b02556d4a3245a709e1e153969892a3d8ab6e1abebff6c3284b450"
+  },
+  "result": "passed",
+  "retired_runtime_profiles": [
+    {
+      "deleted_in_commit": "ef262c618",
+      "path": "backend/internal/officialegress/catalogdata/runtime/profiles/0.147.0/94071c8eb93cfd337ac6eabc291d878084e3dcec8a9e618e04e6f68792d1a7bc.json",
+      "sha256_before_deletion": "af25bfd22f65298b07cf58708736cb29c4813988b6a3fed0dd55e457bfc33c1d",
+      "state": "absent"
+    }
+  ],
+  "runtime_catalog": {
+    "active_profile": {
+      "bytes": 52594,
+      "path": "backend/internal/officialegress/catalogdata/runtime/profiles/0.151.0/dbc65378c80a2ad843ce1ba6253a2e47f0dd5d8bc812bb536a2d24ddb7a59e39.json",
+      "sha256": "f99ffb49b17f34b4c017280acb60618f4f8b12564c6fde9a846b8a4d0156313d"
+    },
+    "catalog": {
+      "bytes": 539,
+      "path": "backend/internal/officialegress/catalogdata/runtime/release-catalog.json",
+      "sha256": "5972953b44a8b237fb69330a8ea720ff4a39821e2f8ac2288ab3d7d0e280d556"
+    },
+    "catalog_source": "campaign:c0151-formal-rule-correction-20260905t0033z/retirement:codex-legacy-profile",
+    "previous_profile": {
+      "bytes": 52510,
+      "path": "backend/internal/officialegress/catalogdata/runtime/profiles/0.149.1/8c22d3b18b16d249ac041a97efad1b6703c11ef290622b0b1642679a3c010ec3.json",
+      "sha256": "a8ec3ccf43748bd225a9bd753fb2a240d3f5667da76ccd344e370294178ec2df"
+    },
+    "release_graph": {
+      "bytes": 4563,
+      "path": "backend/internal/officialegress/catalogdata/runtime/release-graphs/9e8a211a397bec52e40e35c7cb6599172022ece85bd9f7241a6e53c9ce58daf3.json",
+      "sha256": "9e8a211a397bec52e40e35c7cb6599172022ece85bd9f7241a6e53c9ce58daf3"
+    },
+    "release_graph_active_node_source": "campaign:c0151-formal-v10-successor-20260902t2300z/classification:db0a3b74dffa99714c1911b389b4c2c857e2d9d9cf34cd3c3f512d20a5ace246",
+    "release_graph_previous_node_sources": [
+      "campaign:c1491-r22-s8/classification:62dd45d20c0fded5441b987fef0b913898fca98986b8705f3f42e0f83e221aca"
+    ],
+    "snapshot_catalog": {
+      "bytes": 860,
+      "path": "backend/internal/officialegress/catalogdata/runtime/snapshot-catalogs/1b8ca9b21b07aacf97d9cfd07ecfc976984c283fcf0219788e1a72901651b71c.json",
+      "sha256": "1b8ca9b21b07aacf97d9cfd07ecfc976984c283fcf0219788e1a72901651b71c"
+    }
+  },
+  "runtime_profile_removal": {
+    "bytes": 1250,
+    "canonical_result_sha256": "2cd9830d4e70d16eb3e7cfafa45e932bc4b5c9e4064cbb4cb966655743feefe0",
+    "completed_at_utc": "2026-09-06T14:39:25Z",
+    "origin": "campaigns/c0151-formal-rule-correction-20260905t0033z/activation/c0151-v10-c1-production-20260906-r4/retirement/c0151-v10-c1-retire-0147-r3/removal-receipt.json",
+    "path": "docs/egress/maintenance/CODEX_CLI_01491_TO_0151_RUNTIME_PROFILE_REMOVAL_RECEIPT.json",
+    "removed_version": "0.147.0",
+    "sha256": "2cd9830d4e70d16eb3e7cfafa45e932bc4b5c9e4064cbb4cb966655743feefe0"
+  },
+  "schema_version": "official-client-codex-0.151.0-terminal-state/v1",
+  "surface_additions": [],
+  "target": {
+    "previous_profile_sha256": "8c22d3b18b16d249ac041a97efad1b6703c11ef290622b0b1642679a3c010ec3",
+    "previous_version": "0.149.1",
+    "profile_id": "codex-0.151.0-official-r151-v1",
+    "profile_sha256": "dbc65378c80a2ad843ce1ba6253a2e47f0dd5d8bc812bb536a2d24ddb7a59e39",
+    "version": "0.151.0"
+  },
+  "transitions": [],
+  "transitions_note": "源码漂移由 codex-cli-0151-worktree-successor.json 承接，本收据不重复登记仓库级 transitions。",
+  "worktree_successor": {
+    "bytes": 104636,
+    "path": "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+    "sha256": "2c00b05fc67f3b343c0bfb273e980c07191405a82ee61fa1276fcfca21c6c073"
+  }
+}
