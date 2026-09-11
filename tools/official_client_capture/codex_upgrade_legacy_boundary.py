@@ -109,7 +109,7 @@ def formal_rejection_reason(
         )
     if formal_target:
         return (
-            f"0.151.0 正式 Campaign 禁止旧写入入口：{command}；"
+            f"正式 Campaign 禁止旧写入入口：{command}；"
             "请通过 campaign-run 派发合法动作。"
         )
     return None

@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical test-capture-tools test-official-client-control test-upstream-merge-tools upstream-preflight upstream-baseline-seal upstream-baseline-validate upstream-revision-preflight upstream-source-transition upstream-source-transition-validate check-egress-spec check-egress-spec-ci check-egress-spec-local-source check-egress-bootstrap-replay check-egress-seal
+.PHONY: codex-p0-rehearsal build build-backend build-frontend test test-backend test-frontend test-frontend-critical test-capture-tools test-official-client-control test-upstream-merge-tools upstream-preflight upstream-baseline-seal upstream-baseline-validate upstream-revision-preflight upstream-source-transition upstream-source-transition-validate check-egress-spec check-egress-spec-ci check-egress-spec-local-source check-egress-bootstrap-replay check-egress-seal
 
 EGRESS_BOOTSTRAP_COMMIT := 38a9929eac35a39c86de2f27de8f7a805d7dae52
 EGRESS_BOOTSTRAP_BASELINE := $(CURDIR)/docs/egress/foundation/sink-baseline.json
@@ -16,6 +16,8 @@ EGRESS_LEGACY_BASELINE := $(CURDIR)/docs/egress/lifecycle/legacy-baseline.json
 EGRESS_LEGACY_CEILING := $(CURDIR)/docs/egress/lifecycle/legacy-ceiling.json
 EGRESS_LEGACY_SEAL_RECEIPT := $(CURDIR)/docs/egress/lifecycle/legacy-seal-receipt.json
 EGRESS_SEAL_BASE_REF ?=
+CODEX_P0_CAMPAIGN_DIR ?=
+CODEX_P0_ROOT ?=
 UPSTREAM_MERGE_PLAN ?= $(CURDIR)/docs/egress/maintenance/upstream-v0.1.177-merge-plan.json
 UPSTREAM_MERGE_REPOSITORY ?= $(CURDIR)
 UPSTREAM_MERGE_REQUEST ?=
@@ -296,3 +298,18 @@ upstream-source-transition-validate:
 	@python3 -m tools.upstream_merge source-transition-validate \
 		--repository "$(UPSTREAM_MERGE_REPOSITORY)" \
 		--transition "$(UPSTREAM_MERGE_TRANSITION_OUTPUT)"
+
+# Codex 官方新版本发布后 24 小时内在 ARM64 离线演练全部 Job（不发官方请求），把工具与
+# 环境就绪问题挡在升级窗口之外；输入是已用 plan --campaign-mode preflight_only 建好的目录。
+codex-p0-rehearsal:
+	@test -n "$(CODEX_P0_CAMPAIGN_DIR)" || { echo "🔴 请设置 CODEX_P0_CAMPAIGN_DIR（preflight_only Campaign 目录）"; exit 2; }
+	@test -n "$(CODEX_P0_ROOT)" || { echo "🔴 请设置 CODEX_P0_ROOT（尚不存在的演练证据根）"; exit 2; }
+	@test ! -e "$(CODEX_P0_ROOT)" || { echo "🔴 CODEX_P0_ROOT 已存在，演练根必须全新"; exit 2; }
+	@mkdir -m 0700 "$(CODEX_P0_ROOT)"
+	@python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt collect \
+		--campaign-dir "$(CODEX_P0_CAMPAIGN_DIR)" --evidence-root "$(CODEX_P0_ROOT)" --output facts.json
+	@python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt finalize \
+		--evidence-root "$(CODEX_P0_ROOT)" --facts facts.json --output receipt.json
+	@python3 -m tools.official_client_capture.codex_upgrade_job_rehearsal_receipt replay \
+		--evidence-root "$(CODEX_P0_ROOT)" --receipt receipt.json
+	@echo "✅ P0 完整 Job 演练收据：$(CODEX_P0_ROOT)/receipt.json sha256=$$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$(CODEX_P0_ROOT)/receipt.json")"

@@ -2585,8 +2585,41 @@ def _campaign_mark_command(
         )
         if heartbeat.get("operation") == payload["encoded_operation"]:
             return payload
+        if _campaign_mark_consumed_by_stop(run_dir, payload):
+            return payload
         time.sleep(0.05)
+    if _campaign_mark_consumed_by_stop(run_dir, payload):
+        return payload
     raise SupervisorError("Campaign 父监督器未及时确认活动切换。")
+
+
+def _campaign_mark_consumed_by_stop(run_dir: Path, payload: Mapping[str, Any]) -> bool:
+    """父监督器已把本次登记的活动按到期停线时，视为切换已被确认。
+
+    ``campaign-mark`` 允许登记很短的派发超时。父编排器可能在心跳回显新
+    operation 之前就检测到该活动到期并停线；这时活动切换事实上已被消费，
+    不能再报「未及时确认」，否则同一事实会留下两种互相矛盾的终态。
+    只有停线原因确属活动到期、且当前活动 revision 就是本次登记时才成立。
+    """
+
+    request_path = run_dir / "stop-request.json"
+    if request_path.is_symlink() or not request_path.is_file():
+        return False
+    try:
+        request = _read_json(request_path)
+        latest = _read_campaign_activity(run_dir)
+    except SupervisorError:
+        return False
+    try:
+        if int(latest.get("revision", -1)) != int(payload["revision"]):
+            return False
+    except (TypeError, ValueError):
+        return False
+    reason = str(request.get("reason") or "")
+    return (
+        reason.startswith("orchestrator-dispatch-timeout")
+        or reason == "campaign-activity-deadline-expired"
+    )
 
 
 def _campaign_archive_action(run_dir: Path, activity: Mapping[str, Any]) -> Path:

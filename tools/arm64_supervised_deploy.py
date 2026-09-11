@@ -31,11 +31,14 @@ from typing import Any, Callable, Mapping
 
 # 2026-09-09：candidate_test_fact_map_0_151_0.json 与 candidate_test_trace.py 在合并
 # Sub2API v0.2.3 后重绑五份生产源码摘要；事实和规则语义不变，受管工具树摘要随之更新。
+# 2026-09-11：codex_upgrade.py 新增候选层运行坐标覆盖并把 campaign-run 强制派发泛化到
+# 全部未来目标版本，codex_upgrade_supervisor.py 修正 campaign-mark 与派发超时的竞争，
+# codex_upgrade_legacy_boundary.py 去掉版本字面量；受管工具树与监督器摘要随之更新。
 DEFAULT_TOOL_DIGEST = (
-    "bffa68c9448b115dfe66da2e89a5218fc771ff99b1a78e4844b4a6934277094e"
+    "b4db5715c0806fb03294a00c3cbe7e6c02dab98ed64800298791277322c61c6e"
 )
 DEFAULT_SUPERVISOR_DIGEST = (
-    "bec3322056c66a3dfdb8ad570dafdb2ec322fbbb4219f09b0e6b2b6a58421703"
+    "f12daa3edb619546081141ac736af56dfb34b4cadff3bf63fe8dacabf22d80b4"
 )
 DEFAULT_ASSERTION_PREPARER_DIGEST = (
     "b9ca7b6f48b3c33a63a864a9ce7ebd617335378ea52fe9148ea161ab3b276ada"

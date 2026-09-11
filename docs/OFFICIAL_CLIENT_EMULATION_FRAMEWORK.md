@@ -682,6 +682,8 @@ VC-5 的增量边界固定如下：
 - 身份不变的临时失败保留原 attempt，只执行失败或未完成项；
 - 规则、画像、用途或官方产物变化时停止当前 Campaign，并从相应 VC 阶段建立新身份；
 - candidate 源码、构建或镜像变化时建立新 candidate，但只执行受影响闭集；
+- 采集账号、容器名、二进制路径或 compose 坐标等运行坐标变化时不新建 Campaign，也不新建 candidate；
+  在该候选首个 attempt 前登记候选层运行坐标覆盖收据，run 与 seal 读取同一份收据；
 - 控制面工具变化按 §5.1.3 生成 evaluator run，不使规则、证据或 Candidate Job 失效；
 - 已封存官方请求只读复用，任何恢复均不得自动重发；
 - 执行集合为空时写 `incremental-noop` 并立即退出。

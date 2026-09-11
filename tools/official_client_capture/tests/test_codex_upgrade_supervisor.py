@@ -1009,6 +1009,40 @@ class SupervisorTests(unittest.TestCase):
             self.assertTrue(report["audit_incomplete"])
             self.assertTrue((run_dir / "stop-receipt.json").is_file())
 
+    def test_campaign_mark_short_dispatch_timeout_never_reports_unconfirmed_switch(
+        self,
+    ) -> None:
+        """派发超时先于心跳回显到期时，campaign-mark 仍返回 0，父监督器判 failed。
+
+        0.01 秒远小于心跳间隔，父编排器几乎必然先于回显检测到到期并停线；这
+        正是 CI 上偶发「未及时确认活动切换」的竞争路径，必须视为切换已被消费。
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload = self._campaign_start(Path(directory))
+            run_dir = Path(str(payload["run_dir"]))
+            self._campaign_command(
+                "campaign-mark",
+                "--state-dir",
+                str(run_dir),
+                "--classification",
+                "planning",
+                "--operation",
+                "dispatch-next-action",
+                "--timeout-seconds",
+                "0.01",
+            )
+            state = self._wait_campaign_state(run_dir, {"failed"})
+            self.assertEqual(state["state"], "failed")
+            request = json.loads(
+                (run_dir / "stop-request.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(
+                str(request["reason"]).startswith("orchestrator-dispatch-timeout")
+            )
+            report = _audit_command(run_dir)
+            self.assertFalse(report["audit_incomplete"])
+
 
 if __name__ == "__main__":
     unittest.main()

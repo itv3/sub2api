@@ -7148,6 +7148,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 "prepare-profile",
                 "stage-profile",
                 "capture-candidate",
+                "candidate-runtime-override",
                 "compare",
                 "accept",
                 "all",
@@ -12430,6 +12431,221 @@ class CodexUpgradeTest(unittest.TestCase):
             self.assertEqual(
                 result["missing_evidence_patterns"], [str(missing_root)]
             )
+
+    def test_candidate_runtime_override_changes_candidate_arguments_without_new_campaign(
+        self,
+    ) -> None:
+        """候选层运行坐标覆盖：run／seal 读取生效值，磁盘清单与 Campaign 身份不变。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign_dir, manifest = self._create_campaign(root)
+            frozen_digest = (campaign_dir / "campaign.sha256").read_text(
+                encoding="utf-8"
+            ).strip()
+            result = codex_upgrade.create_candidate_runtime_override(
+                argparse.Namespace(
+                    campaign_dir=campaign_dir,
+                    candidate_id="cand-1",
+                    reason="切换到当前可用采集账号",
+                    set=["codex_account_id=91", "service_container=sub2apiplus-b"],
+                )
+            )
+            self.assertEqual(result["status"], "recorded")
+            receipt_path = campaign_dir / "candidates" / "cand-1" / "runtime-override.json"
+            self.assertTrue(receipt_path.is_file())
+            self.assertEqual(oct(receipt_path.stat().st_mode & 0o777), "0o600")
+            self.assertEqual(
+                result["overrides"],
+                {
+                    "codex_account_id": {"predecessor": 90, "successor": 91},
+                    "service_container": {
+                        "predecessor": "sub2apiplus",
+                        "successor": "sub2apiplus-b",
+                    },
+                },
+            )
+            # 磁盘清单与摘要不变，Campaign 身份不受影响。
+            self.assertEqual(
+                (campaign_dir / "campaign.sha256").read_text(encoding="utf-8").strip(),
+                frozen_digest,
+            )
+            self.assertEqual(
+                codex_upgrade.load_campaign_manifest(campaign_dir)["configuration"][
+                    "codex_account_id"
+                ],
+                90,
+            )
+            effective = codex_upgrade._apply_candidate_runtime_override(
+                campaign_dir, manifest, "cand-1"
+            )
+            self.assertEqual(effective["configuration"]["codex_account_id"], 91)
+            self.assertEqual(effective["configuration"]["service_container"], "sub2apiplus-b")
+            self.assertEqual(manifest["configuration"]["codex_account_id"], 90)
+            again = codex_upgrade._apply_candidate_runtime_override(
+                campaign_dir, effective, "cand-1"
+            )
+            self.assertEqual(again["configuration"], effective["configuration"])
+            arguments = codex_upgrade._campaign_arguments(
+                campaign_dir, effective, candidate_id="cand-1"
+            )
+            self.assertEqual(arguments.codex_account_id, 91)
+            self.assertEqual(arguments.service_container, "sub2apiplus-b")
+            probe = codex_upgrade._environment_probe_arguments(
+                effective, root / "probe", "before"
+            )
+            self.assertEqual(probe.account_id, 91)
+            self.assertEqual(probe.service_container, "sub2apiplus-b")
+            # 其他候选不受影响；未封存 attempt 扫描不会把覆盖收据当成 attempt。
+            untouched = codex_upgrade._apply_candidate_runtime_override(
+                campaign_dir, manifest, "cand-2"
+            )
+            self.assertEqual(untouched["configuration"]["codex_account_id"], 90)
+            self.assertEqual(
+                codex_upgrade._active_unsealed_attempts(campaign_dir, "candidate"), []
+            )
+
+    def test_candidate_runtime_override_rejects_semantic_keys_duplicates_and_noops(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign_dir, _ = self._create_campaign(root)
+
+            def attempt(*items: str) -> None:
+                codex_upgrade.create_candidate_runtime_override(
+                    argparse.Namespace(
+                        campaign_dir=campaign_dir,
+                        candidate_id="cand-x",
+                        reason="测试",
+                        set=list(items),
+                    )
+                )
+
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "不允许在候选层覆盖"):
+                attempt("target_source=/tmp/other")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "不允许在候选层覆盖"):
+                attempt("runtime_image=capture-runtime@sha256:" + "c" * 64)
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "无需覆盖"):
+                attempt("codex_account_id=90")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "必须是正整数"):
+                attempt("codex_account_id=abc")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "重复指定"):
+                attempt("codex_account_id=91", "codex_account_id=92")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "必须同时覆盖"):
+                attempt("live_attestation_compose_dir=/tmp/compose")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "不是合法容器名"):
+                attempt("service_container=bad name")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "规范绝对路径"):
+                attempt("relay_codex_bin=relative/codex")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "至少提供一个"):
+                attempt()
+            self.assertFalse(
+                (campaign_dir / "candidates" / "cand-x" / "runtime-override.json").exists()
+            )
+
+    def test_candidate_runtime_override_is_write_once_and_tamper_evident(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign_dir, manifest = self._create_campaign(root)
+            arguments = argparse.Namespace(
+                campaign_dir=campaign_dir,
+                candidate_id="cand-1",
+                reason="换账号",
+                set=["codex_account_id=91"],
+            )
+            codex_upgrade.create_candidate_runtime_override(arguments)
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "已存在"):
+                codex_upgrade.create_candidate_runtime_override(arguments)
+            path = campaign_dir / "candidates" / "cand-1" / "runtime-override.json"
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+            receipt["overrides"]["codex_account_id"]["successor"] = 92
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "摘要或 schema 非法"):
+                codex_upgrade._apply_candidate_runtime_override(campaign_dir, manifest, "cand-1")
+            # 重新签名但 predecessor 与冻结值不衔接同样拒绝。
+            receipt["overrides"]["codex_account_id"] = {"predecessor": 77, "successor": 92}
+            receipt.pop("receipt_digest")
+            receipt["receipt_digest"] = codex_upgrade._fingerprint(receipt)
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "不衔接"):
+                codex_upgrade._apply_candidate_runtime_override(campaign_dir, manifest, "cand-1")
+            # 已有 attempt 或已封存的候选不能再登记覆盖。
+            (campaign_dir / "candidates" / "cand-2" / "attempts").mkdir(parents=True)
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "首个 attempt 前"):
+                codex_upgrade.create_candidate_runtime_override(
+                    argparse.Namespace(
+                        campaign_dir=campaign_dir,
+                        candidate_id="cand-2",
+                        reason="x",
+                        set=["codex_account_id=91"],
+                    )
+                )
+            (campaign_dir / "candidates" / "cand-3").mkdir(parents=True)
+            (campaign_dir / "candidates" / "cand-3" / "result.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "已封存"):
+                codex_upgrade.create_candidate_runtime_override(
+                    argparse.Namespace(
+                        campaign_dir=campaign_dir,
+                        candidate_id="cand-3",
+                        reason="x",
+                        set=["codex_account_id=91"],
+                    )
+                )
+
+    def test_formal_campaign_run_enforcement_covers_future_target_versions(self) -> None:
+        """campaign-run 强制派发与旧写入拒绝按历史豁免集合判定，不再逐版本硬编码。"""
+
+        context_env = codex_upgrade.codex_upgrade_supervisor.CAMPAIGN_RUN_CONTEXT_ENV
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            counter = iter(range(1, 100))
+
+            def campaign(target_version: str) -> argparse.Namespace:
+                campaign_dir = root / f"campaign-{next(counter)}"
+                campaign_dir.mkdir()
+                (campaign_dir / "campaign.json").write_text(
+                    json.dumps(
+                        {"campaign_mode": "formal", "target_version": target_version}
+                    ),
+                    encoding="utf-8",
+                )
+                return argparse.Namespace(
+                    campaign_dir=campaign_dir,
+                    command="capture-candidate",
+                    candidate_id="c1",
+                )
+
+            environ = dict(codex_upgrade.os.environ)
+            environ.pop(context_env, None)
+            with mock.patch.dict(codex_upgrade.os.environ, environ, clear=True):
+                for version in ("0.151.0", "0.153.0", "1.2.3"):
+                    with self.subTest(version=version):
+                        with self.assertRaisesRegex(
+                            codex_upgrade.ConfigurationError, "必须由 campaign-run 派发"
+                        ):
+                            codex_upgrade._reject_unparented_formal_write(
+                                campaign(version), "capture-candidate"
+                            )
+                        with self.assertRaisesRegex(
+                            codex_upgrade.ConfigurationError, "旧写入入口"
+                        ):
+                            codex_upgrade._reject_campaign_run_legacy_write(
+                                campaign(version), "successor"
+                            )
+                for version in ("0.147.0", "0.149.1"):
+                    codex_upgrade._reject_unparented_formal_write(
+                        campaign(version), "capture-candidate"
+                    )
+                codex_upgrade._reject_campaign_run_legacy_write(
+                    campaign("0.147.0"), "successor"
+                )
+            with mock.patch.dict(codex_upgrade.os.environ, {context_env: "1"}):
+                codex_upgrade._reject_unparented_formal_write(
+                    campaign("0.155.0"), "capture-candidate"
+                )
 
 
 class EvidenceManifestTest(unittest.TestCase):

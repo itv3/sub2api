@@ -1327,6 +1327,7 @@ Campaign、candidate 与 attempt 的规范身份边界以 Framework §3.3、§5.
 | 版本 Campaign | 目标版本、官方二进制／源码／依赖／平台／默认 feature，或批准规则、场景、画像和断言变化 |
 | 同版本后继 Campaign | 受管工具影响证据含义、环境无法证明恢复，或已冻结的机器角色、执行副本和 finalizer 身份错误 |
 | 同 Campaign 新 candidate | Sub2API 源码树、测试树、构建 ID、部署版本、OCI digest、image ID 或 profile ID／digest 变化 |
+| 同 Campaign 同 candidate 的运行坐标覆盖 | 采集账号／API Key ID、五个容器名、四个 Codex 二进制路径或 Live attestation compose 坐标变化：在该候选首个 attempt 前用 `candidate-runtime-override` 登记一份写一次收据（见 §4.4.1），不新建 Campaign，也不新建 candidate |
 | 同 candidate 新 attempt | 冻结身份不变，仅因网络、配额或临时运行失败重试；新 attempt 不覆盖旧记录 |
 
 当同版本 Campaign 的官方阶段与五份分类清单已经完整封存，但 candidate 的冻结运行时身份、
@@ -1929,6 +1930,21 @@ profile ID／digest。证据机和低资源生产机不承担 Go／Node 编译�
 选择画像。操作约束和故障预防统一由本节规定。
 
 ### 4.4.1 Candidate 身份冻结
+
+采集账号、API Key ID、容器名、Codex 二进制路径或 compose 坐标与 Campaign 冻结值不同时，
+不新建 Campaign：在该候选首个 attempt 前登记一份写一次的运行坐标覆盖收据，`run` 与 `seal`
+都从同一份收据读取生效值，磁盘清单与 `campaign.sha256` 保持不变。目标源码树、官方包、
+运行镜像、模型和证据根属于证据语义，不能这样覆盖。候选一旦有 attempt 或已封存，只能换
+新的 candidate-id 再登记。
+
+~~~bash
+python3 tools/official_client_capture/codex_upgrade.py candidate-runtime-override \
+  --campaign-dir /绝对路径/campaign \
+  --candidate-id <candidate-id> \
+  --reason "切换到当前可用采集账号" \
+  --set codex_account_id=<账号ID> \
+  --set service_container=<容器名>
+~~~
 
 运行前必须新签剩余有效期不少于 30 分钟的管理 JWT，保存为宿主机 `0400` 普通文件并设置
 `ADMIN_BEARER_TOKEN_FILE`；禁止复用过期 token。编排器须在创建 reservation 前完成格式、权限和

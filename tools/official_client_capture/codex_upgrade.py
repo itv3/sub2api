@@ -204,6 +204,45 @@ CANONICAL_PRODUCTION_STEPS = frozenset(
 CANONICAL_REMOVAL_RECEIPT_SCHEMA = "codex-runtime-profile-removal/v1"
 CAMPAIGN_MODES = frozenset({"preflight_only", "formal"})
 CANDIDATE_PURPOSES = frozenset({"validation_only", "production_replacement"})
+# 候选层运行坐标覆盖：这些键只描述候选在哪台机、哪个账号、哪个容器和哪份
+# compose 上运行，不改变官方证据、目标画像或 Campaign 身份。0.151 升级期间这类
+# 变化被迫 14 次新建 Campaign 并重做 P0；现在改为在候选首个 attempt 前登记一份
+# 写一次的覆盖收据，run／seal 都从同一份收据读取生效值。
+CANDIDATE_RUNTIME_OVERRIDE_SCHEMA = "codex-upgrade-candidate-runtime-override/v1"
+CANDIDATE_RUNTIME_OVERRIDE_FILENAME = "runtime-override.json"
+CANDIDATE_RUNTIME_OVERRIDE_INT_KEYS = frozenset({"codex_account_id", "api_key_id"})
+CANDIDATE_RUNTIME_OVERRIDE_CONTAINER_KEYS = frozenset(
+    {
+        "capture_container",
+        "service_container",
+        "keeper_container",
+        "postgres_container",
+        "redis_container",
+    }
+)
+CANDIDATE_RUNTIME_OVERRIDE_BINARY_KEYS = frozenset(
+    {
+        "capture_codex_bin",
+        "relay_codex_bin",
+        "capture_code_mode_host_bin",
+        "relay_code_mode_host_bin",
+    }
+)
+CANDIDATE_RUNTIME_OVERRIDE_COMPOSE_KEYS = frozenset(
+    {"live_attestation_compose_dir", "live_attestation_compose_files"}
+)
+CANDIDATE_RUNTIME_OVERRIDE_KEYS = (
+    CANDIDATE_RUNTIME_OVERRIDE_INT_KEYS
+    | CANDIDATE_RUNTIME_OVERRIDE_CONTAINER_KEYS
+    | CANDIDATE_RUNTIME_OVERRIDE_BINARY_KEYS
+    | CANDIDATE_RUNTIME_OVERRIDE_COMPOSE_KEYS
+)
+# 只有这些历史目标版本的正式 Campaign 仍允许旧写入入口离线兼容；0.149.1 起以及
+# 所有未来版本一律拒绝，不再逐版本硬编码。
+LEGACY_WRITE_HISTORICAL_TARGETS = frozenset({"0.145.0", "0.147.0"})
+# 只有这些历史目标版本的正式 Campaign 允许不带 campaign-run 父上下文执行可变命令；
+# 0.151.0 起以及所有未来版本必须由 campaign-run 派发。
+UNPARENTED_FORMAL_HISTORICAL_TARGETS = frozenset({"0.145.0", "0.147.0", "0.149.1"})
 MIGRATION_CLASSIFICATIONS = {
     "inherit",
     "change",
@@ -3393,6 +3432,7 @@ FORMAL_CAMPAIGN_RUN_COMMANDS = frozenset(
         "canonical-advance",
         "resume",
         "deep-verify",
+        "candidate-runtime-override",
     }
 )
 
@@ -4452,7 +4492,7 @@ def _mutable_command_coordinates(
         return command, phase, (
             str(arguments.candidate_id) if phase == "candidate" else None
         ), command == "control-epoch"
-    if command in {"compare", "accept"}:
+    if command in {"compare", "accept", "candidate-runtime-override"}:
         return command, "candidate", str(arguments.candidate_id), False
     if command in {"canonical-import", "canonical-advance"}:
         return command, "candidate", str(arguments.candidate_id), True
@@ -7817,6 +7857,23 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="CLIENT=PATH",
     )
     candidate.add_argument("--acknowledge-live-requests", action="store_true")
+
+    runtime_override = subparsers.add_parser(
+        "candidate-runtime-override",
+        help=(
+            "在候选首个 attempt 前登记运行坐标覆盖（账号、容器名、二进制与 compose 路径），"
+            "不新建 Campaign"
+        ),
+    )
+    add_candidate_reference(runtime_override)
+    runtime_override.add_argument("--reason", required=True, help="为何要改坐标，1～512 字符")
+    runtime_override.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="可重复；KEY 只能是账号／API Key ID、五个容器名、四个二进制路径或 compose 一对键",
+    )
 
     compare = subparsers.add_parser("compare", help="仅使用封存证据离线比较")
     add_candidate_reference(compare)
@@ -25842,6 +25899,258 @@ def _failed_capture_attempts(
     return failed
 
 
+def _candidate_runtime_override_path(campaign_dir: Path, candidate_id: str) -> Path:
+    return campaign_dir / "candidates" / candidate_id / CANDIDATE_RUNTIME_OVERRIDE_FILENAME
+
+
+def _on_disk_campaign_configuration(campaign_dir: Path) -> tuple[dict[str, Any], str]:
+    """读取磁盘上的 Campaign 清单并复核摘要，返回其 configuration 与文件摘要。
+
+    候选运行坐标覆盖只承认磁盘清单里冻结的值作为 ``predecessor``；内存里可能已经
+    应用过覆盖，不能拿它当基准。
+    """
+
+    manifest_path = campaign_dir / "campaign.json"
+    digest_path = campaign_dir / "campaign.sha256"
+    if not manifest_path.is_file() or not digest_path.is_file():
+        raise ConfigurationError("Campaign 缺少 campaign.json 或 campaign.sha256。")
+    expected = digest_path.read_text(encoding="utf-8").strip()
+    actual = file_sha256(manifest_path)
+    if not SHA256_RE.fullmatch(expected) or actual != expected:
+        raise ConfigurationError("Campaign 核心清单摘要不一致，拒绝继续。")
+    manifest = _read_json(manifest_path, "Campaign 核心清单")
+    configuration = manifest.get("configuration")
+    if not isinstance(configuration, dict):
+        raise ConfigurationError("Campaign 清单缺少 configuration。")
+    return configuration, actual
+
+
+def _validate_candidate_runtime_override_value(key: str, value: Any) -> Any:
+    """按键类型校验单个覆盖值；compose 一对键另行联合校验。"""
+
+    if key not in CANDIDATE_RUNTIME_OVERRIDE_KEYS:
+        raise ConfigurationError(
+            f"运行坐标 {key} 不允许在候选层覆盖；证据语义字段只能通过新 Campaign 改变。"
+        )
+    if key in CANDIDATE_RUNTIME_OVERRIDE_INT_KEYS:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ConfigurationError(f"候选运行坐标 {key} 必须是正整数。")
+        return value
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"候选运行坐标 {key} 必须是非空字符串。")
+    if key in CANDIDATE_RUNTIME_OVERRIDE_CONTAINER_KEYS and not SAFE_ID_RE.fullmatch(value):
+        raise ConfigurationError(f"候选运行坐标 {key} 不是合法容器名。")
+    if key in CANDIDATE_RUNTIME_OVERRIDE_BINARY_KEYS and not SAFE_ABSOLUTE_PATH_RE.fullmatch(
+        value
+    ):
+        raise ConfigurationError(f"候选运行坐标 {key} 必须是规范绝对路径。")
+    return value
+
+
+def _load_candidate_runtime_override(
+    campaign_dir: Path, candidate_id: str
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """读取并复核候选运行坐标覆盖收据；不存在时返回 ``None``。"""
+
+    if not SAFE_ID_RE.fullmatch(str(candidate_id)):
+        raise ConfigurationError("--candidate-id 格式非法。")
+    path = _candidate_runtime_override_path(campaign_dir, candidate_id)
+    if not path.exists() and not path.is_symlink():
+        return None
+    _reject_symlink_components(path, campaign_dir, "候选运行坐标覆盖收据")
+    if path.is_symlink() or not path.is_file():
+        raise ConfigurationError("候选运行坐标覆盖收据不是普通文件。")
+    receipt = _read_json(path, "候选运行坐标覆盖收据")
+    expected_fields = {
+        "schema_version",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "candidate_id",
+        "issued_at_utc",
+        "reason",
+        "overrides",
+        "receipt_digest",
+    }
+    if set(receipt) != expected_fields:
+        raise ConfigurationError("候选运行坐标覆盖收据字段不闭合。")
+    unsigned = dict(receipt)
+    digest = unsigned.pop("receipt_digest", None)
+    if (
+        receipt.get("schema_version") != CANDIDATE_RUNTIME_OVERRIDE_SCHEMA
+        or not SHA256_RE.fullmatch(str(digest))
+        or _fingerprint(unsigned) != digest
+    ):
+        raise ConfigurationError("候选运行坐标覆盖收据摘要或 schema 非法。")
+    configuration, manifest_sha256 = _on_disk_campaign_configuration(campaign_dir)
+    if (
+        receipt.get("campaign_manifest_sha256") != manifest_sha256
+        or receipt.get("candidate_id") != candidate_id
+        or not isinstance(receipt.get("reason"), str)
+        or not str(receipt.get("reason")).strip()
+    ):
+        raise ConfigurationError("候选运行坐标覆盖收据未绑定当前 Campaign 与候选。")
+    overrides = receipt.get("overrides")
+    if not isinstance(overrides, dict) or not overrides:
+        raise ConfigurationError("候选运行坐标覆盖收据没有任何覆盖项。")
+    for key, entry in overrides.items():
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"predecessor", "successor"}
+            or entry.get("predecessor") != configuration.get(key)
+            or entry.get("predecessor") == entry.get("successor")
+        ):
+            raise ConfigurationError(f"候选运行坐标覆盖项 {key} 与 Campaign 冻结值不衔接。")
+        _validate_candidate_runtime_override_value(key, entry["successor"])
+    compose_present = set(overrides) & CANDIDATE_RUNTIME_OVERRIDE_COMPOSE_KEYS
+    if compose_present and compose_present != CANDIDATE_RUNTIME_OVERRIDE_COMPOSE_KEYS:
+        raise ConfigurationError("compose 目录与 -f 参数串必须同时覆盖。")
+    binding = {
+        "path": path.relative_to(campaign_dir).as_posix(),
+        "sha256": file_sha256(path),
+        "bytes": path.stat().st_size,
+    }
+    return receipt, binding
+
+
+def _apply_candidate_runtime_override(
+    campaign_dir: Path, manifest: dict[str, Any], candidate_id: str | None
+) -> dict[str, Any]:
+    """返回应用了候选运行坐标覆盖的清单副本；没有覆盖时原样返回。
+
+    该函数幂等：覆盖值始终来自磁盘收据并与磁盘清单衔接，重复应用得到同一结果。
+    调用方必须把返回值作为本次 run／seal 全程使用的清单，使 Job 模板、环境探针、
+    二进制校验与容器身份都读取同一组生效坐标。
+    """
+
+    if not candidate_id:
+        return manifest
+    loaded = _load_candidate_runtime_override(campaign_dir, str(candidate_id))
+    if loaded is None:
+        return manifest
+    receipt, _ = loaded
+    if receipt.get("campaign_id") != manifest.get("campaign_id"):
+        raise ConfigurationError("候选运行坐标覆盖收据的 Campaign ID 与清单不一致。")
+    effective = json.loads(json.dumps(manifest, ensure_ascii=False))
+    configuration = effective["configuration"]
+    for key, entry in receipt["overrides"].items():
+        configuration[key] = entry["successor"]
+    return effective
+
+
+def create_candidate_runtime_override(arguments: argparse.Namespace) -> dict[str, Any]:
+    """在候选首个 attempt 前登记一份写一次的运行坐标覆盖收据。
+
+    允许覆盖的只有账号／API Key ID、五个容器名、四个二进制路径和 Live attestation
+    compose 坐标。目标源码树、官方包、运行镜像、模型与证据根属于证据语义，
+    仍只能通过新 Campaign 改变。候选一旦有 attempt 或已封存，覆盖只能登记到新的
+    candidate-id 上。
+    """
+
+    campaign_dir = arguments.campaign_dir
+    manifest = _require_formal_campaign(campaign_dir)
+    candidate_id = str(arguments.candidate_id)
+    if not SAFE_ID_RE.fullmatch(candidate_id):
+        raise ConfigurationError("--candidate-id 格式非法。")
+    reason = str(getattr(arguments, "reason", "") or "").strip()
+    if not reason or len(reason) > 512:
+        raise ConfigurationError("--reason 必须是 1～512 字符的非空说明。")
+    _, result_path = _stage_path(campaign_dir, "capture-candidate", candidate_id)
+    if result_path.exists() or result_path.is_symlink():
+        raise ConfigurationError(
+            "candidate-id 已封存，运行坐标不可再覆盖；请使用新 candidate-id。"
+        )
+    candidate_root = campaign_dir / "candidates" / candidate_id
+    if (candidate_root / "attempts").exists():
+        raise ConfigurationError(
+            "候选已有 attempt，运行坐标覆盖必须在首个 attempt 前登记；请使用新 candidate-id。"
+        )
+    path = _candidate_runtime_override_path(campaign_dir, candidate_id)
+    if path.exists() or path.is_symlink():
+        raise ConfigurationError(
+            "候选运行坐标覆盖收据已存在，不可覆盖；请使用新 candidate-id。"
+        )
+    configuration, manifest_sha256 = _on_disk_campaign_configuration(campaign_dir)
+    raw_items = list(getattr(arguments, "set", None) or [])
+    if not raw_items:
+        raise ConfigurationError("至少提供一个 --set KEY=VALUE。")
+    pending: dict[str, Any] = {}
+    for item in raw_items:
+        key, separator, raw_value = str(item).partition("=")
+        key = key.strip()
+        if not separator or not key:
+            raise ConfigurationError(f"--set 必须是 KEY=VALUE：{item}")
+        if key in pending:
+            raise ConfigurationError(f"--set 重复指定 {key}。")
+        if key not in CANDIDATE_RUNTIME_OVERRIDE_KEYS:
+            raise ConfigurationError(
+                f"运行坐标 {key} 不允许在候选层覆盖；证据语义字段只能通过新 Campaign 改变。"
+            )
+        value: Any = raw_value.strip()
+        if key in CANDIDATE_RUNTIME_OVERRIDE_INT_KEYS:
+            try:
+                value = int(value)
+            except ValueError as error:
+                raise ConfigurationError(f"候选运行坐标 {key} 必须是正整数。") from error
+        pending[key] = _validate_candidate_runtime_override_value(key, value)
+    compose_present = set(pending) & CANDIDATE_RUNTIME_OVERRIDE_COMPOSE_KEYS
+    if compose_present:
+        if compose_present != CANDIDATE_RUNTIME_OVERRIDE_COMPOSE_KEYS:
+            raise ConfigurationError("compose 目录与 -f 参数串必须同时覆盖。")
+        validated = _successor_runtime_configuration(
+            argparse.Namespace(
+                live_attestation_compose_dir=Path(pending["live_attestation_compose_dir"]),
+                live_attestation_compose_files=pending["live_attestation_compose_files"],
+                reason="candidate_runtime_identity_correction",
+            ),
+            configuration,
+        )
+        if validated is None:
+            raise ConfigurationError("compose 坐标校验失败。")
+        pending.update(validated)
+    overrides: dict[str, dict[str, Any]] = {}
+    for key in sorted(pending):
+        current = configuration.get(key)
+        if current == pending[key]:
+            raise ConfigurationError(f"运行坐标 {key} 与 Campaign 冻结值相同，无需覆盖。")
+        overrides[key] = {"predecessor": current, "successor": pending[key]}
+    receipt: dict[str, Any] = {
+        "schema_version": CANDIDATE_RUNTIME_OVERRIDE_SCHEMA,
+        "campaign_id": str(manifest["campaign_id"]),
+        "campaign_manifest_sha256": manifest_sha256,
+        "candidate_id": candidate_id,
+        "issued_at_utc": _utc_now(),
+        "reason": reason,
+        "overrides": overrides,
+    }
+    receipt["receipt_digest"] = _fingerprint(receipt)
+    candidates_root = campaign_dir / "candidates"
+    candidates_root.mkdir(mode=0o700, exist_ok=True)
+    candidate_root.mkdir(mode=0o700, exist_ok=True)
+    encoded = (
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(encoded)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return {
+        "status": "recorded",
+        "campaign_id": receipt["campaign_id"],
+        "candidate_id": candidate_id,
+        "path": str(path),
+        "receipt_digest": receipt["receipt_digest"],
+        "overrides": overrides,
+    }
+
+
 def _candidate_identity_for_run(
     arguments: argparse.Namespace,
     manifest: dict[str, Any],
@@ -27305,6 +27614,14 @@ def _run_capture_attempt(
             )
 
     manifest = _manifest or _require_formal_campaign(arguments.campaign_dir)
+    if phase == "candidate":
+        # 候选层运行坐标覆盖在这里一次性生效；后续 Job 模板、环境探针、二进制
+        # 校验和容器身份都只读这份副本，run 与 seal 因此看到同一组坐标。
+        manifest = _apply_candidate_runtime_override(
+            arguments.campaign_dir,
+            manifest,
+            str(getattr(arguments, "candidate_id", "") or ""),
+        )
     _reject_contaminated_campaign(arguments.campaign_dir)
     deadline = _deadline or _attempt_deadline(arguments, phase)
     seal_only = {
@@ -28936,6 +29253,8 @@ def _seal_capture_attempt(
     if not attempt_id:
         raise ConfigurationError("seal 必须提供 --attempt-id。")
     candidate_id = arguments.candidate_id if phase == "candidate" else None
+    if candidate_id:
+        manifest = _apply_candidate_runtime_override(campaign_dir, manifest, candidate_id)
     attempt_root, attempt = _load_capture_attempt(
         campaign_dir, phase, candidate_id, attempt_id
     )
@@ -33593,12 +33912,12 @@ def _reject_campaign_run_legacy_write(
                 predecessor_manifest = _read_json(predecessor_path, "前序 Campaign 清单")
             except ConfigurationError:
                 predecessor_manifest = None
-    # 0.151 正式 Campaign 不再允许旧写入；更早版本目录保留给历史只读
-    # 回放和离线兼容测试，避免篡改历史收据语义。
+    # 0.149.1 起的正式 Campaign（含所有未来版本）不再允许旧写入；只有更早的
+    # 历史版本目录保留给只读回放和离线兼容测试，避免篡改历史收据语义。
     candidates = [item for item in (manifest, predecessor_manifest) if item]
     if any(
         item.get("campaign_mode") == "formal"
-        and item.get("target_version") in {"0.149.1", "0.151.0"}
+        and str(item.get("target_version", "")) not in LEGACY_WRITE_HISTORICAL_TARGETS
         for item in candidates
     ):
         reason = codex_upgrade_legacy_boundary.formal_rejection_reason(
@@ -33613,7 +33932,11 @@ def _reject_unparented_formal_write(
     arguments: argparse.Namespace,
     command: str,
 ) -> None:
-    """0.151 正式可变命令必须由 campaign-run 父监督器派发。"""
+    """0.151.0 起的正式可变命令必须由 campaign-run 父监督器派发。
+
+    判定按目标版本是否属于历史豁免集合，而不是逐版本硬编码，避免下一个目标
+    版本悄悄退回人工逐条派发。
+    """
 
     if os.environ.get(codex_upgrade_supervisor.CAMPAIGN_RUN_CONTEXT_ENV) == "1":
         return
@@ -33633,12 +33956,13 @@ def _reject_unparented_formal_write(
         manifest = _read_json(manifest_path, "Campaign 清单")
     except ConfigurationError:
         return
+    target_version = str(manifest.get("target_version", ""))
     if (
         manifest.get("campaign_mode") == "formal"
-        and manifest.get("target_version") == "0.151.0"
+        and target_version not in UNPARENTED_FORMAL_HISTORICAL_TARGETS
     ):
         raise ConfigurationError(
-            f"0.151.0 正式命令必须由 campaign-run 派发：{command}"
+            f"目标 {target_version} 的正式命令必须由 campaign-run 派发：{command}"
         )
 
 
@@ -33950,6 +34274,9 @@ def _main_without_campaign_lease(argv: list[str] | None = None) -> int:
             else:
                 result = _seal_capture_attempt(arguments, "candidate")
             return_code = 0 if result.get("status") in CAPTURE_SUCCESS_STATUSES else 2
+        elif command == "candidate-runtime-override":
+            result = create_candidate_runtime_override(arguments)
+            return_code = 0
         elif command == "compare":
             result = compare_campaign(arguments.campaign_dir, arguments.candidate_id)
             return_code = _compare_result_exit_code(result)
