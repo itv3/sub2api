@@ -1,0 +1,136 @@
+{
+  "base_commit": "59cc75e60dcb2dfac9c639fbb3915bc02add0fab",
+  "changed_path_count": 6,
+  "current_commit": "a273d4813a417295b7d9d228fec15d8444625fa2",
+  "deleted_frozen_paths": [],
+  "extra_worktree_paths": [
+    "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py"
+  ],
+  "frozen_edge_count": 2958,
+  "frozen_path_count": 1398,
+  "identity_sha256": "7784e7d0cedaf238b98edddd5d5fbbde93dfe908b221747031b02b869cc1953b",
+  "issued_at_utc": "2026-09-11T05:04:00Z",
+  "mode": "commit",
+  "required_manual_actions": [
+    {
+      "action_kind": "python_receipt_list",
+      "file": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "instruction": "生成本次 freeze successor 后，把它的仓库相对路径追加到该测试 successor_edges 的显式收据列表并重跑；该测试属于 Campaign 受管工具文件，改动前须老板确认。",
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "rule_id": "codex-0151-worktree-successor",
+      "verification": [
+        "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+      ]
+    }
+  ],
+  "result": "manual_actions_required",
+  "safety": {
+    "deployment_performed": false,
+    "live_account_used": false,
+    "official_egress_profile_changed": false,
+    "production_config_changed": false,
+    "wire_or_persona_selection_changed": false
+  },
+  "schema_version": "official-egress-upstream-freeze-successor/v1",
+  "scope": "upstream-codex-upgrade-batch3-freeze-successor",
+  "transitions": [
+    {
+      "old_path": "",
+      "path": "docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "predecessor_sha256s": [
+        "d625cfa571fb7f029271031cdabe046615c60b053a8bf4af37faf8beb9a3ead6"
+      ],
+      "reason": "Codex 升级工具改造批次 3：§5.7 完成定义门禁化，通用终态收据校验 path=docs/OFFICIAL_CLIENT_EMULATION_FRAMEWORK.md",
+      "source_receipts": [
+        "docs/egress/maintenance/claude-fw-g-desktop-title-source-transition.json",
+        "docs/egress/maintenance/claude-fw-h-state-durability-source-transition.json",
+        "docs/egress/maintenance/claude-official-client-only-transition.json",
+        "docs/egress/maintenance/claude-offline-release-repair-transition.json",
+        "docs/egress/maintenance/claude-persona-release-catalog-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-arm64-environment-producer-replay-tool-successor-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evaluation-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-order-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-evidence-manifest-replay-closure-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-framework-clarification-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-stopped-ledger-recovery-source-transition.json",
+        "docs/egress/maintenance/codex-cli-0151-system-proxy-capture-tool-successor-source-transition.json",
+        "docs/egress/maintenance/composite-model-protocol-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-codex-upgrade-batch1-freeze-successor.json",
+        "docs/egress/maintenance/upstream-codex-upgrade-batch2-freeze-successor.json",
+        "docs/egress/maintenance/upstream-doc-sync-20260910-freeze-successor.json",
+        "docs/egress/maintenance/upstream-doc-trim-20260910-freeze-successor.json",
+        "docs/egress/maintenance/upstream-doc-trim-20260911-freeze-successor.json",
+        "docs/egress/maintenance/upstream-merge-doc-revision-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "f55cd3b48f108e2da41bbd357fd1915b41cb466dec0dfb7dbda774f6ac6e1fcd"
+    },
+    {
+      "old_path": "",
+      "path": "tools/check_ledger_completeness.py",
+      "predecessor_sha256s": [
+        "5ea82d4f334fab130617ab1d422ab2df155950dbc4d396c77b0f457491b0ff9d"
+      ],
+      "reason": "Codex 升级工具改造批次 3：§5.7 完成定义门禁化，通用终态收据校验 path=tools/check_ledger_completeness.py",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-formal-recovery-source-transition.json",
+        "docs/egress/maintenance/historical-source-drift-successor.json",
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json",
+        "docs/egress/maintenance/upstream-merge-framework-v3-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "be0a2cfb3e0e096c21f284d222bd5118f3f3aff6be0d95f0b10c40953d07d6bf"
+    },
+    {
+      "old_path": "",
+      "path": "tools/official_client_capture/tests/test_check_ledger_completeness.py",
+      "predecessor_sha256s": [
+        "5b746382929aeb499ff555c37103888135232a00e01ed9222082f5c31863c50c"
+      ],
+      "reason": "Codex 升级工具改造批次 3：§5.7 完成定义门禁化，通用终态收据校验 path=tools/official_client_capture/tests/test_check_ledger_completeness.py",
+      "source_receipts": [
+        "docs/egress/maintenance/upstream-merge-framework-v2-source-transition.json"
+      ],
+      "status": "M",
+      "to_sha256": "40b2d374e2bc95bd422cad59e778f37ec2eed2ea453230ec0f7528c74444ac47"
+    },
+    {
+      "old_path": "",
+      "path": "tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "predecessor_sha256s": [
+        "a595f3cae96594b8fd7771bc071a3391a4383455bf1953a526f4944ad620537a"
+      ],
+      "reason": "Codex 升级工具改造批次 3：§5.7 完成定义门禁化，通用终态收据校验 path=tools/official_client_capture/tests/test_codex_0151_worktree_successor.py",
+      "source_receipts": [
+        "docs/egress/maintenance/codex-cli-0151-worktree-successor.json",
+        "docs/egress/maintenance/upstream-capability-pin-freeze-successor.json",
+        "docs/egress/maintenance/upstream-codex-upgrade-batch1-freeze-successor.json",
+        "docs/egress/maintenance/upstream-codex-upgrade-batch2-freeze-successor.json",
+        "docs/egress/maintenance/upstream-doc-trim-20260911-freeze-successor.json",
+        "docs/egress/maintenance/upstream-tool-hints-20260911-freeze-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-reconnect-repair-gate-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-release-prep-source-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.3-tool-identity-sync-successor.json",
+        "docs/egress/maintenance/upstream-v0.2.4-freeze-successor.json",
+        "docs/egress/maintenance/version-sync-0.2.3-3-freeze-successor.json"
+      ],
+      "status": "M",
+      "to_sha256": "587d4900284761bc0cf8e9d8fa5ac1d5bd36ad70334f25238b38c1fddcf3c915"
+    }
+  ],
+  "unregistered_path_count": 2,
+  "unregistered_paths": [
+    "backend/internal/officialegress/codex_terminal_state_receipts_test.go",
+    "backend/internal/service/codex_terminal_state_receipts_test.go"
+  ],
+  "verification": [
+    "go test ./internal/officialegress -run 'Frozen|Transition|Successor|Drift|Retirement' -count=1",
+    "go test ./internal/service -run 'Frozen|Transition|Successor|Drift' -count=1",
+    "make check-egress-spec-ci",
+    "python3 -m unittest tools.official_client_capture.tests.test_codex_0151_worktree_successor"
+  ]
+}
