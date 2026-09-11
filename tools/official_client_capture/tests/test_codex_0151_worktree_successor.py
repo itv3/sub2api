@@ -55,6 +55,12 @@ DOC_TRIM_20260911_FREEZE_SUCCESSOR = (
 TOOL_HINTS_20260911_FREEZE_SUCCESSOR = (
     ROOT / "docs/egress/maintenance/upstream-tool-hints-20260911-freeze-successor.json"
 )
+# 2026-09-11：Codex 升级工具改造批次 1（候选层运行坐标覆盖、campaign-run 强制派发泛化、
+# 监督器派发超时竞争修复、codex-p0-rehearsal 目标）对已冻结路径产生的后继摘要，
+# 由 freeze-successor-generate 以 commit 模式生成。
+CODEX_UPGRADE_BATCH1_FREEZE_SUCCESSOR = (
+    ROOT / "docs/egress/maintenance/upstream-codex-upgrade-batch1-freeze-successor.json"
+)
 HISTORICAL_LEDGER = "docs/egress/maintenance/historical-source-drift-successor.json"
 SHA256_LENGTH = 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -135,6 +141,7 @@ def successor_edges(path: str) -> list[tuple[str, str]]:
         UPSTREAM_V024_FREEZE_SUCCESSOR,
         DOC_TRIM_20260911_FREEZE_SUCCESSOR,
         TOOL_HINTS_20260911_FREEZE_SUCCESSOR,
+        CODEX_UPGRADE_BATCH1_FREEZE_SUCCESSOR,
     ):
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         _validate_successor_receipt(payload)
