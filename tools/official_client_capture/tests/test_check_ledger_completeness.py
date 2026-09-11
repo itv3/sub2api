@@ -163,5 +163,173 @@ class CheckLedgerCompletenessTests(unittest.TestCase):
         self.assertEqual(projected.identity_sha256, "2" * 64)
 
 
+class CodexTerminalStateReceiptGateTests(unittest.TestCase):
+    """通用终态收据门禁（Framework §5.7）的正例与失败关闭测试。
+
+    夹具在临时仓库里造一份 0.151 风格终态收据：四份阶段收据、审计索引、
+    Runtime Catalog（active 0.151.0，source 指向链末 Campaign）。审计索引复核
+    与 git 都走 subprocess，这里用替身按命令区分返回。
+    """
+
+    audit_identity = "a" * 64
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.maintenance = self.root / "docs/egress/maintenance"
+        self.maintenance.mkdir(parents=True)
+        runtime = self.root / "backend/internal/officialegress/catalogdata/runtime"
+        (runtime / "release-graphs").mkdir(parents=True)
+        (runtime / "profiles/0.151.0").mkdir(parents=True)
+        self.stage_paths: dict[str, Path] = {}
+        for key in ledger.CODEX_TERMINAL_STAGE_RECEIPT_FIELDS + ("audit_index",):
+            path = self.maintenance / f"CODEX_CLI_TEST_{key.upper()}.json"
+            path.write_text(json.dumps({"stage": key}) + "\n", encoding="utf-8")
+            self.stage_paths[key] = path
+        self.graph_path = runtime / "release-graphs/graph.json"
+        self.graph_path.write_text(
+            json.dumps(
+                {
+                    "nodes": [
+                        {"mode": "active", "build": {"version": "0.151.0", "source": "campaign:c-last/formal"}},
+                        {"mode": "retired", "build": {"version": "0.149.1", "source": "campaign:c-old/formal"}},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.snapshot_path = runtime / "snapshot-catalog.json"
+        self.snapshot_path.write_text("{}\n", encoding="utf-8")
+        self.profile_path = runtime / "profiles/0.151.0/profile.json"
+        self.profile_path.write_text("{}\n", encoding="utf-8")
+        self.catalog_path = runtime / "release-catalog.json"
+        self._write_catalog("campaign:c-last/retirement:codex-legacy-profile")
+        self.receipt_path = self.maintenance / "CODEX_CLI_TEST_TERMINAL_STATE_RECEIPT.json"
+        self.audit_status = "passed"
+        self.audit_calls: list[list[str]] = []
+        self._write_receipt(self._receipt())
+        self.patches = [
+            mock.patch.object(ledger, "ROOT", self.root),
+            mock.patch.object(ledger, "MAINTENANCE_ROOT", self.maintenance),
+            mock.patch.object(ledger, "RUNTIME_CATALOG_PATH", self.catalog_path),
+            mock.patch.object(
+                ledger,
+                "CODEX_01491_TERMINAL_STATE",
+                self.maintenance / "CODEX_CLI_0147_TO_01491_TERMINAL_STATE_RECEIPT.json",
+            ),
+            mock.patch.object(ledger.subprocess, "run", side_effect=self._fake_subprocess),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+
+    def tearDown(self) -> None:
+        for patcher in reversed(self.patches):
+            patcher.stop()
+        self.temporary.cleanup()
+
+    def _write_catalog(self, source: str) -> None:
+        self.catalog_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "test",
+                    "release_graph": {"path": "catalogdata/runtime/release-graphs/graph.json", "sha256": "0" * 64},
+                    "source": source,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _binding(self, path: Path) -> dict[str, str]:
+        return {"path": path.relative_to(self.root).as_posix(), "sha256": ledger.sha256(path.read_bytes())}
+
+    def _receipt(self, *, trailing_newline: bool = False) -> dict[str, object]:
+        document: dict[str, object] = {
+            "schema_version": "official-client-codex-0.151.0-terminal-state/v1",
+            "target": {"version": "0.151.0", "previous_version": "0.149.1"},
+            "result": "passed",
+            "completed_at_utc": "2026-09-11T00:00:00Z",
+            "runtime_catalog": {
+                "catalog": self._binding(self.catalog_path),
+                "release_graph": self._binding(self.graph_path),
+                "snapshot_catalog": self._binding(self.snapshot_path),
+                "active_profile": self._binding(self.profile_path),
+            },
+            "audit_index_identity_sha256": self.audit_identity,
+            "retired_runtime_profiles": [
+                {
+                    "path": "backend/internal/officialegress/catalogdata/runtime/profiles/0.147.0/gone.json",
+                    "state": "absent",
+                }
+            ],
+            "campaign_chain": [{"campaign_id": "c-first"}, {"campaign_id": "c-last"}],
+        }
+        for key, path in self.stage_paths.items():
+            document[key] = self._binding(path)
+        document["identity_sha256"] = ledger.codex_terminal_state_identity(
+            document, trailing_newline=trailing_newline
+        )
+        return document
+
+    def _write_receipt(self, document: dict[str, object]) -> None:
+        self.receipt_path.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def _fake_subprocess(self, command: list[str], **_kwargs: object) -> SimpleNamespace:
+        if command[0] == "git":
+            raise AssertionError(f"正例不应回读 git 历史：{command}")
+        self.audit_calls.append([str(item) for item in command])
+        report = {"status": self.audit_status, "identity_sha256": self.audit_identity}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(report) + "\n", stderr="")
+
+    def test_generic_receipt_passes_and_reruns_audit_index_check(self) -> None:
+        self.assertEqual(
+            ledger.validate_codex_terminal_state_receipts(),
+            ["docs/egress/maintenance/CODEX_CLI_TEST_TERMINAL_STATE_RECEIPT.json"],
+        )
+        self.assertEqual(len(self.audit_calls), 1)
+        self.assertEqual(self.audit_calls[0][2:4], ["check", "--index"])
+        self.assertTrue(self.audit_calls[0][4].endswith("CODEX_CLI_TEST_AUDIT_INDEX.json"))
+
+    def test_accepts_trailing_newline_identity_variant(self) -> None:
+        self._write_receipt(self._receipt(trailing_newline=True))
+        self.assertEqual(len(ledger.validate_codex_terminal_state_receipts()), 1)
+
+    def test_rejects_identity_drift(self) -> None:
+        document = self._receipt()
+        document["completed_at_utc"] = "2026-09-12T00:00:00Z"
+        self._write_receipt(document)
+        with self.assertRaisesRegex(RuntimeError, "自摘要不一致"):
+            ledger.validate_codex_terminal_state_receipts()
+
+    def test_rejects_stage_receipt_drift(self) -> None:
+        self.stage_paths["post_promotion_gate"].write_text("{\"stage\": \"edited\"}\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "post_promotion_gate 收据 摘要漂移"):
+            ledger.validate_codex_terminal_state_receipts()
+
+    def test_rejects_failed_audit_index_check(self) -> None:
+        self.audit_status = "failed"
+        with self.assertRaisesRegex(RuntimeError, "审计索引复核失败"):
+            ledger.validate_codex_terminal_state_receipts()
+
+    def test_rejects_catalog_source_outside_campaign_chain(self) -> None:
+        self._write_catalog("campaign:c-other/retirement:codex-legacy-profile")
+        self._write_receipt(self._receipt())
+        with self.assertRaisesRegex(RuntimeError, "未指向 0.151.0 终态收据的末级 Campaign"):
+            ledger.validate_codex_terminal_state_receipts()
+
+    def test_rejects_retired_profile_still_present(self) -> None:
+        still_there = self.root / "backend/internal/officialegress/catalogdata/runtime/profiles/0.147.0/gone.json"
+        still_there.parent.mkdir(parents=True)
+        still_there.write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "已退休的画像仍存在"):
+            ledger.validate_codex_terminal_state_receipts()
+
+    def test_active_version_requires_terminal_state_receipt(self) -> None:
+        self.receipt_path.unlink()
+        with self.assertRaisesRegex(RuntimeError, "0.151.0 缺少终态收据"):
+            ledger.validate_codex_terminal_state_receipts()
+
+
 if __name__ == "__main__":
     unittest.main()

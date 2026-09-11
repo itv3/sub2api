@@ -766,6 +766,242 @@ def validate_codex_01491_terminal_state(
     ]
 
 
+TERMINAL_STATE_RECEIPT_GLOB = "CODEX_CLI_*_TERMINAL_STATE_RECEIPT.json"
+TERMINAL_STATE_SCHEMA_RE = re.compile(
+    r"^official-client-codex-(\d+\.\d+\.\d+)-terminal-state/v1$"
+)
+MAINTENANCE_ROOT = ROOT / "docs" / "egress" / "maintenance"
+AUDIT_INDEX_TOOL = ROOT / "tools" / "codex_audit_index.py"
+RUNTIME_CATALOG_PATH = (
+    ROOT / "backend" / "internal" / "officialegress" / "catalogdata" / "runtime" / "release-catalog.json"
+)
+CODEX_TERMINAL_STAGE_RECEIPT_FIELDS = (
+    "catalog_promotion",
+    "production_activation",
+    "post_promotion_gate",
+    "runtime_profile_removal",
+)
+
+
+def codex_terminal_state_identity(document: dict[str, object], *, trailing_newline: bool) -> str:
+    """复算通用终态收据排除自摘要后的规范身份。
+
+    0.149.1 的历史收据在规范 JSON 末尾多一个换行；0.151 起的收据不带换行并在
+    ``identity_algorithm`` 里自述算法。两种都视为合法，防止同一事实两种算法互相否定。
+    """
+
+    payload = {key: value for key, value in document.items() if key != "identity_sha256"}
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    if trailing_newline:
+        canonical += b"\n"
+    return sha256(canonical)
+
+
+def _archived_repo_bytes(receipt_relative: str, expected_path: str) -> bytes | None:
+    """从终态收据首次入库的提交读取会被后继换版更新的制品；找不到唯一提交时返回 None。"""
+
+    history = subprocess.run(
+        ["git", "log", "--diff-filter=A", "--format=%H", "--", receipt_relative],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    if len(history) != 1 or not GIT_COMMIT_RE.fullmatch(history[0]):
+        return None
+    archived = subprocess.run(
+        ["git", "show", f"{history[0]}:{expected_path}"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+    )
+    if archived.returncode != 0:
+        return None
+    return archived.stdout
+
+
+def _validate_terminal_repo_binding(
+    binding: object,
+    label: str,
+    *,
+    receipt_relative: str,
+    allow_historical: bool,
+    required_prefix: str | None = None,
+) -> str:
+    """校验终态收据里的仓库制品坐标；返回相对路径。"""
+
+    if (
+        not isinstance(binding, dict)
+        or not isinstance(binding.get("path"), str)
+        or not SHA256_RE.fullmatch(str(binding.get("sha256", "")))
+    ):
+        raise RuntimeError(f"{label} 坐标字段非法")
+    relative = str(binding["path"])
+    if relative.startswith("/") or ".." in PurePosixPath(relative).parts:
+        raise RuntimeError(f"{label} 坐标不是仓库相对路径：{relative}")
+    if required_prefix and not relative.startswith(required_prefix):
+        raise RuntimeError(f"{label} 必须位于 {required_prefix}：{relative}")
+    current_path = ROOT / relative
+    if (
+        current_path.is_file()
+        and not current_path.is_symlink()
+        and sha256(current_path.read_bytes()) == binding["sha256"]
+    ):
+        return relative
+    if allow_historical:
+        archived = _archived_repo_bytes(receipt_relative, relative)
+        if archived is not None and sha256(archived) == binding["sha256"]:
+            return relative
+    raise RuntimeError(f"{label} 摘要漂移：{relative}")
+
+
+def _runtime_catalog_active_state() -> tuple[str, list[str], str]:
+    """读取当前 Runtime Catalog：返回 (active 版本, active 节点 source 列表, catalog source)。"""
+
+    catalog = json.loads(RUNTIME_CATALOG_PATH.read_text(encoding="utf-8"))
+    graph_reference = catalog.get("release_graph")
+    if not isinstance(graph_reference, dict) or not isinstance(graph_reference.get("path"), str):
+        raise RuntimeError("Runtime Catalog 缺少 release_graph 坐标")
+    graph_path = RUNTIME_CATALOG_PATH.parents[2] / str(graph_reference["path"])
+    graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    versions: set[str] = set()
+    sources: list[str] = []
+    for node in graph.get("nodes", []):
+        if not isinstance(node, dict) or node.get("mode") != "active":
+            continue
+        build = node.get("build") or {}
+        versions.add(str(build.get("version", "")))
+        sources.append(str(build.get("source", "")))
+    if len(versions) != 1:
+        raise RuntimeError(f"Runtime Catalog active 版本不唯一：{sorted(versions)!r}")
+    return versions.pop(), sources, str(catalog.get("source", ""))
+
+
+def validate_codex_terminal_state_receipts() -> list[str]:
+    """通用校验 0.151 起的终态收据，落实 Framework §5.7 完成定义。
+
+    每份 ``CODEX_CLI_*_TERMINAL_STATE_RECEIPT.json``（0.149.1 由专用校验负责）必须：
+    自摘要一致；四份阶段收据（晋升、激活、post-promotion 门禁、画像退休）与审计索引
+    逐字在库；审计索引经 ``codex_audit_index.py check`` 自摘要通过；退休画像已不存在；
+    若它就是当前 active 版本，Runtime Catalog 的 source 必须指向其 Campaign 链末级，
+    ReleaseGraph active 节点的 source 必须落在链上。当前 active 版本缺少终态收据即失败。
+    """
+
+    active_version, active_sources, catalog_source = _runtime_catalog_active_state()
+    validated: list[str] = []
+    seen_versions: set[str] = set()
+    for receipt_path in sorted(MAINTENANCE_ROOT.glob(TERMINAL_STATE_RECEIPT_GLOB)):
+        if receipt_path.resolve() == CODEX_01491_TERMINAL_STATE.resolve():
+            continue
+        receipt_relative = receipt_path.relative_to(ROOT).as_posix()
+        try:
+            receipt = json.loads(
+                receipt_path.read_text(encoding="utf-8"),
+                object_pairs_hook=_unique_json_object,
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"无法读取终态收据 {receipt_relative}：{exc}") from exc
+        if not isinstance(receipt, dict):
+            raise RuntimeError(f"终态收据不是对象：{receipt_relative}")
+        matched = TERMINAL_STATE_SCHEMA_RE.fullmatch(str(receipt.get("schema_version", "")))
+        if matched is None:
+            raise RuntimeError(f"终态收据 schema 非法：{receipt_relative}")
+        version = matched.group(1)
+        target = receipt.get("target")
+        if not isinstance(target, dict) or target.get("version") != version:
+            raise RuntimeError(f"终态收据 target 版本与 schema 不一致：{receipt_relative}")
+        if receipt.get("result") != "passed" or not receipt.get("completed_at_utc"):
+            raise RuntimeError(f"终态收据结果或完成时间非法：{receipt_relative}")
+        identity = str(receipt.get("identity_sha256", ""))
+        if identity not in {
+            codex_terminal_state_identity(receipt, trailing_newline=False),
+            codex_terminal_state_identity(receipt, trailing_newline=True),
+        }:
+            raise RuntimeError(f"终态收据自摘要不一致：{receipt_relative}")
+        runtime_catalog = receipt.get("runtime_catalog")
+        if not isinstance(runtime_catalog, dict):
+            raise RuntimeError(f"终态收据缺少 runtime_catalog：{receipt_relative}")
+        for key in ("catalog", "release_graph", "snapshot_catalog", "active_profile"):
+            _validate_terminal_repo_binding(
+                runtime_catalog.get(key),
+                f"{version} 终态 runtime {key}",
+                receipt_relative=receipt_relative,
+                allow_historical=True,
+            )
+        for key in CODEX_TERMINAL_STAGE_RECEIPT_FIELDS:
+            _validate_terminal_repo_binding(
+                receipt.get(key),
+                f"{version} 终态 {key} 收据",
+                receipt_relative=receipt_relative,
+                allow_historical=False,
+                required_prefix="docs/egress/maintenance/",
+            )
+        audit_relative = _validate_terminal_repo_binding(
+            receipt.get("audit_index"),
+            f"{version} 终态审计索引",
+            receipt_relative=receipt_relative,
+            allow_historical=False,
+            required_prefix="docs/egress/maintenance/",
+        )
+        check = subprocess.run(
+            [sys.executable, str(AUDIT_INDEX_TOOL), "check", "--index", str(ROOT / audit_relative)],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            check_report = json.loads(check.stdout.strip().splitlines()[-1]) if check.stdout.strip() else {}
+        except (ValueError, IndexError):
+            check_report = {}
+        if check.returncode != 0 or check_report.get("status") != "passed":
+            raise RuntimeError(
+                f"{version} 终态审计索引复核失败：{(check.stderr or check.stdout).strip()[-300:]}"
+            )
+        if check_report.get("identity_sha256") != receipt.get("audit_index_identity_sha256"):
+            raise RuntimeError(f"{version} 终态收据登记的审计索引自摘要与索引不一致")
+        retired = receipt.get("retired_runtime_profiles")
+        if not isinstance(retired, list):
+            raise RuntimeError(f"{version} 终态收据缺少退休画像清单")
+        for item in retired:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                raise RuntimeError(f"{version} 终态退休画像条目非法")
+            if (ROOT / str(item["path"])).exists():
+                raise RuntimeError(f"{version} 终态声明已退休的画像仍存在：{item['path']}")
+        chain = receipt.get("campaign_chain")
+        if (
+            not isinstance(chain, list)
+            or not chain
+            or any(
+                not isinstance(link, dict) or not str(link.get("campaign_id", "")).strip()
+                for link in chain
+            )
+        ):
+            raise RuntimeError(f"{version} 终态收据缺少 Campaign 承接链")
+        chain_ids = [str(link["campaign_id"]) for link in chain]
+        if version == active_version:
+            if not catalog_source.startswith(f"campaign:{chain_ids[-1]}/"):
+                raise RuntimeError(
+                    f"Runtime Catalog source 未指向 {version} 终态收据的末级 Campaign：{catalog_source}"
+                )
+            for source in active_sources:
+                if not any(source.startswith(f"campaign:{campaign_id}/") for campaign_id in chain_ids):
+                    raise RuntimeError(
+                        f"ReleaseGraph active 节点 source 不在 {version} 终态收据的 Campaign 链上：{source}"
+                    )
+        seen_versions.add(version)
+        validated.append(receipt_relative)
+    if active_version != "0.149.1" and active_version not in seen_versions:
+        raise RuntimeError(f"当前 active 版本 {active_version} 缺少终态收据（Framework §5.7）")
+    return validated
+
+
 def codex_01491_terminal_surface_additions() -> list[dict[str, str]]:
     """读取 0.149.1 合并终态收据，不再依赖逐轮 transition 或测试模块。"""
 
@@ -832,6 +1068,8 @@ def main() -> int:
     try:
         plan = load_upstream_merge_plan(args.upstream_merge_plan.resolve())
         validate_human_ledger(ledger)
+        terminal_receipts = validate_codex_terminal_state_receipts()
+        print(f"✅ 通用终态收据校验通过：{len(terminal_receipts)} 份（Framework §5.7）")
         terminal_successor_paths = {
             item["path"]
             for item in codex_01491_terminal_surface_additions()

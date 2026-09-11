@@ -830,3 +830,5 @@ ready_for_operator_release
 ```
 
 除这两个公式外，不得以版本号、candidate、测试通过、镜像存在或收据数量宣称升级完成。
+
+自 0.151 起 `production_active_upgraded` 由门禁机器判定：终态收据 `docs/egress/maintenance/CODEX_CLI_<前版>_TO_<本版>_TERMINAL_STATE_RECEIPT.json` 入库后，`make check-egress-spec-ci` 与 `officialegress`/`service` 冻结测试校验其自摘要、四份阶段收据与审计索引逐字在库、审计索引复核通过、退休画像已不存在、Runtime Catalog 的 source 落在其 Campaign 链上；Runtime Catalog 的 active 版本没有终态收据即失败。
