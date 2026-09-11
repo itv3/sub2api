@@ -261,8 +261,12 @@ SUCCESSOR_REASONS = frozenset(
         "candidate_runtime_identity_correction",
         "classification_fact_correction",
         "sealed_stage_control_recovery",
+        # 已封存官方证据只读导入新 Campaign（§5.3.3）：工具修复或身份变化后不再重发
+        # 官方取证；由正式命令 reuse-official-evidence 使用，不经旧 successor 入口。
+        "official_evidence_reuse",
     }
 )
+OFFICIAL_EVIDENCE_REUSE_REASON = "official_evidence_reuse"
 CANDIDATE_INCREMENTAL_SUCCESSOR_REASONS = frozenset(
     {
         "candidate_failed_job_tool_recovery",
@@ -272,7 +276,7 @@ CANDIDATE_INCREMENTAL_SUCCESSOR_REASONS = frozenset(
     }
 )
 RECLASSIFICATION_SUCCESSOR_REASONS = frozenset(
-    {"classification_fact_correction"}
+    {"classification_fact_correction", "official_evidence_reuse"}
 )
 SEALED_STAGE_RECOVERY_SUCCESSOR_REASONS = frozenset(
     {"sealed_stage_control_recovery"}
@@ -4523,7 +4527,13 @@ def _mutable_command_coordinates(
                 else "official"
             )
         return command, phase, candidate_id, bool(getattr(arguments, "rerun_failed", False))
-    if command in {"classify", "prepare-profile", "stage-profile", "successor"}:
+    if command in {
+        "classify",
+        "prepare-profile",
+        "stage-profile",
+        "successor",
+        "reuse-official-evidence",
+    }:
         return command, "official", None, False
     raise ConfigurationError(f"不受支持的命令：{command}")
 
@@ -7703,6 +7713,65 @@ def _build_parser() -> argparse.ArgumentParser:
         help="仅用于零执行控制替代：已结束且审计完整的父监督器 run 目录。",
     )
     add_watchdog_options(successor)
+
+    reuse_official = subparsers.add_parser(
+        "reuse-official-evidence",
+        help=(
+            "把前序 Campaign 已封存的官方阶段只读导入一个新的正式 Campaign（§5.3.3），"
+            "不重发官方请求，不复制旧批准五件套；工具修复或账号变化后用它代替重新取证"
+        ),
+    )
+    reuse_official.add_argument(
+        "--predecessor-campaign-dir",
+        type=Path,
+        required=True,
+        help="已封存官方阶段的只读前序 Campaign 目录。",
+    )
+    add_campaign_reference(reuse_official)
+    reuse_official.add_argument("--campaign-id", required=True)
+    reuse_official.add_argument(
+        "--codex-account-id",
+        type=int,
+        required=True,
+        help="新 Campaign 候选运行必须显式冻结的可用 Codex 账号 ID。",
+    )
+    reuse_official.add_argument(
+        "--job-rehearsal-root",
+        type=Path,
+        help="产出侧工具变化后，由当前 preflight_only 生成的完整 Job 演练证据根。",
+    )
+    reuse_official.add_argument(
+        "--job-rehearsal-receipt",
+        type=Path,
+        help="按当前执行合同生成并重放通过的完整 Job 演练收据。",
+    )
+    reuse_official.add_argument("--recovery-timing-ledger-dir", type=Path)
+    reuse_official.add_argument("--recovery-timing-receipt", type=Path)
+    reuse_official.add_argument("--recovery-arm64-environment-root", type=Path)
+    reuse_official.add_argument("--recovery-arm64-environment-receipt", type=Path)
+    reuse_official.add_argument("--predecessor-stop-ledger-dir", type=Path)
+    reuse_official.add_argument("--predecessor-stop-receipt", type=Path)
+    reuse_official.add_argument("--predecessor-recovery-transition", type=Path)
+    add_watchdog_options(reuse_official)
+    # 复用 create_successor_campaign 的 official-only 导入分支；其余 successor
+    # 专用参数固定为空，原因固定为 official_evidence_reuse。
+    reuse_official.set_defaults(
+        reason=OFFICIAL_EVIDENCE_REUSE_REASON,
+        predecessor_candidate_id=None,
+        predecessor_attempt_id=None,
+        live_attestation_compose_dir=None,
+        live_attestation_compose_files=None,
+        target_scenario_manifest=None,
+        active_timing_ledger_dir=None,
+        active_timing_receipt=None,
+        active_arm64_environment_root=None,
+        active_arm64_environment_receipt=None,
+        predecessor_control_epoch=None,
+        predecessor_control_runtime_repair=None,
+        predecessor_unpublished_ledger_dir=None,
+        predecessor_unpublished_stop_receipt=None,
+        predecessor_supervisor_run_dir=None,
+    )
 
     control_epoch = subparsers.add_parser(
         "control-epoch",
@@ -14939,7 +15008,9 @@ def _reject_repeated_successor_reason(
             or binding.get("reason") not in SUCCESSOR_REASONS
         ):
             raise ConfigurationError("前序 Campaign 链绑定非法。")
-        if binding.get("reason") == reason:
+        # 官方证据复用不是失败恢复：同一份已封存官方证据可以被多次只读导入
+        # （每次工具变化都需要新 Campaign），不构成「同根因第二层」。
+        if binding.get("reason") == reason and reason != OFFICIAL_EVIDENCE_REUSE_REASON:
             raise ConfigurationError(
                 "同一根因已经使用过一次 successor，第二层必须停线："
                 f"{reason}"
@@ -15726,16 +15797,27 @@ def create_successor_campaign(arguments: argparse.Namespace) -> dict[str, Any]:
             require_active=sealed_stage_control_mode == "active",
         )
     else:
-        classification = _load_stage_result(
-            predecessor_dir,
-            "classify",
-            _historical_manifest_controls=control_replacement_successor,
-        )
+        classification_result_path = predecessor_dir / "classification" / "result.json"
         if (
-            classification.get("status") != "complete"
-            or classification.get("migration", {}).get("unclassified_count") != 0
+            arguments.reason == OFFICIAL_EVIDENCE_REUSE_REASON
+            and not classification_result_path.exists()
+            and not classification_result_path.is_symlink()
         ):
-            raise ConfigurationError("前序 Campaign 分类未完整批准或仍有阻断。")
+            # 官方证据复用允许前序停在 official_sealed（例如上一次复用后尚未分类，
+            # 或分类前又发生了工具变化）：没有分类结果就不承接分类事实，
+            # 新 Campaign 从 classify 开始。
+            classification = None
+        else:
+            classification = _load_stage_result(
+                predecessor_dir,
+                "classify",
+                _historical_manifest_controls=control_replacement_successor,
+            )
+            if (
+                classification.get("status") != "complete"
+                or classification.get("migration", {}).get("unclassified_count") != 0
+            ):
+                raise ConfigurationError("前序 Campaign 分类未完整批准或仍有阻断。")
     control_replacement_context = (
         _control_replacement_context(
             arguments,
@@ -17743,25 +17825,39 @@ def _validate_predecessor_import_receipt(
         return loaded
 
     predecessor_official = load_predecessor_stage("capture-official")
+    # 官方证据复用允许前序停在 official_sealed：导入收据没有登记 classify 阶段时，
+    # 不加载也不要求前序分类；有登记时仍逐字校验。
+    official_reuse_without_classification = (
+        receipt.get("reason") == OFFICIAL_EVIDENCE_REUSE_REASON
+        and reclassification_import
+        and isinstance(receipt.get("stages"), dict)
+        and "classify" not in receipt["stages"]
+    )
     predecessor_classification = (
-        None if sealed_stage_recovery_import else load_predecessor_stage("classify")
+        None
+        if sealed_stage_recovery_import or official_reuse_without_classification
+        else load_predecessor_stage("classify")
     )
     if predecessor_official.get("status") != "complete":
         raise ConfigurationError("前序官方阶段已不满足完整承接条件。")
-    if not sealed_stage_recovery_import and (
-        predecessor_classification is None
-        or predecessor_classification.get("status") != "complete"
-        or predecessor_classification.get("migration", {}).get(
-            "unclassified_count"
+    if (
+        not sealed_stage_recovery_import
+        and not official_reuse_without_classification
+        and (
+            predecessor_classification is None
+            or predecessor_classification.get("status") != "complete"
+            or predecessor_classification.get("migration", {}).get(
+                "unclassified_count"
+            )
+            != 0
         )
-        != 0
     ):
         raise ConfigurationError("前序批准分类已不满足完整承接条件。")
 
     stage_receipts = receipt.get("stages")
     expected_stage_ids = (
         {"capture-official"}
-        if sealed_stage_recovery_import
+        if sealed_stage_recovery_import or official_reuse_without_classification
         else {"capture-official", "classify"}
     )
     if not isinstance(stage_receipts, dict) or set(stage_receipts) != expected_stage_ids:
@@ -34213,6 +34309,14 @@ def _main_without_campaign_lease(argv: list[str] | None = None) -> int:
                 "job_count": len(manifest["jobs"]),
                 **preflight_invalidation,
             }
+            return_code = 0
+        elif command == "reuse-official-evidence":
+            # §5.3.3：官方证据一旦可信封存就只读复用。这里复用 successor 实现里
+            # 的 official-only 导入分支，但走正式命令名，不属于旧写入入口；
+            # 原因由子解析器固定为 official_evidence_reuse。
+            if getattr(arguments, "reason", None) != OFFICIAL_EVIDENCE_REUSE_REASON:
+                raise ConfigurationError("reuse-official-evidence 的原因不可更改。")
+            result = create_successor_campaign(arguments)
             return_code = 0
         elif command in LEGACY_WRITE_COMMANDS:
             # 旧写入实现只允许历史离线兼容；正式 Campaign 已在上方拒绝。

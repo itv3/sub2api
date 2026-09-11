@@ -34,8 +34,10 @@ from typing import Any, Callable, Mapping
 # 2026-09-11：codex_upgrade.py 新增候选层运行坐标覆盖并把 campaign-run 强制派发泛化到
 # 全部未来目标版本，codex_upgrade_supervisor.py 修正 campaign-mark 与派发超时的竞争，
 # codex_upgrade_legacy_boundary.py 去掉版本字面量；受管工具树与监督器摘要随之更新。
+# 2026-09-11（批次 2）：codex_upgrade.py 新增 reuse-official-evidence 正式命令，把已封存官方
+# 阶段只读导入新 Campaign；受管工具树摘要随之更新。
 DEFAULT_TOOL_DIGEST = (
-    "b4db5715c0806fb03294a00c3cbe7e6c02dab98ed64800298791277322c61c6e"
+    "19cbdf5722b68918daffbf069237996f38fed0fc6efcd77c80869a20001c0293"
 )
 DEFAULT_SUPERVISOR_DIGEST = (
     "f12daa3edb619546081141ac736af56dfb34b4cadff3bf63fe8dacabf22d80b4"

@@ -7149,6 +7149,7 @@ class CodexUpgradeTest(unittest.TestCase):
                 "stage-profile",
                 "capture-candidate",
                 "candidate-runtime-override",
+                "reuse-official-evidence",
                 "compare",
                 "accept",
                 "all",
@@ -12593,6 +12594,109 @@ class CodexUpgradeTest(unittest.TestCase):
                         reason="x",
                         set=["codex_account_id=91"],
                     )
+                )
+
+    def test_reuse_official_evidence_imports_official_stage_without_legacy_entry(
+        self,
+    ) -> None:
+        """已封存官方证据经正式命令只读导入新 Campaign，可连续复用且不重发取证。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            predecessor_dir, predecessor_manifest, _ = (
+                self._create_classified_campaign(root / "predecessor")
+            )
+            predecessor_official = codex_upgrade._load_stage_result(
+                predecessor_dir, "capture-official"
+            )
+            first_dir = root / "reuse-1"
+            return_code, stdout, stderr = self._run_main(
+                [
+                    "reuse-official-evidence",
+                    "--predecessor-campaign-dir",
+                    str(predecessor_dir),
+                    "--campaign-dir",
+                    str(first_dir),
+                    "--campaign-id",
+                    "upgrade-0146-official-reuse-1",
+                    "--codex-account-id",
+                    "93",
+                ]
+            )
+            self.assertEqual(return_code, 0, stderr)
+            result = json.loads(stdout)
+            self.assertEqual(result["status"], "official_sealed")
+            self.assertFalse(result["official_recapture_required"])
+            self.assertFalse(result["classification_imported"])
+            self.assertTrue(result["classification_reapproval_required"])
+            first_manifest = codex_upgrade.load_campaign_manifest(first_dir)
+            self.assertEqual(
+                first_manifest["predecessor"]["reason"], "official_evidence_reuse"
+            )
+            self.assertEqual(
+                first_manifest["predecessor"]["campaign_id"],
+                predecessor_manifest["campaign_id"],
+            )
+            self.assertEqual(first_manifest["configuration"]["codex_account_id"], 93)
+            import_receipt = json.loads(
+                (first_dir / "predecessor-import.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(import_receipt["reason"], "official_evidence_reuse")
+            self.assertEqual(import_receipt["import_mode"], "official_only_reclassification")
+            self.assertFalse(
+                any(
+                    item["kind"] == "approved_classification"
+                    for item in import_receipt["copied_files"]
+                )
+            )
+            replayed = codex_upgrade._load_stage_result(first_dir, "capture-official")
+            self.assertEqual(
+                replayed["evidence_inventory"], predecessor_official["evidence_inventory"]
+            )
+            self.assertFalse((first_dir / "classification" / "result.json").exists())
+            # 同一份官方证据可以再次被只读导入（例如又一次工具修复），不算同根因第二层。
+            second_dir = root / "reuse-2"
+            return_code, stdout, stderr = self._run_main(
+                [
+                    "reuse-official-evidence",
+                    "--predecessor-campaign-dir",
+                    str(first_dir),
+                    "--campaign-dir",
+                    str(second_dir),
+                    "--campaign-id",
+                    "upgrade-0146-official-reuse-2",
+                    "--codex-account-id",
+                    "94",
+                ]
+            )
+            self.assertEqual(return_code, 0, stderr)
+            self.assertEqual(json.loads(stdout)["status"], "official_sealed")
+            second_manifest = codex_upgrade.load_campaign_manifest(second_dir)
+            self.assertEqual(
+                second_manifest["predecessor"]["campaign_id"],
+                first_manifest["campaign_id"],
+            )
+            # 正式目标版本下该命令不属于旧写入入口，不被 campaign-run 旧入口拒绝。
+            formal_dir = root / "formal-0151"
+            formal_dir.mkdir()
+            (formal_dir / "campaign.json").write_text(
+                json.dumps({"campaign_mode": "formal", "target_version": "0.151.0"}),
+                encoding="utf-8",
+            )
+            codex_upgrade._reject_campaign_run_legacy_write(
+                argparse.Namespace(
+                    campaign_dir=root / "new-formal",
+                    predecessor_campaign_dir=formal_dir,
+                ),
+                "reuse-official-evidence",
+            )
+            with self.assertRaisesRegex(codex_upgrade.ConfigurationError, "旧写入入口"):
+                codex_upgrade._reject_campaign_run_legacy_write(
+                    argparse.Namespace(
+                        campaign_dir=root / "new-formal",
+                        predecessor_campaign_dir=formal_dir,
+                    ),
+                    "successor",
                 )
 
     def test_formal_campaign_run_enforcement_covers_future_target_versions(self) -> None:

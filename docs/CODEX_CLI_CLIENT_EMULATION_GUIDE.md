@@ -1768,6 +1768,21 @@ manifest 清理未被收据引用的可再生缓存、worktree、镜像层和 st
 python3 tools/official_client_capture/codex_upgrade.py --help
 ~~~
 
+官方阶段一旦封存就只读复用。之后因产出侧工具修复、账号变化等原因需要新的正式 Campaign 时，
+不重新取证，改用 `reuse-official-evidence` 把已封存官方阶段导入新 Campaign：新 Campaign 从
+`official_sealed` 开始，只需重新执行 `classify` 与批准；同一份官方证据可以被连续导入多次。
+产出侧工具变化后须先按 §4.0.5 用当前 preflight_only 完成完整 Job 演练，并把收据一并绑定。
+
+~~~bash
+python3 tools/official_client_capture/codex_upgrade.py reuse-official-evidence \
+  --predecessor-campaign-dir /绝对路径/已封存官方阶段的Campaign \
+  --campaign-dir /绝对路径/新Campaign \
+  --campaign-id <new-id> \
+  --codex-account-id <当前可用账号-id> \
+  --job-rehearsal-root /绝对路径/rehearsal-root \
+  --job-rehearsal-receipt /绝对路径/rehearsal-root/receipt.json
+~~~
+
 | 输入 | 内容 |
 |---|---|
 | 基线 | 当前第二部分规则、官方源码／证据和 `--scenario-manifest` 场景清单 |

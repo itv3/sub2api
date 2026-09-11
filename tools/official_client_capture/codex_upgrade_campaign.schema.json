@@ -395,7 +395,8 @@
             "candidate_recovery_control_replacement",
             "candidate_runtime_identity_correction",
             "classification_fact_correction",
-            "sealed_stage_control_recovery"
+            "sealed_stage_control_recovery",
+            "official_evidence_reuse"
           ]
         }
       }
